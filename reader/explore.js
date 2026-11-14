@@ -766,13 +766,25 @@ export async function mountExplore(root, { id }) {
       more.onclick = () => {
         const open = extract.classList.toggle("is-clamped") === false;
         more.textContent = open ? "Show less" : "Show more";
+        separateActions();
       };
     }
+    separateActions();
     const recenter = panel.querySelector("[data-act=center]");
     if (recenter) recenter.onclick = () => exploreFrom(n);
     const { version } = await getArticle(n, now);
     if (version && shownId === n) panel.querySelector(".ex-btn.is-primary").hidden = false;
   }
+
+  // The buttons get their own bar only while panel text is hidden below them; otherwise they sit in the
+  // panel like any other row.
+  function separateActions() {
+    const actions = panel.querySelector(".ex-actions");
+    const below = panel.scrollHeight - panel.clientHeight - panel.scrollTop;
+    actions?.classList.toggle("is-stuck", below > 2);
+  }
+  panel.addEventListener("scroll", separateActions, { passive: true });
+  addEventListener("resize", separateActions);
 
 
   // Moving to another article happens in three steps you can follow: it lights up, the view
