@@ -75,6 +75,11 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
   let trip = null;
   let nowZ = 0;
   let current = null;
+  // The war being fought, with the round on screen: { war, by, revert, final, t0, winner }. The last one
+  // stays shown while the fighters fade out.
+  let fight = null;
+  let shownFight = null;
+  let focus = 0;
   // The stop whose version is on screen; its block rises as the camera drives up to it.
   let stopNow = 0;
   let frame = 0;
@@ -100,6 +105,9 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
       if (t === 1) trip = null;
     }
     camZ += (targetZ - camZ) * 0.15;
+    // During a war everything but the fight fades back; the fighters fade out after it.
+    focus += ((fight ? 1 : 0) - focus) * 0.06;
+    if (fight) shownFight = fight;
     nowZ = camZ + BACK;
     draw(now);
     onTime(timeAtZ(nowZ));
@@ -118,6 +126,7 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
       const dz = wz - camZ;
       return { x: width / 2 + ((x - camX) * f) / dz, y: horizon + ((EYE - y) * f) / dz, s: f / dz, dz };
     };
+    const calm = 1 - 0.94 * focus;
     const fog = (dz) => (1 - smoothstep(FAR * 0.45, FAR, dz)) * smoothstep(NEAR, NEAR + 380, dz);
     // Written: what lies up to the moment shown. Ahead: faint.
     const written = (wz) => wz <= nowZ + 1;
@@ -132,7 +141,7 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
     const zStart = Math.ceil((camZ + NEAR) / GRID) * GRID;
     ctx.lineWidth = 1;
     for (let gz = zStart; gz < camZ + FAR; gz += GRID) {
-      const a = 0.06 * fog(gz - camZ);
+      const a = 0.06 * fog(gz - camZ) * calm;
       const l = project(roadX(gz) - 900, 0, gz);
       const r = project(roadX(gz) + 900, 0, gz);
       ctx.strokeStyle = `rgba(32,33,34,${a})`;
@@ -148,7 +157,7 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
         if (k) ctx.lineTo(p.x, p.y);
         else ctx.moveTo(p.x, p.y);
       }
-      ctx.strokeStyle = "rgba(32,33,34,0.045)";
+      ctx.strokeStyle = `rgba(32,33,34,${0.045 * calm})`;
       ctx.stroke();
     }
 
@@ -157,7 +166,7 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
     for (const { year, z: yz } of years) {
       const dz = yz - camZ;
       if (dz < NEAR || dz > FAR) continue;
-      const a = fog(dz);
+      const a = fog(dz) * calm;
       const left = project(roadX(yz) - 900, 0, yz);
       const right = project(roadX(yz) + 900, 0, yz);
       ctx.strokeStyle = `rgba(32,33,34,${0.14 * a})`;
@@ -254,14 +263,6 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
       if (sign.z < camZ + NEAR || sign.z > camZ + FAR) continue;
       standing.push({ z: sign.z, draw: () => drawSign(sign) });
     }
-    // The fighters stand a little ahead of the camera all through their war, so they go along with it.
-    for (const war of wars) {
-      const z0 = z[war.edits[0].index];
-      const z1 = z[war.edits.at(-1).index];
-      const zm = Math.min(z1 + 200, Math.max(z0 + 300, nowZ + 500));
-      if (zm < camZ + NEAR || zm > camZ + NAMED) continue;
-      standing.push({ z: zm, draw: () => drawFighters(war, zm) });
-    }
     standing.sort((a, b) => b.z - a.z);
     const labels = [];
     for (const s of standing) s.draw();
@@ -278,6 +279,8 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
     ctx.arc(p.x, p.y, 9 + 2 * Math.sin(now / 300), 0, Math.PI * 2);
     ctx.stroke();
 
+    if (focus > 0.02 && shownFight) drawFight(shownFight, now, project);
+
     function drawBlock(b, isNow) {
       const z0 = Math.max(b.z0, camZ + NEAR);
       const zm = (b.z0 + b.z1) / 2;
@@ -286,7 +289,7 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
       const x1 = x0 + BLOCK_W;
       // Blocks fade as they come close, so a tall one never fills the view.
       // The block of the version on screen is always solid.
-      const a = isNow ? 1 : fog(z0 - camZ) * (0.25 + 0.75 * smoothstep(NEAR, NEAR + 600, z0 - camZ));
+      const a = (isNow ? 1 : fog(z0 - camZ) * (0.25 + 0.75 * smoothstep(NEAR, NEAR + 600, z0 - camZ))) * calm;
       if (a < 0.01) return;
       const done = b.k <= stopNow;
       // The block being written rises with the camera's approach.
@@ -362,65 +365,11 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
       ctx.fillText(name, lx, cy + 4);
     }
 
-    // The war's two main fighters face each other across the road, each on a post in their color.
-    function drawFighters(war, zm) {
-      const z0 = z[war.edits[0].index];
-      const a = fog(zm - camZ) * (1 - smoothstep(NAMED * 0.75, NAMED, zm - camZ));
-      const reached = written(z0);
-      const inside = nowZ >= z0 - 40 && nowZ <= z[war.edits.at(-1).index] + 120;
-      war.fighters.slice(0, 2).forEach((user, k) => {
-        const sideSign = k ? 1 : -1;
-        const x = roadX(zm) + sideSign * (roadHalf(war.edits[0].index) + 34);
-        const foot = project(x, 0, zm);
-        const head = project(x, 90, zm);
-        const alpha = (reached ? 1 : 0.3) * a;
-        ctx.strokeStyle = hexAlpha(FIGHTER_COLORS[k], 0.6 * alpha);
-        ctx.lineWidth = Math.max(1, 2 * foot.s);
-        ctx.beginPath();
-        ctx.moveTo(foot.x, foot.y);
-        ctx.lineTo(head.x, head.y);
-        ctx.stroke();
-        const r = Math.max(4, Math.min(inside ? 15 : 12, 26 * head.s));
-        const cy = head.y - r;
-        ctx.fillStyle = hexAlpha(FIGHTER_COLORS[k], alpha);
-        ctx.beginPath();
-        ctx.arc(head.x, cy, r, 0, Math.PI * 2);
-        ctx.fill();
-        if (inside) {
-          ctx.strokeStyle = hexAlpha(FIGHTER_COLORS[k], 0.35 + 0.25 * Math.sin(now / 200 + k * Math.PI));
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.arc(head.x, cy, r + 4, 0, Math.PI * 2);
-          ctx.stroke();
-        }
-        if (r >= 7) {
-          ctx.fillStyle = `rgba(255,255,255,${alpha})`;
-          ctx.font = `600 ${Math.round(r * 0.8)}px Inter, system-ui, sans-serif`;
-          ctx.textAlign = "center";
-          ctx.textBaseline = "middle";
-          ctx.fillText(initials(user, /^[\d.:a-f]+$/i.test(user) ? "anonymous" : "person"), head.x, cy + 0.5);
-          ctx.textBaseline = "alphabetic";
-        }
-        if (!reached || r < 8) return;
-        const name = shorten(censor(user));
-        ctx.font = "600 11px Inter, system-ui, sans-serif";
-        const w = ctx.measureText(name).width;
-        const lx = Math.max(4, Math.min(width - w - 4, head.x - w / 2));
-        ctx.fillStyle = `rgba(255,255,255,${0.85 * alpha})`;
-        ctx.beginPath();
-        ctx.roundRect(lx - 3, cy - r - 20, w + 6, 16, 4);
-        ctx.fill();
-        ctx.fillStyle = hexAlpha(FIGHTER_COLORS[k], alpha);
-        ctx.textAlign = "left";
-        ctx.fillText(name, lx, cy - r - 8);
-      });
-    }
-
     function drawSign(sign) {
       const dz = sign.z - camZ;
       const foot = project(roadX(sign.z), 0, sign.z);
       const head = project(roadX(sign.z), SWORD, sign.z);
-      const a = fog(dz);
+      const a = fog(dz) * calm;
       const reached = written(sign.z);
       const red = sign.war.kind === "dispute" ? "215,51,51" : "228,143,143";
       ctx.strokeStyle = `rgba(${red},${0.6 * a})`;
@@ -445,6 +394,123 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
       ctx.restore();
       sign.hit = { x: head.x, y: head.y - r, r: r + 4 };
     }
+  }
+
+  // The two fighters as little characters on the road just ahead: a round body in their color with their
+  // initials, two arms and two feet. They bob facing each other; in each round the one who edited lunges
+  // with a punch and the other is knocked back. When the war ends, whoever had the last edit hops with
+  // both arms up, and the other slumps.
+  function drawFight(f, now, project) {
+    const wz = nowZ + 420;
+    const base = project(roadX(wz), 0, wz);
+    const R = Math.max(16, Math.min(28, width / 14));
+    const gap = R * 2.1;
+    const u = Math.min(1, (now - f.t0) / 650);
+    const strike = f.by === 0 || f.by === 1 ? f.by : -1;
+    const ended = f.winner !== null;
+    const lunge = Math.sin(Math.PI * Math.min(1, u * 1.4)) * gap * 0.45;
+    const hit = u > 0.35 && u < 0.85 ? Math.sin(((u - 0.35) / 0.5) * Math.PI) : 0;
+    ctx.save();
+    for (const k of [0, 1]) {
+      const face = k ? -1 : 1;
+      const color = FIGHTER_COLORS[k];
+      const user = f.war.fighters[k];
+      const won = f.winner === k;
+      const lost = ended && !won;
+      const t = now / 1000 + k * 0.5;
+      let x = base.x - face * gap;
+      let y = base.y;
+      let tilt = 0;
+      let arm = Math.sin(t * 5) * 0.25;
+      let punch = 0;
+      if (!ended) {
+        y -= Math.abs(Math.sin(t * 4)) * R * 0.12;
+        if (strike === k) {
+          x += face * lunge;
+          punch = Math.sin(Math.PI * Math.min(1, u * 1.4));
+        } else if (strike >= 0) {
+          x -= face * hit * R * 0.5;
+          tilt = -face * hit * 0.35;
+        }
+      }
+      if (won) {
+        y -= Math.abs(Math.sin(t * 6)) * R * 0.6;
+        arm = -1.3;
+      }
+      if (lost) {
+        tilt = -face * 0.5 * Math.min(1, u * 2);
+        y += R * 0.15;
+      }
+      ctx.globalAlpha = focus * (lost ? 0.45 : 1);
+      character(x, y, R, color, face, tilt, arm, punch, initials(user, /^[\d.:a-f]+$/i.test(user) ? "anonymous" : "person"));
+      // The name above, and who won.
+      const label = shorten(censor(user)) + (won ? " wins" : "");
+      ctx.font = `600 ${won ? 12 : 11}px Inter, system-ui, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.fillStyle = color;
+      ctx.fillText(label, Math.max(50, Math.min(width - 50, x)), y - R * 2.6);
+    }
+    // The blow lands: a little burst between them, with "undo" on a revert.
+    if (strike >= 0 && hit > 0 && !ended) {
+      const face = strike ? -1 : 1;
+      const bx = base.x + face * gap * 0.2;
+      const by = base.y - R * 1.3;
+      ctx.globalAlpha = focus * hit;
+      ctx.strokeStyle = FIGHTER_COLORS[strike];
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (let k = 0; k < 8; k++) {
+        const ang = (k / 8) * Math.PI * 2;
+        ctx.moveTo(bx + Math.cos(ang) * R * 0.25, by + Math.sin(ang) * R * 0.25);
+        ctx.lineTo(bx + Math.cos(ang) * R * (0.45 + 0.25 * hit), by + Math.sin(ang) * R * (0.45 + 0.25 * hit));
+      }
+      ctx.stroke();
+      if (f.revert) {
+        ctx.font = "700 11px Inter, system-ui, sans-serif";
+        ctx.fillStyle = FIGHTER_COLORS[strike];
+        ctx.textAlign = "center";
+        ctx.fillText("undo", bx, by - R * 0.85);
+      }
+    }
+    ctx.restore();
+  }
+
+  // One fighter: feet at (x, y), a body of radius R above them, facing right (1) or left (-1).
+  function character(x, y, R, color, face, tilt, arm, punch, letters) {
+    const cy = y - R * 1.3;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(tilt);
+    ctx.translate(-x, -y);
+    ctx.fillStyle = color;
+    ctx.strokeStyle = color;
+    ctx.lineCap = "round";
+    for (const side of [-1, 1]) {
+      ctx.beginPath();
+      ctx.ellipse(x + side * R * 0.35, y - R * 0.12, R * 0.13, R * 0.24, side * 0.15, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // Arms: short curves either side; the one toward the other fighter reaches out to punch.
+    ctx.lineWidth = R * 0.2;
+    for (const side of [-1, 1]) {
+      const reach = side === face ? punch * R * 0.7 : 0;
+      const sx = x + side * R * 1.08;
+      const swing = side * arm;
+      ctx.beginPath();
+      ctx.moveTo(sx, cy - R * 0.15);
+      ctx.quadraticCurveTo(sx + side * (R * 0.35 + reach), cy - R * 0.25 + swing * R * 0.6, sx + side * (R * 0.2 + reach * 1.4), cy + R * 0.3 + swing * R * 0.8);
+      ctx.stroke();
+    }
+    ctx.beginPath();
+    ctx.arc(x, cy, R, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#fff";
+    ctx.font = `600 ${Math.round(R * 0.7)}px Inter, system-ui, sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(letters, x, cy + 1);
+    ctx.textBaseline = "alphabetic";
+    ctx.restore();
   }
 
   function drawSwords(r, color) {
@@ -514,6 +580,10 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
     setStop(k) {
       stopNow = k;
     },
+    // A round of `war`: fighter `by` (0 or 1, or -1 for someone else) strikes; `final` ends the war.
+    setFight(round) {
+      fight = round && { ...round, t0: performance.now(), winner: round.final ? winnerOf(round.war) : null };
+    },
     stop() {
       stopped = true;
       cancelAnimationFrame(frame);
@@ -544,6 +614,15 @@ function initials(user, kind) {
 
 function shorten(name) {
   return name.length > 18 ? `${name.slice(0, 17)}…` : name;
+}
+
+// Whoever made the war's last edit among its two fighters: the one whose text stood when it ended.
+function winnerOf(war) {
+  for (let k = war.edits.length - 1; k >= 0; k--) {
+    const f = war.fighters.indexOf(war.edits[k].user);
+    if (f === 0 || f === 1) return f;
+  }
+  return null;
 }
 
 function lowerBound(list, value, key = (v) => v) {

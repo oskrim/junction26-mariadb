@@ -436,17 +436,6 @@
   }
 }
 
-.hp-watch {
-  flex: none;
-  padding: 5px 12px;
-  border: 0;
-  border-radius: 999px;
-  background: var(--ink);
-  font: 500 12px var(--sans);
-  color: var(--paper);
-  cursor: pointer;
-}
-
 /* The article being written */
 
 .hp-added,

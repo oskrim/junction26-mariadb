@@ -7,7 +7,7 @@ import { loadMath } from "./math.js";
 import { createMinimap } from "./minimap.js";
 import { createStoryPath, editorColor } from "./story-path.js";
 import { FIGHTER_COLORS } from "./timeline3d.js";
-import { closeWar, playWar, warHeading } from "./war-inline.js";
+import { closeWar, warHeading } from "./war-inline.js";
 import { renderWikitext } from "./wikitext.js";
 
 const SWORDS = `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 2.5 10 10M13.5 2.5 6 10M8.5 11.5l-3 3M7.5 11.5l3 3M4 9l3 3M12 9l-3 3"/></svg>`;
@@ -276,6 +276,15 @@ export function startHistoryPlay({ id, body, onClose }) {
       path.setTime(frame.edit.time);
     }
     path.setWar(frame.war ?? null);
+    // On the road the fighters trade blows round by round; the last round names the winner.
+    path.setFight(
+      frame.round && {
+        war: frame.round,
+        by: frame.round.fighters.indexOf(frame.edit.user),
+        revert: frame.edit.revertsTo !== null,
+        final: frame.n === frame.of,
+      },
+    );
     $(".hp-date").textContent = formatDate(parseRowStart(version.row_start));
     $(".hp-who").innerHTML = `${escape(censor(version.user))} <span>· version ${(frame.edit.index + 1).toLocaleString("en-US")} of ${edits.length.toLocaleString("en-US")}</span>`;
     if (!frame.war && announced && (frame.edit.time > announced.end || frame.edit.time < announced.start)) announce(null);
@@ -304,7 +313,11 @@ export function startHistoryPlay({ id, body, onClose }) {
   function showRound(frame) {
     if (!frame.round || announced !== frame.round) return;
     const round = $(".hp-war-round");
-    if (round) round.textContent = `round ${frame.n} of ${frame.of}`;
+    const last = frame.round.edits.findLast((e) => frame.round.fighters.slice(0, 2).includes(e.user));
+    if (round) {
+      round.textContent =
+        frame.n === frame.of && last ? `${censor(last.user)} has the last word` : `round ${frame.n} of ${frame.of}`;
+    }
     if (frame.n > 1) $(".hp-war b").textContent = frame.round.kind === "dispute" ? "Edit war" : "Vandalism fought off";
   }
 
@@ -754,16 +767,11 @@ export function startHistoryPlay({ id, body, onClose }) {
     note.innerHTML = `
       <span class="hp-war-icon">${SWORDS}</span>
       <span><b>${war.kind === "dispute" ? "Edit war breaks out" : "Vandalism fought off"}</b>
-        <span class="hp-war-where">${war.section ? `over “${escape(war.section)}”` : ""}</span> · ${escape(a)} vs ${escape(b)} · <span class="hp-war-round"></span></span>
-      ${heading ? `<button type="button" class="hp-watch">Watch the fight</button>` : ""}`;
+        <span class="hp-war-where">${war.section ? `over “${escape(war.section)}”` : ""}</span> · ${escape(a)} vs ${escape(b)} · <span class="hp-war-round"></span></span>`;
     note.hidden = false;
     note.classList.remove("is-new");
     void note.offsetWidth;
     note.classList.add("is-new");
-    note.querySelector(".hp-watch")?.addEventListener("click", () => {
-      setPlaying(false);
-      playWar({ heading, war, edits, id });
-    });
     if (heading) {
       heading.classList.remove("hp-fought");
       void heading.offsetWidth;
