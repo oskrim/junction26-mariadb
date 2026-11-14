@@ -1,13 +1,15 @@
 // Learn mode: POST /api/learn (server/learn.py) follows the article's links for the reader and streams a
 // short explanation that cites the linked articles it read as [1], [2], ... ([0] is the article itself).
 // learn() returns { stream, attachment } like respond(); attachment is a promise of the explored articles.
+// shape "lesson" or "reply" asks for the Learn view's lesson or a short answer during one (see server/learn.py);
+// those come as written.
 
 import { BASE } from "./api.js";
 import { events } from "./assistant.js";
 
 const at = () => Number(new URLSearchParams(location.search).get("at")) || Math.floor(Date.now() / 1000);
 
-export function learn({ prompt, context, article, history = [], onStep = null }) {
+export function learn({ prompt, context, article, history = [], onStep = null, shape = null }) {
   const request = {
     prompt,
     context,
@@ -15,6 +17,7 @@ export function learn({ prompt, context, article, history = [], onStep = null })
     at: at(),
     viewport: { w: innerWidth, h: innerHeight },
     history: history.slice(),
+    ...(shape && { shape }),
   };
   history.push({ role: "user", text: prompt });
   let found;
@@ -30,7 +33,8 @@ async function* read(request, found, history, onStep) {
       if (name === "sources") found(data);
       else if (name === "message" || (name === "error" && !onStep)) {
         // No Markdown emphasis, and each key point is its own paragraph even without a blank line before it.
-        const piece = name === "error" ? `\n\nSorry, the answer stopped: ${data}` : data.replace(/\*/g, "").replace(/\s*• /g, "\n\n• ");
+        const piece =
+          name === "error" ? `\n\nSorry, the answer stopped: ${data}` : request.shape ? data : data.replace(/\*/g, "").replace(/\s*• /g, "\n\n• ");
         text += piece;
         yield piece;
       } else onStep?.(name, data);

@@ -4,7 +4,7 @@
 
 import { showQuote } from "./assistant.js";
 
-const MARKER = ".msg-text .cite";
+const MARKER = ".msg-text .cite, .lesson .cite";
 const EDGE = 8;
 const GAP = 6;
 

@@ -8,6 +8,10 @@
 4. One streamed Gemini call writes the explanation, citing the picks as [1], [2], ..., and after it, held back
    from the reader, one quote per cited source.
 
+`shape` sets what is written: a chat answer (default), "lesson" (the Learn view: a title, a one-line goal, 3 or 4
+sections and the terms a newcomer would not know, explained from the sources) or "reply" (a short answer to a
+question asked during a lesson, which may be read aloud).
+
 Server-Sent Events as in /api/ask (`step`, `thinking`, `message`, `error`, `done`), plus `sources`: the explored
 articles, JSON, sent after the explanation. Each has the quote its claims rest on when Gemini gave one that occurs
 word for word in what it was given.
@@ -66,15 +70,31 @@ otherwise have to click through.
 - Bring in what the linked sources [1], [2], ... add; the reader has already seen their own article.
 - Use only the numbered sources and the reader's article, which is source [0]. After each claim put the
   number of the source it rests on, like [2] or [0][3]. Never cite a number that is not in the list.
-- No Markdown: no headings, bold or asterisks.
+- {{layout}}
 - After the answer, write {QUOTES_TAG} on its own line, then one line per source number you cited: the number
   as [n], then the words from that source that your claims rest on most, copied character for character (one
   sentence or clause, 30 to 200 characters). Write nothing after the last quote."""
+
+PLAIN = "No Markdown: no headings, bold or asterisks."
+LESSON_LAYOUT = "No Markdown other than the lesson layout: no bold or asterisks."
 
 NARROW_SHAPE = "The reader is on a narrow screen: write about 4 sentences in one paragraph."
 WIDE_SHAPE = ("The reader is on a wide screen: write 2 short paragraphs of 2 or 3 sentences each, then 3 "
               "key points of at most 20 words each. Separate paragraphs with a blank line. Start each key point "
               "with \"• \" and put a blank line between key points.")
+LESSON_SHAPE = """Write a short lesson that answers the question, in exactly this plain-text layout:
+# the topic, 2 to 6 words
+> one sentence: what the reader will understand by the end
+## a section heading
+a paragraph of 2 to 4 sentences
+(3 or 4 sections in all, building from what the reader needs first to the answer itself)
+The first time a term appears that a newcomer would not know, wrap it in curly braces, like {qubit}. Mark 3 to 6
+terms, the ones that matter for this topic. Then write a line "Terms:" and, for each marked term, one line: the
+term exactly as wrapped, then " :: ", then 1 or 2 sentences on what it means and why it matters here, with the
+number of the source it comes from."""
+REPLY_SHAPE = ("The reader stopped the lesson to ask this. Answer like a tutor in 2 to 4 sentences, in one paragraph "
+               "that also reads well aloud, and tie it back to the lesson.")
+SHAPES = {"lesson": LESSON_SHAPE, "reply": REPLY_SHAPE}
 
 
 def serve(handler, database):
@@ -85,7 +105,7 @@ def serve(handler, database):
         request = parse(handler)
     except AskError as error:
         return send_json(handler, error.status, {"error": str(error)})
-    with Progress(handler, [("Access-Control-Allow-Origin", "*")]) as progress:
+    with Progress(handler) as progress:
         cur = database().cursor()
         here = read_version(cur, progress, request)
         candidates = linked_articles(cur, progress, request["page_id"], request["at"])
@@ -132,8 +152,11 @@ def parse(handler):
     if not prompt:
         raise AskError(400, "prompt must not be empty")
     history = [h for h in body.get("history") or [] if isinstance(h, dict) and h.get("text")][-MAX_HISTORY:]
+    shape = body.get("shape")
+    if shape is not None and shape not in SHAPES:
+        raise AskError(400, f"shape must be one of {', '.join(SHAPES)}")
     return {"prompt": prompt, "context": body.get("context") or None, "page_id": page_id, "at": at,
-            "narrow": width < NARROW_W, "history": history}
+            "narrow": width < NARROW_W, "history": history, "shape": shape}
 
 
 def linked_articles(cur, progress, page_id, at):
@@ -228,14 +251,15 @@ def write(progress, request, here, sources):
     listing = "\n\n".join(f"[{i + 1}] {s['title']}\n{s['section']}" for i, s in enumerate(sources))
     when = ("" if (datetime.now(timezone.utc).replace(tzinfo=None) - request["at"]).days < 2 else
             f"\nThe reader is looking at the article as it was on {request['at']:%d %B %Y}.")
-    first = (f"{reader_block(request, here, WRITE_READER_CHARS)}{when}\n\nSources:\n{listing}\n\n"
-             f"{NARROW_SHAPE if request['narrow'] else WIDE_SHAPE}")
+    shape = SHAPES.get(request["shape"]) or (NARROW_SHAPE if request["narrow"] else WIDE_SHAPE)
+    first = f"{reader_block(request, here, WRITE_READER_CHARS)}{when}\n\nSources:\n{listing}\n\n{shape}"
     contents = [{"role": "user", "parts": [{"text": first}]},
                 {"role": "model", "parts": [{"text": "I have read the sources."}]}]
     contents += [{"role": "user" if h.get("role") == "user" else "model", "parts": [{"text": str(h["text"])}]}
                  for h in request["history"]]
     contents.append({"role": "user", "parts": [{"text": f"{request['prompt']}\n\n(Answer in the language of this question.)"}]})
-    with gemini(WRITE_MODEL, "streamGenerateContent?alt=sse", WRITE_RULES, contents, {"thinkingConfig": WRITE_THINKING}) as response:
+    rules = WRITE_RULES.replace("{layout}", LESSON_LAYOUT if request["shape"] == "lesson" else PLAIN)
+    with gemini(WRITE_MODEL, "streamGenerateContent?alt=sse", rules, contents, {"thinkingConfig": WRITE_THINKING}) as response:
         yield from answer_texts(progress, response)
 
 

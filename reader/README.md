@@ -46,6 +46,18 @@ The **Explore** switch in the top bar shows the article's related articles as a 
 - `model3d.js`: the 3D qubit that Visualise shows, drawn on a canvas.
 - `fake/assistant.js`: every canned answer and the earlier chats in History. Replace the body of `respond()` with a real call to go live.
 
+## Learn
+
+Learn (L in the cursor menu) opens a wide sheet at the top of the page instead of a chat.
+
+- `learn-view.js`, `learn-view.css`: the lesson. `/api/learn` with `shape: "lesson"` reads the article's links and
+  writes a title, a one-line goal, 3 or 4 sections and the terms a newcomer would not know. A term opens a card with
+  what it means here; "Learn about …" makes it a lesson of its own, and the trail at the top goes back. Questions go
+  under the lesson (`shape: "reply"`).
+- `learn-audio.js`: Listen, the lesson as an audio book with chapters, a transcript that follows the voice, and Ask,
+  which pauses it, reads the answer out where it was asked and then carries on. The voice is the browser's speech
+  synthesis for now.
+
 ## History
 
 The **History** view (`history.js`) is built from:
