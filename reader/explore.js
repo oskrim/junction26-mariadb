@@ -188,20 +188,19 @@ export async function mountExplore(root, { id }) {
       .sort((a, b) => nodes.get(b).chars - nodes.get(a).chars)
       .slice(0, MAX_GROWN);
     branchSize = added.length;
+    // The new links fan out evenly from the opened article, pointing away from the middle.
     const from = target.get(n);
-    const length = Math.hypot(from.x, from.y, from.z) || 1;
-    const out = { x: from.x / length, y: from.y / length, z: from.z / length };
+    const outward = Math.atan2(from.y, from.x);
+    const span = Math.min(Math.PI * 1.3, 0.32 * added.length);
     const rand = seeded(n);
-    for (const m of added) {
+    added.forEach((m, i) => {
       hop.set(m, 3);
       grownFrom.set(m, n);
-      target.set(m, {
-        x: from.x + out.x * 120 + gauss(rand) * 60,
-        y: from.y + out.y * 120 + gauss(rand) * 60,
-        z: from.z + out.z * 120 + gauss(rand) * 60,
-      });
+      const a = outward + (added.length > 1 ? i / (added.length - 1) - 0.5 : 0) * span;
+      const r = 150 * (0.8 + rand() * 0.45);
+      target.set(m, { x: from.x + Math.cos(a) * r, y: from.y + Math.sin(a) * r * 0.9, z: from.z + (rand() - 0.5) * 90 });
       pos.set(m, { ...pos.get(n), a: 0 });
-    }
+    });
     for (let round = 0; round < 30; round++) {
       for (const m of added) {
         const a = target.get(m);
@@ -431,11 +430,26 @@ export async function mountExplore(root, { id }) {
 
   // Smart zoom: the ring always fills the free space beside the panel, whatever the article's size.
   function fitView() {
+    fitDist = (FOCAL * (RING * 1.15 + 40)) / freeRadius();
+    cam.distTo = fitDist;
+  }
+
+  // Half the size of the space beside the panel, in pixels.
+  function freeRadius() {
     const w = stage.clientWidth;
     const h = stage.clientHeight;
-    const free = Math.min((w > 900 ? w - 380 : w) - 80, h - 190) / 2;
-    fitDist = (FOCAL * (RING * 1.15 + 40)) / Math.max(free, 160);
-    cam.distTo = fitDist;
+    return Math.max(Math.min((w > 900 ? w - 380 : w) - 80, h - 190) / 2, 160);
+  }
+
+  // Zooms onto an opened article and the links it brought in, so the branch you're on gets the room.
+  function focusBranch(n) {
+    const points = [n, ...[...hop].filter(([m, h]) => h === 3 && grownFrom.get(m) === n).map(([m]) => m)].map(
+      (m) => target.get(m),
+    );
+    const middle = average(points);
+    const reach = Math.max(120, ...points.map((p) => Math.hypot(p.x - middle.x, p.y - middle.y)));
+    cam.focusTo = middle;
+    cam.distTo = (FOCAL * (reach + 60)) / freeRadius();
   }
 
   // The panel covers the left side on wide screens, so the map centers in the space beside it.
@@ -696,9 +710,16 @@ export async function mountExplore(root, { id }) {
     selectedId = n;
     const count = keep.checked ? await grow(n) : 0;
     if (selectedId !== n) return;
-    const t = target.get(n);
-    cam.focusTo = n === centerId ? { x: 0, y: 0, z: 0 } : { x: t.x * 0.75, y: t.y * 0.75, z: t.z * 0.75 };
-    cam.distTo = Math.min(cam.distTo, fitDist * 0.9);
+    if (n === centerId) {
+      cam.focusTo = { x: 0, y: 0, z: 0 };
+      cam.distTo = fitDist;
+    } else if (keep.checked) {
+      focusBranch(n);
+    } else {
+      const t = target.get(n);
+      cam.focusTo = { x: t.x * 0.75, y: t.y * 0.75, z: t.z * 0.75 };
+      cam.distTo = Math.min(cam.distTo, fitDist * 0.9);
+    }
     openPanel(n, count);
   }
 
