@@ -147,6 +147,7 @@ export function renderWikitext(source, { fileUrl, renderMath }) {
       ? keepBlock(`<div class="math-block">${renderMath(tex.trim(), true)}</div>`)
       : keep(renderMath(tex.trim(), false)),
   );
+  text = text.replace(/<references\s*\/>/gi, "{{reflist}}");
   text = text.replace(/<ref([^>]*?)(?:\/>|>([\s\S]*?)<\/ref>)/g, (_, attrs, body) =>
     cite(refName(attrs), body ?? null),
   );
@@ -234,11 +235,13 @@ export function renderWikitext(source, { fileUrl, renderMath }) {
 }
 
 function inline(s) {
-  s = s.replace(/<\/?(span|nowiki|abbr)[^>]*>/gi, "");
+  s = s.replace(/<\/?(span|nowiki|abbr|div|center|font|big|blockquote|poem)\b[^>]*>/gi, "");
   s = s.replace(/&(?![a-zA-Z]+;|#\d+;)/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   s = s.replace(/&lt;(\/?)(sub|sup|br|i|b|small|em|strong|s|u)\s*\/?&gt;/gi, "<$1$2>");
   s = s.replace(/\[\[:?([^[\]|]+)(?:\|([^[\]]*))?\]\]([a-z]*)/g, (_, target, label, trail) => {
     if (/^category:/i.test(target)) return "";
+    // Older versions end with links to the same article in other languages, such as [[de:Quantencomputer]].
+    if (/^[a-z]{2,3}(-[a-z]+)*:/.test(target) && !/^(wikt|s):/i.test(target)) return "";
     const text = (label || target) + trail;
     if (/^(wikt|wiktionary|commons|s):/i.test(target)) return text;
     return `<a class="wl" href="#" data-title="${attr(target.split("#")[0].trim())}">${text}</a>`;

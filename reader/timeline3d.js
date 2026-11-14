@@ -11,7 +11,8 @@ const EYE = 230; // camera height
 const VIEW = 1050; // distance at which a card is shown at its natural size
 const FAR = 7000;
 const CARD_FAR = 4800; // cards appear later than the path, so the horizon stays quiet
-const SCROLL_PER_UNIT = 0.6;
+// Page scroll per world unit for each spacing setting: more scroll per unit means slower travel.
+export const SPACINGS = { tight: 0.6, normal: 1.2, roomy: 2.6 };
 
 export const FIGHTER_COLORS = ["#3366cc", "#d73333"];
 
@@ -53,6 +54,7 @@ export function createTimeline({ stage, canvas, layer, spacer, edits, stops, ren
     years.push({ year: y, z: timeToZ(Date.UTC(y, 0, 1)) });
   }
 
+  let scrollPerUnit = SPACINGS.tight;
   let width = 0;
   let inset = 0;
   let targetInset = 0;
@@ -69,12 +71,12 @@ export function createTimeline({ stage, canvas, layer, spacer, edits, stops, ren
     canvas.width = width * dpr;
     canvas.height = height * dpr;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    spacer.style.height = `${totalZ * SCROLL_PER_UNIT + innerHeight}px`;
+    spacer.style.height = `${totalZ * scrollPerUnit + innerHeight}px`;
   };
   resize();
   addEventListener("resize", resize);
-  addEventListener("scroll", () => (targetZ = scrollY / SCROLL_PER_UNIT), { passive: true });
-  targetZ = scrollY / SCROLL_PER_UNIT;
+  addEventListener("scroll", () => (targetZ = scrollY / scrollPerUnit), { passive: true });
+  targetZ = scrollY / scrollPerUnit;
   camZ = targetZ;
 
   requestAnimationFrame(function frame(now) {
@@ -98,6 +100,7 @@ export function createTimeline({ stage, canvas, layer, spacer, edits, stops, ren
 
     ctx.clearRect(0, 0, width, height);
 
+    let lastLabelY = Infinity;
     for (const { year, z: yz } of years) {
       const dz = yz - camZ;
       if (dz < 80 || dz > FAR) continue;
@@ -111,8 +114,12 @@ export function createTimeline({ stage, canvas, layer, spacer, edits, stops, ren
       ctx.lineTo(right.x, right.y);
       ctx.stroke();
       const label = project(pathX(yz) - 700, 0, yz);
+      // Far-off years bunch up near the horizon; a label is skipped when it would overlap the nearer one.
+      const size = Math.min(140, 90 * label.s);
+      if (lastLabelY - label.y < size * 0.9) continue;
+      lastLabelY = label.y;
       ctx.fillStyle = `rgba(32,33,34,${0.32 * a})`;
-      ctx.font = `400 ${Math.min(140, 90 * label.s)}px "Source Serif 4", Georgia, serif`;
+      ctx.font = `400 ${size}px "Source Serif 4", Georgia, serif`;
       ctx.textAlign = "right";
       ctx.fillText(String(year), label.x, label.y - 6 * label.s);
     }
@@ -268,13 +275,20 @@ export function createTimeline({ stage, canvas, layer, spacer, edits, stops, ren
   }
 
   function goToZ(wz) {
-    scrollTo({ top: Math.max(0, (wz - VIEW) * SCROLL_PER_UNIT), behavior: "smooth" });
+    scrollTo({ top: Math.max(0, (wz - VIEW) * scrollPerUnit), behavior: "smooth" });
   }
 
   return {
     goToTime: (time) => goToZ(timeToZ(time)),
     // Room taken on the left by the article panel; the scene re-centers on what is left.
     setInset: (px) => (targetInset = px),
+    // Changes how far a scroll travels, keeping the same moment in front of the camera.
+    setSpacing: (name) => {
+      scrollPerUnit = SPACINGS[name];
+      resize();
+      scrollTo({ top: camZ * scrollPerUnit });
+      targetZ = camZ;
+    },
     next: (dir) => {
       const here = camZ + VIEW;
       const target = dir > 0 ? stops.find((s) => s.z > here + 40) : stops.findLast((s) => s.z < here - 40);

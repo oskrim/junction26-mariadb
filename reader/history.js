@@ -41,6 +41,7 @@ document.querySelector(".hud-stats").innerHTML = [
 const month = document.querySelector(".hud-month");
 const panel = createArticlePanel({ root: document.querySelector(".panel"), articleId: id });
 let panelOpen = false;
+let fight = null;
 let lastTime = edits[0].time;
 const minimap = createMinimap({
   root: document.querySelector(".minimap"),
@@ -61,12 +62,21 @@ const timeline = createTimeline({
     if (month.textContent !== label) month.textContent = label;
     minimap.setTime(time);
     lastTime = time;
-    if (panelOpen) panel.show(time);
+    if (panelOpen && !fight) panel.show(time);
   },
+});
+
+const spacing = document.querySelector(".spacing");
+spacing.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-spacing]");
+  if (!button) return;
+  for (const b of spacing.querySelectorAll("[data-spacing]")) b.setAttribute("aria-checked", String(b === button));
+  timeline.setSpacing(button.dataset.spacing);
 });
 
 const toggle = document.querySelector(".panel-toggle");
 function setPanel(open) {
+  if (!open) fight?.close();
   panelOpen = open;
   document.body.classList.toggle("has-panel", open);
   toggle.setAttribute("aria-pressed", String(open));
@@ -77,11 +87,29 @@ toggle.addEventListener("click", () => setPanel(!panelOpen));
 document.querySelector(".panel-close").addEventListener("click", () => setPanel(false));
 addEventListener("resize", () => panelOpen && timeline.setInset(document.querySelector(".panel").offsetWidth));
 
-document.querySelector(".stage-cards").addEventListener("click", (event) => {
+// A fight plays in the sidebar while the camera follows it along the braid, one turn at a time.
+const panelRoot = document.querySelector(".panel");
+document.querySelector(".stage-cards").addEventListener("click", async (event) => {
   const button = event.target.closest('[data-action="replay"]');
   if (!button) return;
   const war = wars.find((w) => w.id === button.dataset.war);
-  openWarReplay({ articleId: id, war, before: edits[war.edits[0].index - 1] });
+  fight?.close();
+  setPanel(true);
+  panelRoot.classList.add("is-fighting");
+  timeline.goToTime(war.start);
+  fight = await openWarReplay({
+    mount: document.querySelector(".panel-fight"),
+    articleId: id,
+    war,
+    before: edits[war.edits[0].index - 1],
+    onTurn: (edit) => timeline.goToTime(edit.time),
+    onClose: () => {
+      fight = null;
+      panelRoot.classList.remove("is-fighting");
+      panel.reset();
+      panel.show(lastTime);
+    },
+  });
 });
 
 addEventListener("keydown", (event) => {

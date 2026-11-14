@@ -7,10 +7,10 @@ import { plainText } from "./wikitext.js";
 
 const SHOWN_PARAGRAPHS = 3;
 
-// Replays an edit war between its two main fighters on the passage they fought over most. Each has a
-// named cursor that waits in the corner, then selects, deletes and types their real edit. Edits by
-// anyone else are applied silently between turns.
-export async function openWarReplay({ articleId, war, before }) {
+// Replays an edit war between its two main fighters on the passage they fought over most, inside `mount`.
+// Each has a named cursor that waits in the corner, then selects, deletes and types their real edit.
+// Edits by anyone else are applied silently between turns. `onTurn` hears each fighter edit as it starts.
+export async function openWarReplay({ mount, articleId, war, before, onTurn, onClose }) {
   const fighters = war.fighters.slice(0, 2);
   const edits = [before, ...war.edits];
   const texts = await Promise.all(edits.map(async (e) => (await getArticle(articleId, Math.floor(e.time / 1000))).version?.text ?? ""));
@@ -18,11 +18,8 @@ export async function openWarReplay({ articleId, war, before }) {
   const turns = model.steps.flatMap((s, i) => (s.silent ? [] : [i]));
   const colorOf = (user) => FIGHTER_COLORS[fighters.indexOf(user)];
 
-  const root = document.createElement("div");
-  root.className = "replay";
+  const root = mount;
   root.innerHTML = `
-    <div class="replay-backdrop"></div>
-    <section class="replay-window" role="dialog" aria-modal="true" aria-label="Edit war replay">
       <header class="replay-head">
         <div>
           <p class="replay-kicker">${war.kind === "dispute" ? "Edit war" : "Vandalism fought off"} · replay</p>
@@ -31,7 +28,7 @@ export async function openWarReplay({ articleId, war, before }) {
         <div class="replay-fighters">${fighters
           .map((u, k) => `<span style="--c:${FIGHTER_COLORS[k]}"><i></i>${escape(censor(u))}</span>`)
           .join(`<em>vs</em>`)}</div>
-        <button type="button" class="replay-close" aria-label="Close">×</button>
+        <button type="button" class="replay-close" aria-label="Back to the article">×</button>
       </header>
       <div class="replay-page">
         <p class="replay-tab"></p>
@@ -41,9 +38,7 @@ export async function openWarReplay({ articleId, war, before }) {
         <button type="button" class="replay-play" aria-label="Pause">❚❚</button>
         <p class="replay-caption"></p>
         <span class="replay-count"></span>
-      </footer>
-    </section>`;
-  document.body.append(root);
+      </footer>`;
   document.body.classList.add("has-replay");
 
   const doc = root.querySelector(".replay-doc");
@@ -107,6 +102,7 @@ export async function openWarReplay({ articleId, war, before }) {
     }${comment ? `<span class="replay-comment">${escape(comment)}</span>` : ""}`;
     caption.title = comment;
     root.querySelector(".replay-count").textContent = `${t + 1} / ${turns.length}`;
+    onTurn(edit);
   }
 
   async function animate(index, token) {
@@ -203,15 +199,16 @@ export async function openWarReplay({ articleId, war, before }) {
     play(t);
   }
 
-  root.addEventListener("click", (event) => {
-    if (event.target.closest(".replay-backdrop, .replay-close")) return close();
+  const onClick = (event) => {
+    if (event.target.closest(".replay-close")) return close();
     if (event.target.closest(".replay-play")) {
       if (playButton.textContent === "↻") {
         setPlaying(true);
         jump(0);
       } else setPlaying(!playing);
     }
-  });
+  };
+  root.addEventListener("click", onClick);
   const onKey = (event) => {
     if (event.key === "Escape") close();
     else if (event.key === " ") {
@@ -226,16 +223,18 @@ export async function openWarReplay({ articleId, war, before }) {
   function close() {
     run++;
     removeEventListener("keydown", onKey, true);
+    root.removeEventListener("click", onClick);
     document.body.classList.remove("has-replay");
-    root.classList.add("is-closing");
-    setTimeout(() => root.remove(), 220);
+    root.replaceChildren();
+    onClose();
   }
+
 
   renderState(turns[0] - 1);
   park();
   describe(0);
-  requestAnimationFrame(() => root.classList.add("is-open"));
   setTimeout(() => play(turn), 900);
+  return { close };
 }
 
 // Paragraphs keep an identity from version to version, so a rewritten paragraph is still "the same one".

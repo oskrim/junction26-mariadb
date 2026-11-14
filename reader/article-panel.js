@@ -35,10 +35,14 @@ export function createArticlePanel({ root, articleId }) {
 
     let first = null;
     const counts = { changed: 0, added: 0, removed: 0 };
-    if (!shown) doc.innerHTML = blocks.map((b) => b.html).join("");
+    const runs = shown ? diff(shown.blocks, blocks, (b) => b.key) : [];
+    const changedShare = runs.reduce((n, r) => n + (r.type === "change" ? r.b.length : 0), 0) / Math.max(1, blocks.length);
+    // Past about half the article, marking every word would bury the text; the clean version reads better.
+    const rewritten = changedShare > 0.5;
+    if (!shown || rewritten) doc.innerHTML = blocks.map((b) => b.html).join("");
     else {
       const out = [];
-      for (const run of diff(shown.blocks, blocks, (b) => b.key)) {
+      for (const run of runs) {
         if (run.type === "equal") {
           out.push(...run.b.map(element));
           continue;
@@ -63,12 +67,22 @@ export function createArticlePanel({ root, articleId }) {
 
     meta.innerHTML = `
       <p class="panel-when">${formatDate(parseRowStart(version.row_start))} <span>· ${escape(censor(version.user))}</span></p>
-      ${shown ? `<p class="panel-diff">${summary(counts, shown.time)}</p>` : `<p class="panel-diff">The article as it read on this day</p>`}`;
+      <p class="panel-diff">${
+        !shown
+          ? "The article as it read on this day"
+          : rewritten
+            ? `Largely rewritten <span>since ${formatDate(shown.time)}</span>`
+            : summary(counts, shown.time)
+      }</p>`;
     shown = { revId: version.rev_id, time: parseRowStart(version.row_start), blocks };
     if (first) scroller.scrollTo({ top: first.offsetTop - 96, behavior: "smooth" });
   }
 
   return {
+    // Forgets the version on screen, so the next one is shown clean instead of compared.
+    reset() {
+      shown = null;
+    },
     // Called every frame while the timeline moves, so it loads at most every 160 ms, with the latest time.
     show(time) {
       wanted = time;

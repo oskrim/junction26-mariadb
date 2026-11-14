@@ -32,6 +32,7 @@
         </header>
         <article class="panel-doc"></article>
       </div>
+      <section class="panel-fight" aria-label="Edit war replay"></section>
     </aside>
 
     <div class="stage">
@@ -56,7 +57,15 @@
 
       <div class="hud-date">
         <p class="hud-month"></p>
-        <p class="hud-hint">Scroll to travel through time · ← → jump between cards</p>
+        <div class="hud-row">
+          <div class="spacing" role="radiogroup" aria-label="Spacing">
+            <span>Spacing</span>
+            <button type="button" role="radio" data-spacing="tight" aria-checked="true">Tight</button>
+            <button type="button" role="radio" data-spacing="normal" aria-checked="false">Normal</button>
+            <button type="button" role="radio" data-spacing="roomy" aria-checked="false">Roomy</button>
+          </div>
+          <p class="hud-hint">Scroll to travel · ← → jump between cards</p>
+        </div>
       </div>
 
       <div class="minimap">
