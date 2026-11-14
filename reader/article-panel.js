@@ -4,6 +4,7 @@ import { fileUrl, getArticle } from "./api.js";
 import { loadMath } from "./math.js";
 import { formatDate } from "./history-cards.js";
 import { parseRowStart } from "./history-model.js";
+import { renderMarkdown } from "./markdown.js";
 import { renderWikitext } from "./wikitext.js";
 
 // The article as it read at the moment the timeline is at. When the version changes, the differences
@@ -21,13 +22,14 @@ export function createArticlePanel({ root, articleId }) {
     const token = ++request;
     const { version } = await getArticle(articleId, Math.floor(wanted / 1000));
     if (token !== request || !version || version.rev_id === shown?.revId) return;
-    const renderMath = await loadMath(version.text);
+    const renderMath = version.format === "markdown" ? null : await loadMath(version.text);
     if (token !== request) return;
     render(version, renderMath);
   }
 
   function render(version, renderMath) {
-    const { html } = renderWikitext(version.text, { fileUrl, renderMath });
+    const { html } =
+      version.format === "markdown" ? renderMarkdown(version.text) : renderWikitext(version.text, { fileUrl, renderMath });
     const box = document.createElement("div");
     box.innerHTML = html;
     box.querySelectorAll("ol.references").forEach((el) => el.remove());
@@ -66,7 +68,7 @@ export function createArticlePanel({ root, articleId }) {
     }
 
     meta.innerHTML = `
-      <p class="panel-when">${formatDate(parseRowStart(version.row_start))} <span>· ${escape(censor(version.user))}</span></p>
+      <p class="panel-when">${formatDate(parseRowStart(version.row_start))}${version.user ? ` <span>· ${escape(censor(version.user))}</span>` : ""}</p>
       <p class="panel-diff">${
         !shown
           ? "The article as it read on this day"

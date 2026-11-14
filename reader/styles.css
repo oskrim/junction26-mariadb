@@ -391,6 +391,24 @@ a {
   text-underline-offset: 0.18em;
 }
 
+.md-table {
+  margin: 0 0 1.2em;
+  overflow-x: auto;
+}
+
+.md-table table {
+  border-collapse: collapse;
+  font: 14px/1.4 var(--sans);
+}
+
+.md-table th,
+.md-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--rule);
+  text-align: left;
+  vertical-align: top;
+}
+
 .body ul,
 .body ol {
   margin: 0 0 1.15em;

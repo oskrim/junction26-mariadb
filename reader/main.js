@@ -4,6 +4,7 @@ import { cursorMenu } from "./cursor-menu.js";
 import { hoverCard } from "./hover-card.js";
 import { setUpSearch } from "./search.js";
 import { loadMath } from "./math.js";
+import { renderMarkdown } from "./markdown.js";
 import { renderWikitext } from "./wikitext.js";
 
 const DEFAULT_ARTICLE = 1150;
@@ -21,13 +22,16 @@ const toc = document.querySelector(".toc");
 if (!version || !summary) {
   head.innerHTML = `<h1>Not found</h1><p class="dek">Article not found.</p>`;
 } else {
-  const doc = renderWikitext(version.text, { fileUrl, renderMath: await loadMath(version.text) });
+  const doc =
+    version.format === "markdown"
+      ? renderMarkdown(version.text)
+      : renderWikitext(version.text, { fileUrl, renderMath: await loadMath(version.text) });
   document.title = `${version.title} · Wikipedia`;
   head.innerHTML = `
     <h1>${version.title}</h1>
     ${doc.description ? `<p class="dek">${doc.description}</p>` : ""}
     <p class="meta">
-      Last edited ${formatDate(version.row_start)} by ${version.user}
+      Last edited ${formatDate(version.row_start)}${version.user ? ` by ${version.user}` : ""}
       <span aria-hidden="true">·</span>
       ${summary.versions.toLocaleString("en-US")} versions since ${new Date(summary.first * 1000).getUTCFullYear()}
       <span aria-hidden="true">·</span>
