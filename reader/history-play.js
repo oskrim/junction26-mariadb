@@ -268,12 +268,11 @@ export function startHistoryPlay({ id, body, onClose }) {
       let typing = 0;
       const hold = () =>
         (frames[i].war ? WAR_HOLD : frames[i].round ? (typing ? ROUND_HOLD : QUIET_ROUND) : STEP) / rate;
-      // While a version is written, the marker and the road travel to it: as soon as it knows how long
-      // its writing will take, the trip starts, timed to arrive as the writing and the pause after it end.
-      // The trip gets some slack, so typing that runs long doesn't leave the walker standing.
+      // A new editor's trip set off above and isn't stretched over the typing, so the walker is already on
+      // their road while they write. A war round's trip is timed to arrive as its writing and pause end.
       await show(i, token, true, (ms) => {
         typing = ms;
-        travelTo(time, ms * 1.3 + hold());
+        if (frames[i].round) travelTo(time, ms * 1.3 + hold());
       });
       if (token !== run) return;
       if (travel?.time !== time) travelTo(time, hold());
