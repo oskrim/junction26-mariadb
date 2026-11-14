@@ -328,9 +328,11 @@ function buildModel(versions, edits) {
   return { shown, steps, states };
 }
 
+// Prose only: image lines and other markup-only lines are left out.
 function paragraphsOf(text) {
   return text
     .split("\n")
+    .filter((line) => !/^\s*\[\[(file|image):/i.test(line))
     .map(plainText)
     .filter((t) => t.length > 1);
 }
