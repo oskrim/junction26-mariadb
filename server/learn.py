@@ -4,10 +4,12 @@
    (m_article as of `at`, else the current Finnish s_article).
 2. One fast Gemini call picks the 3 to 6 linked articles that matter for the question.
 3. The relevant part of each pick: its first 4,000 characters, or its lead plus a window around the focus term.
-4. One streamed Gemini call writes the explanation, citing the picks as [1], [2], ...
+4. One streamed Gemini call writes the explanation, citing the picks as [1], [2], ..., and after it, held back
+   from the reader, one quote per cited source.
 
 Server-Sent Events as in /api/ask (`step`, `thinking`, `message`, `error`, `done`), plus `sources`: the explored
-articles, JSON, sent before the explanation.
+articles, JSON, sent after the explanation. Each has the quote its claims rest on when Gemini gave one that occurs
+word for word in what it was given.
 """
 import html
 import json
@@ -18,7 +20,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 
-from ask import AskError, Progress, answer_texts, day, event, read_version, send_json
+from ask import QUOTES_TAG, AskError, Progress, answer_texts, day, event, read_version, send_json, until_quotes
 
 # Measured on page 1150 with 150 links: ranking takes ~1.4 s on 3.5 Flash Lite and ~4 s on 3.8 Flash; writing
 # takes ~3 s on 3.5 Flash and ~5.5 s on 3.8 Flash, and 3.5 Flash Lite ignores the language of the question.
@@ -33,6 +35,7 @@ SECTION_LEAD = 1_200
 MIN_PICKS, MAX_PICKS = 3, 6
 NARROW_W = 700
 MAX_HISTORY = 8
+WRITE_READER_CHARS = 3_000
 
 RANK_RULES = f"""You help a reader understand a Wikipedia article by choosing which linked articles to read.
 You get the reader's question, the article they are on, and its linked articles, each with its lead.
@@ -52,14 +55,17 @@ RANK_SCHEMA = {
     "propertyOrdering": ["language", "picks"],
 }
 
-WRITE_RULES = """You explain things to a reader of a Wikipedia article, using the linked articles they would
+WRITE_RULES = f"""You explain things to a reader of a Wikipedia article, using the linked articles they would
 otherwise have to click through.
 - Write for a smart non-expert: plain words, concrete facts, no jargon without a short explanation.
 - Answer in the language of the question, even when the sources are in Finnish.
 - Bring in what the linked sources [1], [2], ... add; the reader has already seen their own article.
 - Use only the numbered sources and the reader's article, which is source [0]. After each claim put the
   number of the source it rests on, like [2] or [0][3]. Never cite a number that is not in the list.
-- No Markdown: no headings, bold or asterisks."""
+- No Markdown: no headings, bold or asterisks.
+- After the answer, write {QUOTES_TAG} on its own line, then one line per source number you cited: the number
+  as [n], then the words from that source that your claims rest on most, copied character for character (one
+  sentence or clause, 30 to 200 characters). Write nothing after the last quote."""
 
 NARROW_SHAPE = "The reader is on a narrow screen: write about 4 sentences in one paragraph."
 WIDE_SHAPE = ("The reader is on a wide screen: write 2 short paragraphs of 2 or 3 sentences each, then 3 "
@@ -92,16 +98,22 @@ def serve(handler, connect):
         for c, why, focus in picks:
             progress.step(f"Reading {c['title']}")
             sources.append({**c, "why": why, "section": section(c["text"], focus)})
-        event(handler, "sources", {
-            "type": "sources", "explored": len(candidates), "here": {"title": here["title"], "page_id": request["page_id"]},
-            "items": [{"n": i + 1, "title": s["title"], "why": s["why"], "page_id": s["page_id"], "url": s["url"]}
-                      for i, s in enumerate(sources)]})
         progress.step("Writing the explanation")
-        for piece in write(progress, request, here, sources):
+        quotes = {}
+        for kind, value in until_quotes(write(progress, request, here, sources)):
+            if kind == "quotes":
+                quotes = verified(value, [reader_text(here)] + [s["section"] for s in sources])
+                timings["quotes"] = f"{len(quotes)} of {len(value)} found"
+                continue
             timings.setdefault("first_token_ms", ms(started))
             progress.finish()
-            event(handler, "message", piece)
+            event(handler, "message", value)
         timings["total_ms"] = ms(started)
+        event(handler, "sources", {
+            "type": "sources", "explored": len(candidates),
+            "here": {"title": here["title"], "page_id": request["page_id"], "quote": quotes.get(0)},
+            "items": [{"n": i + 1, "title": s["title"], "why": s["why"], "page_id": s["page_id"], "url": s["url"],
+                       "quote": quotes.get(i + 1)} for i, s in enumerate(sources)]})
     handler.log_message("learn %s", json.dumps(timings))
 
 
@@ -189,7 +201,7 @@ def write(progress, request, here, sources):
     listing = "\n\n".join(f"[{i + 1}] {s['title']}\n{s['section']}" for i, s in enumerate(sources))
     when = ("" if (datetime.now(timezone.utc).replace(tzinfo=None) - request["at"]).days < 2 else
             f"\nThe reader is looking at the article as it was on {request['at']:%d %B %Y}.")
-    first = (f"{reader_block(request, here, 3_000)}{when}\n\nSources:\n{listing}\n\n"
+    first = (f"{reader_block(request, here, WRITE_READER_CHARS)}{when}\n\nSources:\n{listing}\n\n"
              f"{NARROW_SHAPE if request['narrow'] else WIDE_SHAPE}")
     contents = [{"role": "user", "parts": [{"text": first}]},
                 {"role": "model", "parts": [{"text": "I have read the sources."}]}]
@@ -202,7 +214,21 @@ def write(progress, request, here, sources):
 
 def reader_block(request, here, chars):
     passage = f"\nThe reader painted this passage:\n<<<\n{request['context']}\n>>>" if request["context"] else ""
-    return f"The reader is on the article \"{here['title']}\". Its start:\n<<<\n{wikitext_plain(here['text'])[:chars]}\n>>>{passage}"
+    return f"The reader is on the article \"{here['title']}\". Its start:\n<<<\n{reader_text(here, chars)}\n>>>{passage}"
+
+
+def reader_text(here, chars=WRITE_READER_CHARS):
+    return wikitext_plain(here["text"])[:chars]
+
+
+def verified(cited, texts):
+    """{n: quote} for the cited quotes that occur in texts[n], comparing with runs of whitespace as one space."""
+    found = {}
+    for n, quote in cited:
+        quote = " ".join(quote.split())
+        if 0 <= n < len(texts) and n not in found and len(quote) >= 12 and quote in " ".join(texts[n].split()):
+            found[n] = quote
+    return found
 
 
 def gemini(model, method, system, contents, config):
