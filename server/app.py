@@ -6,6 +6,7 @@ import difflib
 import html
 import json
 import os
+import queue
 import re
 import time
 from datetime import datetime, timezone
@@ -33,12 +34,36 @@ def connect():
     con = pymysql.connect(
         host=os.environ.get("DB_HOST", "127.0.0.1"), port=int(os.environ.get("DB_PORT", 3309)),
         user=os.environ.get("DB_USER", "wiki"), password=os.environ.get("DB_PASSWORD", "wiki"), database="wiki",
-        charset="utf8mb4", cursorclass=pymysql.cursors.DictCursor,
+        charset="utf8mb4", cursorclass=pymysql.cursors.DictCursor, autocommit=True,
         # The server's certificate is self-signed, so the connection is encrypted but not verified.
         ssl={"verify_mode": False} if os.environ.get("DB_SSL") == "1" else None,
     )
     con.cursor().execute("SET time_zone = '+00:00'")
     return con
+
+
+# Connections kept open between requests: opening one takes ~30 ms, more than most queries.
+IDLE = queue.SimpleQueue()
+IDLE_MAX = 16
+
+
+def borrow():
+    try:
+        con = IDLE.get_nowait()
+    except queue.Empty:
+        return connect()
+    try:
+        con.ping(reconnect=False)
+    except pymysql.Error:  # closed by the server; dropping it closes the socket
+        return connect()
+    return con
+
+
+def give_back(con):
+    if IDLE.qsize() < IDLE_MAX:
+        IDLE.put(con)
+    else:
+        con.close()
 
 
 def number(params, name, default=None, kind=int):
@@ -245,14 +270,12 @@ class Handler(BaseHTTPRequestHandler):
         route = ROUTES.get(url.path)
         if not route:
             return self.send(404, "application/json", b'{"error": "not found"}')
+        con = borrow()
         try:
-            con = connect()
-            try:
-                status, result = 200, route(con.cursor(), parse_qs(url.query))
-            finally:
-                con.close()
+            status, result = 200, route(con.cursor(), parse_qs(url.query))
         except BadRequest as error:
             status, result = 400, {"error": str(error)}
+        give_back(con)
         self.send(status, "application/json", json.dumps(result, ensure_ascii=False, default=str).encode())
 
     def send(self, status, kind, body):
