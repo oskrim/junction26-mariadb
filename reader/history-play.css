@@ -297,8 +297,7 @@
   transition: opacity 0.15s ease;
 }
 
-.hp-map:hover .hp-hover,
-.hp-map.is-dragging .hp-hover {
+.hp-map:hover .hp-hover {
   opacity: 1;
 }
 
