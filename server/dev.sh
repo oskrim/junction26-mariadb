@@ -22,4 +22,4 @@ export DB_NAME=${DB_NAME:-wiki}
 DB_PASSWORD=$(secret junction-wiki-db-password)
 GEMINI_API_KEY=$(secret google-aistudio-api-key)
 export DB_PASSWORD GEMINI_API_KEY
-uv run -q --with pymysql python server/app.py
+uv run -q --with pymysql --with snowballstemmer --with PyStemmer python server/app.py

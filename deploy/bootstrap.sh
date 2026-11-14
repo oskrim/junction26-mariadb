@@ -113,7 +113,7 @@ Wants=network-online.target
 WorkingDirectory=$REPO_DIR
 EnvironmentFile=/etc/junction-wiki.env
 Environment=HOME=/root UV_CACHE_DIR=/var/cache/uv
-ExecStart=/usr/local/bin/uv run --with pymysql python server/app.py
+ExecStart=/usr/local/bin/uv run --with pymysql --with snowballstemmer --with PyStemmer python server/app.py
 Restart=on-failure
 RestartSec=3
 
