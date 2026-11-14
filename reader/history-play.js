@@ -287,10 +287,17 @@ export function startHistoryPlay({ id, body, onClose }) {
       name: `${censor(version.user)}${frame.round && frame.edit.revertsTo !== null ? " · undo" : ""}`,
       color: fighter === 0 || fighter === 1 ? FIGHTER_COLORS[fighter] : editorColor(frame.edit.user, frame.edit.kind),
     };
-    await render(version, renderMath, token, animate, onPlan);
+    await render(version, renderMath, token, animate, onPlan, frame.round);
     if (token !== run || closed) return;
     if (frame.war) announce(frame.war);
     showRound(frame);
+    noteWhere(frame.round);
+  }
+
+  // The war note names the section a round is actually fought in, which can differ from the war's.
+  function noteWhere(war, el = visited) {
+    const where = war && announced === war && sectionTitle(el);
+    if (where) $(".hp-war-where").textContent = `in “${where}”`;
   }
 
   // The war note counts the rounds as they are played.
@@ -413,7 +420,8 @@ export function startHistoryPlay({ id, body, onClose }) {
   // Who the cursor types for: the version's editor, named on the cursor in their color from the road.
   let typist = null;
 
-  async function render(version, renderMath, token, animate, onPlan) {
+  // `war`: the war this version is a round of; the page then stays with the section fought over.
+  async function render(version, renderMath, token, animate, onPlan, war = null) {
     visited = null;
     const { html } = renderWikitext(version.text, { fileUrl, renderMath });
     const box = document.createElement("div");
@@ -428,6 +436,9 @@ export function startHistoryPlay({ id, body, onClose }) {
       if (animate && shown) await fadeOver(swap);
       else swap();
       shown = blocks;
+      // A round that blanked or restored the whole article goes back to the section fought over.
+      const heading = war && warHeading(body, war);
+      if (heading && animate) await glideTo(heading, token);
       return;
     }
 
@@ -474,10 +485,13 @@ export function startHistoryPlay({ id, body, onClose }) {
     while (body.children.length > out.length) body.lastElementChild.remove();
     shown = kept;
 
+    // In a war, a change in the section fought over is visited first, whatever its size.
+    const fought = war ? sectionElements(warHeading(body, war)) : new Set();
+    const inFight = (p) => [...p.adds, ...p.removes, ...p.rewrites.map((w) => w.old)].some((el) => fought.has(el));
     const visits = new Set(
       places
         .filter((p) => !p.quiet)
-        .sort((a, b) => b.size - a.size)
+        .sort((a, b) => inFight(b) - inFight(a) || b.size - a.size)
         .slice(0, VISITS),
     );
     const ordered = places.filter((p) => visits.has(p));
@@ -498,6 +512,7 @@ export function startHistoryPlay({ id, body, onClose }) {
       const spot = place.rewrites[0]?.old ?? place.removes[0] ?? place.adds[0];
       await glideTo(spot, token);
       visited = place.rewrites[0]?.next ?? place.adds[0] ?? null;
+      noteWhere(war, place.rewrites[0]?.old ?? spot);
       if (token !== run || closed) {
         applyQuietly(place, false);
         continue;
@@ -733,7 +748,7 @@ export function startHistoryPlay({ id, body, onClose }) {
     note.innerHTML = `
       <span class="hp-war-icon">${SWORDS}</span>
       <span><b>${war.kind === "dispute" ? "Edit war breaks out" : "Vandalism fought off"}</b>
-        ${war.section ? `over “${escape(war.section)}”` : ""} · ${escape(a)} vs ${escape(b)} · <span class="hp-war-round"></span></span>
+        <span class="hp-war-where">${war.section ? `over “${escape(war.section)}”` : ""}</span> · ${escape(a)} vs ${escape(b)} · <span class="hp-war-round"></span></span>
       ${heading ? `<button type="button" class="hp-watch">Watch the fight</button>` : ""}`;
     note.hidden = false;
     note.classList.remove("is-new");
@@ -818,6 +833,27 @@ function textOf(el) {
   const clone = el.cloneNode(true);
   clone.querySelectorAll("sup.ref, .katex-mathml").forEach((n) => n.remove());
   return clone.textContent.replace(/\s+/g, " ").trim();
+}
+
+// The title of the section `el` is in: the nearest heading above it.
+function sectionTitle(el) {
+  for (let at = el?.previousElementSibling; at; at = at.previousElementSibling) {
+    if (/^H[2-4]$/.test(at.tagName)) return at.textContent.trim();
+  }
+  return null;
+}
+
+// A heading and the elements under it, up to the next heading of the same or a higher level.
+function sectionElements(heading) {
+  const els = new Set();
+  if (!heading) return els;
+  const level = Number(heading.tagName[1]);
+  els.add(heading);
+  for (let el = heading.nextElementSibling; el; el = el.nextElementSibling) {
+    if (/^H[1-6]$/.test(el.tagName) && Number(el.tagName[1]) <= level) break;
+    els.add(el);
+  }
+  return els;
 }
 
 // Prose that can be typed: paragraphs and headings of plain text, not old table markup or maths.
