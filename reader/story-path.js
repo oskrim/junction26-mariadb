@@ -17,6 +17,7 @@ const FAR = 4200; // a short view keeps the road calm; the timeline is stretched
 const NAMED = 2600; // editors are shown on blocks nearer than this
 const ROAD = 30; // half the road's width once the article is at its longest
 const STEP_Z = 520; // road between two stops; a war's rounds take little, as the fight plays on the globe
+const JOIN_HALF = 6; // every side road's half-width where it meets the lane
 const LANE_H = 10; // how high the lane and its side roads stand off the floor
 const SWORD = 150; // swords sign height above the road
 const GRID = 340; // floor grid spacing
@@ -667,10 +668,14 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
     return b.side * reach * out * back;
   }
 
+  // A road's half-width: as wide as its change was big along its length, tapering to the same JOIN_HALF
+  // where it turns off and back onto the lane, so roads of different sizes meet cleanly there.
   function branchHalf(b, wz) {
-    if (!b.joinPrev) return b.half;
     const t = Math.min(1, Math.max(0, (wz - stopZ[b.k - 1]) / (stopZ[b.k] - stopZ[b.k - 1])));
-    return b.joinPrev.half + (b.half - b.joinPrev.half) * smoothstep(0.1, 0.5, t);
+    const body = b.joinPrev ? b.joinPrev.half + (b.half - b.joinPrev.half) * smoothstep(0.1, 0.5, t) : b.half;
+    const out = b.joinPrev ? 1 : smoothstep(0.04, 0.22, t);
+    const back = b.joinNext ? 1 : 1 - smoothstep(0.78, 0.96, t);
+    return JOIN_HALF + (body - JOIN_HALF) * Math.min(out, back);
   }
 
   function drawSwords(r, color) {
