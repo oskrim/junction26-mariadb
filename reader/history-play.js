@@ -49,6 +49,7 @@ const DOCK = `
   <div class="hp-war" hidden></div>
   <div class="hp-row">
     <button type="button" class="hp-play" aria-label="Pause">${PAUSE}</button>
+    <button type="button" class="hp-speed" aria-label="Playback speed">1×</button>
     <div class="hp-when">
       <p class="hp-date">Loading history…</p>
       <p class="hp-who"></p>
@@ -61,7 +62,6 @@ const DOCK = `
         <div class="minimap-years"></div>
       </div>
     </div>
-    <button type="button" class="hp-speed" aria-label="Playback speed">1×</button>
     <button type="button" class="hp-close" aria-label="Back to today's article"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>Close</button>
   </div>`;
 

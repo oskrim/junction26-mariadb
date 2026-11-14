@@ -214,6 +214,11 @@
   stroke-linecap: round;
 }
 
+/* Speed sits with pause, closer than the rest of the row */
+.hp-play + .hp-speed {
+  margin-left: -10px;
+}
+
 .hp-speed:hover {
   color: var(--ink);
   border-color: var(--ink-3);
