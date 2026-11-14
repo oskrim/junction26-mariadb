@@ -36,7 +36,8 @@ class BadRequest(Exception):
 def connect():
     con = pymysql.connect(
         host=os.environ.get("DB_HOST", "127.0.0.1"), port=int(os.environ.get("DB_PORT", 3309)),
-        user=os.environ.get("DB_USER", "wiki"), password=os.environ.get("DB_PASSWORD", "wiki"), database="wiki",
+        user=os.environ.get("DB_USER", "wiki"), password=os.environ.get("DB_PASSWORD", "wiki"),
+        database=os.environ.get("DB_NAME", "wiki"),
         charset="utf8mb4", cursorclass=pymysql.cursors.DictCursor,
         # The server's certificate is self-signed, so the connection is encrypted but not verified.
         ssl={"verify_mode": False} if os.environ.get("DB_SSL") == "1" else None,

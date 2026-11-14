@@ -33,6 +33,7 @@ main() {
   "${compose[@]}" up -d --wait
   ensure_db_users "${compose[@]}"
 
+  # The loaders and the app use the database named by DB_NAME in the env file.
   if [ -f server/load.py ]; then
     uv run --with pymysql --with pyarrow python server/load.py s
     uv run --with pymysql --with pyarrow python server/load.py m --articles 20
@@ -58,15 +59,19 @@ set_env() {
   rm -f "$tmp"
 }
 
-# Teammate logins: wiki.* access, TLS required. Also asserts the server has TLS on.
+# The app's database ($DB_NAME) next to wiki, and teammate logins with access to both, TLS required.
+# Also asserts the server has TLS on.
 ensure_db_users() {
-  local sql="" user pw pw_var
+  local db="${DB_NAME:-wiki}" sql="" user pw pw_var
+  sql+="CREATE DATABASE IF NOT EXISTS \`${db}\` CHARACTER SET utf8mb4;"
+  sql+="GRANT ALL PRIVILEGES ON \`${db}\`.* TO 'wiki'@'%';"
   for user in oskari veeti; do
     pw_var="DB_${user^^}_PASSWORD"
     pw="${!pw_var}"
     sql+="CREATE USER IF NOT EXISTS '${user}'@'%' IDENTIFIED BY '${pw}' REQUIRE SSL;"
     sql+="ALTER USER '${user}'@'%' IDENTIFIED BY '${pw}' REQUIRE SSL;"
     sql+="GRANT ALL PRIVILEGES ON wiki.* TO '${user}'@'%';"
+    sql+="GRANT ALL PRIVILEGES ON \`${db}\`.* TO '${user}'@'%';"
   done
   printf '%s' "$sql" | "$@" exec -T mariadb sh -c 'mariadb -uroot -p"$MARIADB_ROOT_PASSWORD"'
   local have_ssl
