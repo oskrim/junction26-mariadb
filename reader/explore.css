@@ -627,3 +627,20 @@ body[data-view="explore"] {
 .ex-card.is-text .ex-card-title {
   padding: 0;
 }
+
+/* The article in the middle shows its picture when it has one */
+
+.ex-card.is-center.has-media {
+  padding: 6px 6px 14px;
+}
+
+.ex-card.is-center.has-media .ex-card-media {
+  height: 124px;
+  margin-bottom: 12px;
+  border-radius: 9px;
+}
+
+.ex-card.is-center.has-media .ex-card-title,
+.ex-card.is-center.has-media .ex-card-meta {
+  padding-inline: 12px;
+}

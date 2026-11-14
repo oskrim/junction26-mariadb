@@ -95,6 +95,7 @@ export async function mountExplore(root, { id }) {
   // keep wandering outward. grownFrom remembers which opened article brought each new one in.
   let grown = [];
   let grownFrom = new Map();
+  let moving = false;
 
   // Which articles and links existed in the chosen year. null means "all of them, today".
   let alive = null;
@@ -142,11 +143,14 @@ export async function mountExplore(root, { id }) {
     target = placeInSpace(nextId, near, further, new Set(chosen.map(({ n }) => n)));
     const start = from ? { ...pos.get(from) } : { x: 0, y: 0, z: 0 };
     for (const [n, t] of target) {
-      if (!pos.has(n)) pos.set(n, { ...(from ? start : t), a: 0 });
+      if (pos.has(n)) continue;
+      // After a move, new articles wait a moment and then bloom out from the middle, nearest first.
+      const arrive = from ? performance.now() + 250 + (hop.get(n) === 2 ? 450 : 0) + Math.random() * 500 : 0;
+      pos.set(n, { ...(from ? start : t), a: 0, arrive });
     }
     edges = graph.edges.filter((e) => hop.has(e.source) && hop.has(e.target) && e.source !== e.target);
 
-    buildCards(nextId, chosen);
+    buildCards(nextId, chosen, await preview(nodes.get(nextId).title));
     buildPills();
     setTitle();
   }
@@ -260,10 +264,10 @@ export async function mountExplore(root, { id }) {
     return chosen;
   }
 
-  function buildCards(cid, chosen) {
+  function buildCards(cid, chosen, centerPreview) {
     for (const el of cards.values()) el.remove();
     cards.clear();
-    addCard(cid, null);
+    addCard(cid, centerPreview);
     for (const { n, p } of chosen) addCard(n, p);
     for (const el of cards.values()) Object.assign(el, { w: el.offsetWidth, h: el.offsetHeight });
   }
@@ -276,7 +280,9 @@ export async function mountExplore(root, { id }) {
     const title = nodes.get(n).title;
     if (n === centerId) {
       el.classList.add("is-center");
-      el.innerHTML = `<span class="ex-card-title">${title}</span>
+      el.classList.toggle("has-media", Boolean(p?.thumbnail));
+      el.innerHTML = `${p?.thumbnail ? `<span class="ex-card-media"><img src="${p.thumbnail.url}" alt="" draggable="false"></span>` : ""}
+        <span class="ex-card-title">${title}</span>
         <span class="ex-card-meta">${links.get(n).size} linked articles</span>`;
     } else if (!p?.thumbnail) {
       el.classList.add("is-text");
@@ -337,8 +343,9 @@ export async function mountExplore(root, { id }) {
 
     for (const [n, p] of pos) {
       const t2 = target.get(n);
-      if (t2) for (const k of ["x", "y", "z"]) p[k] += (t2[k] - p[k]) * ease;
-      const wanted = hop.has(n) && isAlive(n) ? 1 : 0;
+      const waiting = t < (p.arrive ?? 0);
+      if (t2 && !waiting) for (const k of ["x", "y", "z"]) p[k] += (t2[k] - p[k]) * ease;
+      const wanted = hop.has(n) && isAlive(n) && !waiting ? 1 : 0;
       p.a += (wanted - p.a) * ease;
       if (!hop.has(n) && p.a < 0.01) pos.delete(n);
     }
@@ -651,16 +658,31 @@ export async function mountExplore(root, { id }) {
     return `One step away, through ${through.slice(0, 2).join(" and ")}${through.length > 2 ? ` and ${through.length - 2} more` : ""}.`;
   }
 
+  // Moving to another article happens in three steps you can follow: it lights up, the view
+  // glides over until it sits in the middle, and then its own links bloom out around it.
   async function exploreFrom(n) {
+    if (moving) return;
+    moving = true;
+    panel.classList.remove("is-open");
+    selectedId = n;
+    cam.focusTo = { ...target.get(n) };
+    cam.distTo = DIST;
+    await wait(700);
+
+    // Re-anchor everything on the new article, so the next layout starts from where things are now.
+    const shift = { ...pos.get(n) };
+    const move = (p) => Object.assign(p, { x: p.x - shift.x, y: p.y - shift.y, z: p.z - shift.z });
+    for (const p of pos.values()) move(p);
+    for (const p of target.values()) move(p);
+    move(cam.focus);
+    cam.focusTo = { x: 0, y: 0, z: 0 };
+
     const url = new URL(location.href);
     url.searchParams.set("id", n);
     history.replaceState(null, "", url);
     selectedId = null;
-    panel.classList.remove("is-open");
-    cam.focusTo = { x: 0, y: 0, z: 0 };
-    cam.focus = { ...pos.get(n) };
-    cam.distTo = DIST;
     await center(n, n);
+    moving = false;
   }
 
   $(".ex-reset").addEventListener("click", async () => {
@@ -732,6 +754,8 @@ const PILL_OFFSETS = [[0, 0]].concat(
     Array.from({ length: 8 }, (_, i) => [Math.round(Math.cos((i * Math.PI) / 4) * r * 1.6), Math.round(Math.sin((i * Math.PI) / 4) * r)]),
   ),
 );
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function linkKey(a, b) {
   return a < b ? `${a}-${b}` : `${b}-${a}`;
