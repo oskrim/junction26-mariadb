@@ -118,14 +118,15 @@ def load_s(con, cur):
     print(f"s_category: {len(rows)} rows, {time.time() - started:.1f} s")
 
 
-EXTRA_VECTORS = "exports/vectors-bge-m3-extra-fi.parquet"  # embed.py's vectors, exported by `load.py export-vectors`
+# embed.py's vectors, exported by `load.py export-vectors`: the M articles S has none for, and the L articles.
+EXPORTED_VECTORS = {"m": "exports/vectors-bge-m3-extra-fi.parquet", "l": "exports/vectors-bge-m3-l-fi.parquet"}
 VECTOR_BATCH = 2_000
 
 
 def vector_files():
-    """S's vector files, then the exported extra file when it has been downloaded."""
+    """S's vector files, then the exported ones that have been downloaded."""
     files = [DATA / f"s-2026-10/vectors-bge-m3-{lang}.parquet" for lang in ("fi", "sv", "en")]
-    return files + [DATA / EXTRA_VECTORS] if (DATA / EXTRA_VECTORS).exists() else files
+    return files + [DATA / name for name in EXPORTED_VECTORS.values() if (DATA / name).exists()]
 
 
 def vector_bytes(column):
@@ -137,7 +138,7 @@ def vector_bytes(column):
 
 
 def load_s_vectors(con, cur):
-    """S's ready-made bge-m3 vectors and the extra file. Each row goes into the vector index as it is inserted."""
+    """S's ready-made bge-m3 vectors and the exported ones. Each row goes into the vector index as it is inserted."""
     cur.execute("SELECT lang, page_id FROM article_vector")
     loaded = set(cur.fetchall())
     for path in vector_files():
@@ -157,19 +158,20 @@ def load_s_vectors(con, cur):
         print(f"article_vector from {path.name}: {new} new, {time.time() - started:.1f} s", flush=True)
 
 
-def export_vectors(cur, out, m_only):
-    """The Finnish vectors that S's file lacks into a Parquet file shaped like S's, and SHA256SUMS next to it.
-
-    m_only: only the M articles (wikitext), not the L articles added to the main table."""
+def export_vectors(cur, out_dir, scope):
+    """The Finnish vectors that S's file lacks, of the M articles (scope m, wikitext) or the L articles (scope l,
+    Markdown), into a Parquet file shaped like S's in out_dir, and its line in out_dir/SHA256SUMS."""
     import hashlib
     import pyarrow as pa
     started = time.time()
     in_s = set(pq.read_table(DATA / "s-2026-10/vectors-bge-m3-fi.parquet", columns=["page_id"])["page_id"].to_pylist())
     schema = pq.read_schema(DATA / "s-2026-10/vectors-bge-m3-fi.parquet")
-    join = "JOIN m_article a ON a.page_id = v.page_id AND a.format = 'wikitext'" if m_only else ""
-    cur.execute(f"SELECT v.page_id FROM article_vector v {join} WHERE v.lang = 'fi' ORDER BY v.page_id")
+    out = out_dir / Path(EXPORTED_VECTORS[scope]).name
+    # Without FOR SYSTEM_TIME, m_article has one row per article: its current version.
+    cur.execute("""SELECT v.page_id FROM article_vector v JOIN m_article a ON a.page_id = v.page_id AND a.format = %s
+                   WHERE v.lang = 'fi' ORDER BY v.page_id""", ("wikitext" if scope == "m" else "markdown",))
     ids = [p for (p,) in cur.fetchall() if p not in in_s]
-    out.parent.mkdir(parents=True, exist_ok=True)
+    out_dir.mkdir(parents=True, exist_ok=True)
     part = out.with_name(out.name + ".part")
     with pq.ParquetWriter(part, schema, compression="zstd") as writer:
         for i in range(0, len(ids), VECTOR_BATCH):
@@ -182,8 +184,13 @@ def export_vectors(cur, out, m_only):
                 "model": [r[1] for r in rows], "truncated": [bool(r[2]) for r in rows],
                 "embedding": pa.FixedSizeListArray.from_arrays(flat, 1024)}, schema=schema))
     part.rename(out)
-    digest = hashlib.sha256(out.read_bytes()).hexdigest()
-    (out.parent / "SHA256SUMS").write_text(f"{digest}  {out.name}\n")
+    digest = hashlib.sha256()
+    with open(out, "rb") as f:
+        for block in iter(lambda: f.read(1 << 24), b""):
+            digest.update(block)
+    sums = out_dir / "SHA256SUMS"
+    lines = [line for line in (sums.read_text().splitlines() if sums.exists() else []) if not line.endswith(f"  {out.name}")]
+    sums.write_text("".join(f"{line}\n" for line in sorted(lines + [f"{digest.hexdigest()}  {out.name}"], key=lambda l: l[66:])))
     print(f"{out}: {len(ids)} vectors, {out.stat().st_size / 1e6:.1f} MB, {time.time() - started:.0f} s")
 
 
@@ -367,9 +374,9 @@ def main():
     parser.add_argument("--articles", default="20", help="how many M articles to load, or 'all'")
     parser.add_argument("--reset", action="store_true", help="drop and recreate the dataset's tables first")
     parser.add_argument("--vectors", action="store_true",
-                        help=f"s: also load S's ready-made vectors and $WIKI_DATA/{EXTRA_VECTORS} into article_vector")
-    parser.add_argument("--out", type=Path, help="export-vectors: the Parquet file to write")
-    parser.add_argument("--m-only", action="store_true", help="export-vectors: only the M articles' vectors")
+                        help="s: also load S's ready-made vectors and the downloaded exports/ files into article_vector")
+    parser.add_argument("--out", type=Path, help="export-vectors: the directory to write to")
+    parser.add_argument("--scope", choices=list(EXPORTED_VECTORS), help="export-vectors: the M or the L articles")
     args = parser.parse_args()
     count = "all" if args.articles == "all" else int(args.articles)
     con = connect()
@@ -377,7 +384,7 @@ def main():
     cur.execute("SET time_zone = '+00:00'")  # Wikipedia's times are UTC
     cur.execute("SET system_versioning_insert_history = 1")
     if args.dataset == "export-vectors":
-        return export_vectors(cur, args.out, args.m_only)
+        return export_vectors(cur, args.out, args.scope)
     create_tables(cur, args.dataset, args.reset)
     started = time.time()
     if args.dataset == "s":
