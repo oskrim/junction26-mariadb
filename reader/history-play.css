@@ -124,24 +124,29 @@
   flex: none;
   display: grid;
   place-items: center;
-  width: 38px;
-  height: 38px;
-  border: 0;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--rule);
   border-radius: 50%;
-  background: var(--ink);
-  color: var(--paper);
+  background: var(--paper);
+  color: var(--ink);
   cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+
+.hp-play:hover {
+  border-color: var(--ink-3);
 }
 
 .hp-play svg {
-  width: 14px;
-  height: 14px;
+  width: 11px;
+  height: 11px;
   fill: currentColor;
 }
 
 .hp-when {
   flex: none;
-  width: 230px;
+  width: 104px;
   min-width: 0;
 }
 
@@ -153,10 +158,15 @@
 }
 
 .hp-date {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 500;
-  color: var(--ink);
+  color: var(--ink-2);
   font-variant-numeric: tabular-nums;
+}
+
+/* Who wrote it shows on the road and the cursor; the controls keep to the date */
+.hp-who {
+  display: none;
 }
 
 .hp-who {

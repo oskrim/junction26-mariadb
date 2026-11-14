@@ -298,12 +298,14 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
       if (a < 0.01) continue;
       const done = b.k < walkK;
       const walking = b.k === walkK;
-      const road = (to, alpha) =>
-        slab(stopZ[b.k - 1], to, (wz) => roadX(wz) + branchOffset(b, wz), (wz) => branchHalf(b, wz), LANE_H,
+      const road = (from, to, alpha) =>
+        slab(from, to, (wz) => roadX(wz) + branchOffset(b, wz), (wz) => branchHalf(b, wz), LANE_H,
           `hsla(${h},${sat}%,${light}%,${alpha * a})`, `hsla(${h},${sat}%,${light - 22}%,${alpha * a})`);
-      // A road stays as strong once walked as while it was being walked.
-      road(stopZ[b.k], done ? 0.9 : walking ? 0.25 : 0.1);
-      if (walking) road(Math.min(stopZ[b.k], nowZ), 0.9);
+      // Walked road is solid, so roads meeting at the lane don't blend into each other; the part still
+      // to walk is faint, and drawn only where the walker hasn't been.
+      const walked = done ? stopZ[b.k] : walking ? Math.min(stopZ[b.k], nowZ) : stopZ[b.k - 1];
+      if (walked > stopZ[b.k - 1]) road(stopZ[b.k - 1], walked, 1);
+      if (walked < stopZ[b.k]) road(walked, stopZ[b.k], walking ? 0.25 : 0.1);
     }
 
 
