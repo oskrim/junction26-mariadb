@@ -257,7 +257,9 @@ def preview_of(cur, title):
     thumbnail = None
     if image:
         thumbnail = {"url": thumbnail_url(normalize(image.group(1).strip())), "width": THUMB_WIDTH, "height": None}
-    return {"title": found["title"], "extract": extract(s["text"]) if s else "", "thumbnail": thumbnail}
+    # id is set only for articles the app can open (they have versions in m_article).
+    return {"title": found["title"], "id": found["page_id"] if m else None,
+            "extract": extract(s["text"]) if s else "", "thumbnail": thumbnail}
 
 
 def preview(cur, params):
