@@ -1,5 +1,5 @@
 import { createArticlePanel } from "./article-panel.js";
-import { getArticles, getChange, getHistory } from "./fake/api.js";
+import { getArticles, getChange, getHistory } from "./api.js";
 import { formatMonth, renderStop } from "./history-cards.js";
 import { analyzeHistory, findEditWars, pickMilestones } from "./history-model.js";
 import { createMinimap } from "./minimap.js";

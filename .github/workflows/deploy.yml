@@ -1,0 +1,27 @@
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Run deploy/deploy.sh on the box
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -T 15 -t ed25519 "$DEPLOY_HOST" > ~/.ssh/known_hosts
+          ssh -o IdentitiesOnly=yes -o ServerAliveInterval=30 "root@$DEPLOY_HOST" \
+            'bash /srv/junction26-mariadb/deploy/deploy.sh'

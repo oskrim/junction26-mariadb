@@ -1,6 +1,6 @@
 import { censor } from "./censor.js";
 import { diff, words } from "./diff.js";
-import { getArticle } from "./fake/api.js";
+import { getArticle } from "./api.js";
 import { cleanComment } from "./history-cards.js";
 import { FIGHTER_COLORS } from "./timeline3d.js";
 import { plainText } from "./wikitext.js";

@@ -1,6 +1,6 @@
 import { censor } from "./censor.js";
 import { diff, words } from "./diff.js";
-import { fileUrl, getArticle } from "./fake/api.js";
+import { fileUrl, getArticle } from "./api.js";
 import { formatDate } from "./history-cards.js";
 import { parseRowStart } from "./history-model.js";
 import { renderWikitext } from "./wikitext.js";

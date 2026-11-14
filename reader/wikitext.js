@@ -13,7 +13,7 @@ const REFLIST = "<!--reflist-->";
 const HATNOTES = { main: "Main article", further: "Further information", "see also": "See also" };
 const CITATIONS = /^(cite\b.*|citation)$/;
 const FILE_OPTION =
-  /^(thumb|thumbnail|frame|frameless|framed|border|right|left|center|centre|none|upright(=.*)?|\d*x?\d+px|(alt|link|class|lang|page)=.*)$/i;
+  /^(thumb|thumbnail|pienoiskuva|oikea|vasen|keskitetty|frame|frameless|framed|border|right|left|center|centre|none|upright(=.*)?|\d*x?\d+px|(alt|link|class|lang|page)=.*)$/i;
 
 export function renderWikitext(source, { fileUrl, renderMath }) {
   const store = [];
@@ -122,7 +122,7 @@ export function renderWikitext(source, { fileUrl, renderMath }) {
 
   function figure(inner) {
     const parts = splitParams(inner);
-    const name = parts[0].replace(/^(file|image):/i, "").trim();
+    const name = parts[0].replace(/^(file|image|tiedosto|kuva):/i, "").trim();
     const caption = parts.slice(1).filter((p) => !FILE_OPTION.test(p.trim())).at(-1) ?? "";
     const alt = parts.find((p) => /^\s*alt=/.test(p))?.replace(/^\s*alt=/, "") ?? stripTags(restore(inline(caption)));
     return keepBlock(
@@ -239,7 +239,7 @@ function inline(s) {
   s = s.replace(/&(?![a-zA-Z]+;|#\d+;)/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   s = s.replace(/&lt;(\/?)(sub|sup|br|i|b|small|em|strong|s|u)\s*\/?&gt;/gi, "<$1$2>");
   s = s.replace(/\[\[:?([^[\]|]+)(?:\|([^[\]]*))?\]\]([a-z]*)/g, (_, target, label, trail) => {
-    if (/^category:/i.test(target)) return "";
+    if (/^(category|luokka):/i.test(target)) return "";
     // Older versions end with links to the same article in other languages, such as [[de:Quantencomputer]].
     if (/^[a-z]{2,3}(-[a-z]+)*:/.test(target) && !/^(wikt|s):/i.test(target)) return "";
     const text = (label || target) + trail;
@@ -309,7 +309,7 @@ function splitParams(s) {
 
 // File links nest other links in their captions, so they need bracket counting rather than a regex.
 function replaceFiles(text, fn) {
-  const start = /\[\[(?:file|image):/gi;
+  const start = /\[\[(?:file|image|tiedosto|kuva):/gi;
   let out = "";
   let i = 0;
   for (;;) {

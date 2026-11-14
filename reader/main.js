@@ -1,10 +1,10 @@
-import { fileUrl, getArticle, getArticles, getPreview } from "./fake/api.js";
+import { fileUrl, getArticle, getArticles, getPreview } from "./api.js";
 import { chatPanel } from "./chat.js";
 import { cursorMenu } from "./cursor-menu.js";
 import { hoverCard } from "./hover-card.js";
 import { renderWikitext } from "./wikitext.js";
 
-const DEFAULT_ARTICLE = 4011;
+const DEFAULT_ARTICLE = 1150;
 
 const id = Number(new URLSearchParams(location.search).get("id") ?? DEFAULT_ARTICLE);
 setUpViews();

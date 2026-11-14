@@ -1,4 +1,4 @@
-import { getArticle, getArticles, getGraph, getPreview, getTopics } from "./fake/api.js";
+import { getArticle, getArticles, getGraph, getPreview, getTopics } from "./api.js";
 
 // Related articles as a slowly turning 3D cloud: the article in the middle, the articles it links
 // with around it, grouped by topic, and a fainter ring of articles one step further out.
@@ -83,7 +83,7 @@ export async function mountExplore(root, { id }) {
   };
 
   // What is on the map, where everything is heading, and where it is right now.
-  let centerId = nodes.has(id) ? id : 4011;
+  let centerId = nodes.has(id) ? id : 1150;
   let hop = new Map();
   let target = new Map();
   let edges = [];

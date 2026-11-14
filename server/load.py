@@ -1,0 +1,210 @@
+"""Load the MariaDB Finnish Wikipedia datasets into the tables in schema.sql.
+
+    uv run --with pymysql --with pyarrow python server/load.py s                  # S: fi, sv, en + categories
+    uv run --with pymysql --with pyarrow python server/load.py m                  # M: Suomen sisällissota + 19 more
+    uv run --with pymysql --with pyarrow python server/load.py m --articles all   # M: every article
+
+Safe to run again: articles already in the tables are skipped. --reset empties the dataset's tables first.
+Data comes from $WIKI_DATA (default ~/datasets/mariadb-wikipedia).
+"""
+import argparse
+import csv
+import os
+import re
+import sys
+import time
+from collections import Counter
+from datetime import timedelta
+from pathlib import Path
+
+import pyarrow.compute as pc
+import pyarrow.parquet as pq
+import pymysql
+
+DATA = Path(os.environ.get("WIKI_DATA", "~/datasets/mariadb-wikipedia")).expanduser()
+SCHEMA = Path(__file__).with_name("schema.sql")
+DEMO_ARTICLE = 1150  # Suomen sisällissota
+BATCH_BYTES = 16_000_000  # rows sent together; the server allows 64 MB packets
+LINK = re.compile(r"\[\[([^\[\]|#]+)")
+TABLES = {"s": ["s_article", "s_category"], "m": ["m_article", "m_link"]}
+
+
+def connect():
+    return pymysql.connect(
+        host=os.environ.get("DB_HOST", "127.0.0.1"), port=int(os.environ.get("DB_PORT", 3309)),
+        user="wiki", password=os.environ.get("DB_PASSWORD", "wiki"), database="wiki", charset="utf8mb4",
+    )
+
+
+def normalize(title):
+    title = " ".join(title.replace("_", " ").split()).lstrip(":")
+    return title[:1].upper() + title[1:]
+
+
+def create_tables(cur, dataset, reset):
+    if reset:
+        for table in TABLES[dataset]:
+            cur.execute(f"DROP TABLE IF EXISTS {table}")
+    sql = "\n".join(line for line in SCHEMA.read_text().splitlines() if not line.startswith("--"))
+    for statement in filter(str.strip, sql.split(";")):
+        cur.execute(statement)
+
+
+def insert_batched(cur, sql, rows, size_of):
+    """executemany in batches that stay under the packet limit."""
+    batch, size = [], 0
+    for row in rows:
+        if batch and size + size_of(row) > BATCH_BYTES:
+            cur.executemany(sql, batch)
+            batch, size = [], 0
+        batch.append(row)
+        size += size_of(row)
+    if batch:
+        cur.executemany(sql, batch)
+
+
+def load_s(con, cur):
+    for lang in ("fi", "sv", "en"):
+        started = time.time()
+        cur.execute("SELECT page_id FROM s_article WHERE lang = %s", (lang,))
+        loaded = {p for (p,) in cur.fetchall()}
+        table = pq.read_table(DATA / f"s-2026-10/articles-{lang}.parquet")
+        rows = [
+            (r["lang"], r["page_id"], r["rev_id"], r["wikidata_id"], r["title"], r["url"],
+             (r["date_modified"] or "").replace("T", " ").rstrip("Z")[:19] or None, r["text"] or "")
+            for r in table.to_pylist() if r["page_id"] not in loaded
+        ]
+        insert_batched(cur, """INSERT INTO s_article (lang, page_id, rev_id, wikidata_id, title, url,
+                                date_modified, text) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+                       rows, lambda r: len(r[7]) * 2 + 500)
+        con.commit()
+        print(f"s_article {lang}: {len(rows)} new, {len(loaded)} already loaded, {time.time() - started:.1f} s")
+    started = time.time()
+    with open(DATA / "s-2026-10/article-categories-fi.tsv", newline="") as f:
+        rows = sorted({(int(r["page_id"]), r["category"]) for r in csv.DictReader(f, delimiter="\t")})
+    insert_batched(cur, "INSERT IGNORE INTO s_category (page_id, category) VALUES (%s,%s)", rows, lambda r: 300)
+    con.commit()
+    print(f"s_category: {len(rows)} rows, {time.time() - started:.1f} s")
+
+
+def m_files():
+    """Each M file with the page_id range of each row group (files are sorted by page_id)."""
+    files = []
+    for path in sorted((DATA / "m-2026-10").glob("versions-*.parquet")):
+        f = pq.ParquetFile(path)
+        stats = [f.metadata.row_group(i).column(0).statistics for i in range(f.metadata.num_row_groups)]
+        files.append((f, [(s.min, s.max) for s in stats]))
+    return files
+
+
+def read_versions(files, page_id, columns=None):
+    for f, ranges in files:
+        groups = [i for i, (low, high) in enumerate(ranges) if low <= page_id <= high]
+        if groups:
+            table = f.read_row_groups(groups, columns=columns)
+            return table.filter(pc.equal(table["page_id"], page_id)).to_pylist()
+    return []
+
+
+def pick_articles(files, count):
+    """The demo article plus the count-1 most-edited M articles its current version links to,
+    with every title each M article has had."""
+    versions, title, titles = Counter(), {}, {}
+    for f, _ in files:
+        table = f.read(columns=["page_id", "title"])
+        for page_id, t in zip(table["page_id"].to_pylist(), table["title"].to_pylist()):
+            versions[page_id] += 1
+            title[page_id] = t  # rows are oldest first, so the last one is the current title
+            titles.setdefault(page_id, set()).add(normalize(t))
+    if count == "all":
+        return sorted(versions), titles
+    by_title = {normalize(t): p for p, t in title.items()}
+    current = read_versions(files, DEMO_ARTICLE, ["page_id", "text"])[-1]["text"]
+    linked = {by_title[t] for t in map(normalize, LINK.findall(current)) if t in by_title} - {DEMO_ARTICLE}
+    return [DEMO_ARTICLE] + sorted(linked, key=lambda p: -versions[p])[: count - 1], titles
+
+
+def save_m(cur, page_id, versions, link_targets):
+    """One article: every version into m_article and the links of each version into m_link."""
+    versions.sort(key=lambda v: (v["timestamp"], v["rev_id"]))
+    times = []
+    for v in versions:
+        t = v["timestamp"].replace(tzinfo=None)  # UTC; the session time zone is +00:00
+        if times and t <= times[-1]:  # two edits in the same second: keep the order, 1 µs apart
+            t = times[-1] + timedelta(microseconds=1)
+        times.append(t)
+    rows = [(page_id, v["title"], v["rev_id"], v["user"], v["anonymous"], v["comment"], v["minor"], v["sha1"],
+             v["bytes"], v["text"] or "", times[i]) for i, v in enumerate(versions)]
+    columns = "page_id, title, rev_id, user, anonymous, comment, minor, sha1, bytes, text, row_start"
+    insert_batched(cur, f"INSERT INTO m_article ({columns}, row_end) VALUES ({', '.join(['%s'] * 12)})",
+                   [r + (times[i + 1],) for i, r in enumerate(rows[:-1])], lambda r: len(r[9]) * 2 + 500)
+    cur.execute(f"INSERT INTO m_article ({columns}) VALUES ({', '.join(['%s'] * 11)})", rows[-1])
+
+    # A link is current from the version that adds it until the version that removes it.
+    history, opened = [], {}
+    for v, start in zip(versions, times):
+        own = normalize(v["title"])
+        targets = {t for t in map(normalize, LINK.findall(v["text"] or "")) if t in link_targets and t != own}
+        for target in opened.keys() - targets:
+            history.append((page_id, target, opened.pop(target), start))
+        for target in targets - opened.keys():
+            opened[target] = start
+    insert_batched(cur, "INSERT INTO m_link (src, dst, row_start, row_end) VALUES (%s,%s,%s,%s)",
+                   history, lambda r: 300)
+    insert_batched(cur, "INSERT INTO m_link (src, dst, row_start) VALUES (%s,%s,%s)",
+                   sorted((page_id, t, s) for t, s in opened.items()), lambda r: 300)
+    return len(history) + len(opened)
+
+
+def load_m(con, cur, count):
+    started = time.time()
+    files = m_files()
+    wanted, titles = pick_articles(files, count)
+    cur.execute("SELECT DISTINCT page_id FROM m_article FOR SYSTEM_TIME ALL")
+    loaded = {p for (p,) in cur.fetchall()}
+    todo = [p for p in wanted if p not in loaded]
+    print(f"{len(wanted)} articles picked, {len(wanted) - len(todo)} already loaded, {time.time() - started:.1f} s")
+
+    # Link targets: Finnish S articles and every M article loaded before or in this run.
+    link_targets = {normalize(t) for t in pq.read_table(DATA / "s-2026-10/articles-fi.parquet", columns=["title"])["title"].to_pylist()}
+    cur.execute("SELECT DISTINCT title FROM m_article FOR SYSTEM_TIME ALL")
+    link_targets |= {normalize(t) for (t,) in cur.fetchall()}
+    for page_id in todo:
+        link_targets |= titles[page_id]
+
+    versions_total = links_total = 0
+    for number, page_id in enumerate(todo, 1):
+        t0 = time.time()
+        versions = read_versions(files, page_id)
+        links = save_m(cur, page_id, versions, link_targets)
+        con.commit()
+        versions_total += len(versions)
+        links_total += links
+        print(f"  {number}/{len(todo)} {versions[-1]['title']}: {len(versions)} versions, {links} link rows, "
+              f"{time.time() - t0:.1f} s", flush=True)
+    print(f"m: {len(todo)} articles, {versions_total} versions, {links_total} link rows, {time.time() - started:.0f} s")
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("dataset", choices=["s", "m"])
+    parser.add_argument("--articles", default="20", help="how many M articles to load, or 'all'")
+    parser.add_argument("--reset", action="store_true", help="drop and recreate the dataset's tables first")
+    args = parser.parse_args()
+    count = "all" if args.articles == "all" else int(args.articles)
+    con = connect()
+    cur = con.cursor()
+    cur.execute("SET time_zone = '+00:00'")  # Wikipedia's times are UTC
+    cur.execute("SET system_versioning_insert_history = 1")
+    create_tables(cur, args.dataset, args.reset)
+    started = time.time()
+    load_s(con, cur) if args.dataset == "s" else load_m(con, cur, count)
+    for table in TABLES[args.dataset]:
+        cur.execute(f"SELECT COUNT(*) FROM {table} FOR SYSTEM_TIME ALL" if table.startswith("m_") else f"SELECT COUNT(*) FROM {table}")
+        print(f"{table}: {cur.fetchone()[0]} rows")
+    print(f"done in {time.time() - started:.0f} s")
+    con.close()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

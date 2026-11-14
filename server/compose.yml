@@ -1,0 +1,20 @@
+services:
+  mariadb:
+    image: mariadb:12.3
+    environment:
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-wiki}
+      MARIADB_DATABASE: wiki
+      MARIADB_USER: wiki
+      MARIADB_PASSWORD: ${DB_PASSWORD:-wiki}
+    command: ["--max-allowed-packet=64M"]
+    ports:
+      - "${DB_BIND:-127.0.0.1}:${DB_PORT:-3309}:3306"
+    volumes:
+      - wiki-db:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      retries: 30
+
+volumes:
+  wiki-db:

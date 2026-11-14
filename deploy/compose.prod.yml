@@ -1,0 +1,9 @@
+# Production additions to server/compose.yml: public TLS port for teammates, root only from inside
+# the container, and restart after a reboot.
+services:
+  mariadb:
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_HOST: localhost
+    ports:
+      - "0.0.0.0:${DB_PUBLIC_PORT:-3306}:3306"
