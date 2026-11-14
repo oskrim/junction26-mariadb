@@ -452,9 +452,14 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
       // The name sits beyond its cursor, kept inside the panel's clear middle, away from its faded edges.
       const tw = ctx.measureText(label).width;
       // Out past the arrow's tail, along the line to the globe.
-      const out = 30 + Math.abs(Math.cos(ang)) * tw * 0.5;
-      const ly = y + Math.sin(wob) * out * 0.7;
-      const lx = Math.max(width * 0.12 + tw / 2, Math.min(width * 0.88 - tw / 2, x + Math.cos(wob) * out));
+      // Out from the globe through the cursor: past the arrow's tail (about 34 px), then half the
+      // name's own extent in that direction, so the two never overlap.
+      const len = Math.hypot(x - cx, y - cy) || 1;
+      const dx = (x - cx) / len;
+      const dy = (y - cy) / len;
+      const out = 40 + Math.abs(dx) * (tw / 2) + Math.abs(dy) * 7;
+      const ly = y + dy * out;
+      const lx = Math.max(tw / 2 + 4, Math.min(width - tw / 2 - 4, x + dx * out));
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.fillStyle = colorFor(k);
