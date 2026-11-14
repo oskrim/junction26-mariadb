@@ -6,8 +6,8 @@ import { getArticle, getArticles, getGraph, getPreview, getTopics } from "./api.
 
 const FIRST_YEAR = 2003;
 const LAST_YEAR = 2026;
-const MAX_CARDS = 16;
-const MAX_FURTHER = 70;
+const MAX_CARDS = 12;
+const MAX_NEAR = 60;
 const FOCAL = 900;
 const DIST = 1060;
 const CARD_SPACING = 210;
@@ -140,16 +140,14 @@ export async function mountExplore(root, { id }) {
     centerId = nextId;
     trail = [];
     grownFrom = new Map();
-    const near = [...links.get(nextId)];
-    const nearSet = new Set(near);
-    const via = new Map();
-    for (const n of near) {
-      for (const f of links.get(n)) if (f !== nextId && !nearSet.has(f)) via.set(f, (via.get(f) ?? 0) + 1);
-    }
-    const further = [...via.keys()]
-      .sort((a, b) => via.get(b) - via.get(a) || nodes.get(b).chars - nodes.get(a).chars)
-      .slice(0, Math.min(MAX_FURTHER, Math.max(24, near.length * 2)));
-    hop = new Map([[nextId, 0], ...near.map((n) => [n, 1]), ...further.map((n) => [n, 2])]);
+    // Only the article and the articles it links with. A big article shows its best-connected links,
+    // so the map stays readable; the panel says how many there are in all.
+    const all = [...links.get(nextId)];
+    const allSet = new Set(all);
+    const score = (n) => nodes.get(n).chars + 4000 * [...links.get(n)].filter((m) => allSet.has(m)).length;
+    const near = all.sort((a, b) => score(b) - score(a)).slice(0, MAX_NEAR);
+    const further = [];
+    hop = new Map([[nextId, 0], ...near.map((n) => [n, 1])]);
 
     const chosen = await chooseCards(near);
     // Articles that don't belong to the new map drift outward as they fade, like flying past them.
@@ -362,13 +360,14 @@ export async function mountExplore(root, { id }) {
   function setTitle() {
     const title = nodes.get(centerId).title;
     const near = [...hop].filter(([n, h]) => h === 1 && isAlive(n)).length;
-    const further = [...hop].filter(([n, h]) => h === 2 && isAlive(n)).length;
+    const total = [...links.get(centerId)].filter(isAlive).length;
     const added = [...hop].filter(([n, h]) => h === 3 && isAlive(n)).length;
     const year = Number(range.value);
     const meta = cards.get(centerId)?.querySelector(".ex-card-meta");
-    if (meta) meta.textContent = `${near} linked articles`;
+    if (meta) meta.textContent = `${total} linked articles`;
+    const shown = near < total ? `${near} of ${total} linked articles` : `${total} linked articles`;
     summary = isAlive(centerId)
-      ? `${near} linked articles · ${further} more one step away${added ? ` · ${added} you added` : ""}${year < LAST_YEAR ? ` · in ${year}` : ""}`
+      ? `${shown}${added ? ` · ${added} you added` : ""}${year < LAST_YEAR ? ` · in ${year}` : ""}`
       : `Not written yet in ${year}`;
     const line = panel.querySelector(".ex-sub");
     if (line) line.textContent = summary;
@@ -462,6 +461,8 @@ export async function mountExplore(root, { id }) {
       const fromCenter = source === centerId || to === centerId;
       const onPath = pathKeys.has(linkKey(source, to));
       const onBranch = (source === tip && hop.get(to) === 3) || (to === tip && hop.get(source) === 3);
+      // Lines between the surrounding articles only show while you hover one of them.
+      if (!fromCenter && !onPath && !onBranch && !touchesLit) continue;
       ctx.lineWidth = onPath ? 2.2 : fromCenter && spokeAlpha > 0.2 ? 1.4 : 1;
       if (onPath) {
         ctx.strokeStyle = "rgb(51 102 204)";
