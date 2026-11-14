@@ -19,6 +19,8 @@ const STEP = 300;
 const ROUND_HOLD = 60;
 const QUIET_ROUND = 300;
 const MIN_TRIP = 2600;
+// The last step onto a war, from the version just before it.
+const TO_WAR = 700;
 const ERASE = 550;
 const REVEAL = 900;
 // Rounds of a war shown at most, and how fast ordinary versions and war rounds play, at 1×.
@@ -256,7 +258,7 @@ export function startHistoryPlay({ id, body, onClose }) {
       const time = frames[i].edit.time;
       // A war starts only once the marker and the road have arrived at it.
       if (frames[i].war) {
-        if (travel?.time !== time) travelTo(time, MIN_TRIP / rate);
+        if (travel?.time !== time) travelTo(time, TO_WAR / rate, TO_WAR / rate);
         if (!(await wait(Math.max(0, travel.end - performance.now()), token))) return;
       } else if (!frames[i].round && travel?.time !== time) {
         // The next editor sets off at once, while their version is still loading.
@@ -310,9 +312,9 @@ export function startHistoryPlay({ id, body, onClose }) {
     });
   }
 
-  // Every trip takes at least MIN_TRIP at an even pace, so one trip runs straight into the next.
-  function travelTo(time, ms) {
-    ms = Math.max(MIN_TRIP / rate, ms);
+  // Every trip takes at least MIN_TRIP (or `least`) at an even pace, so one trip runs straight into the next.
+  function travelTo(time, ms, least = MIN_TRIP / rate) {
+    ms = Math.max(least, ms);
     travel = { time, end: performance.now() + ms, left: 0 };
     moveMarker(time, ms);
     path.glide(time, ms);
@@ -329,7 +331,7 @@ export function startHistoryPlay({ id, body, onClose }) {
   }
 
   function resumeTravel() {
-    if (travel?.left > 0) travelTo(travel.time, travel.left);
+    if (travel?.left > 0) travelTo(travel.time, travel.left, 0);
   }
 
   async function show(i, token, animate, onPlan = () => {}) {
