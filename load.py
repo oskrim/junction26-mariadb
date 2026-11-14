@@ -72,11 +72,14 @@ try:
                 })
             el.clear()
         elif name == "page":
+            page_id = int(child_text(el, "id"))
             if keep and versions:
                 title = child_text(el, "title")
-                save(int(child_text(el, "id")), title, versions)
+                save(page_id, title, versions)
                 done += 1
                 print(f"{title}: {len(versions)} versions", flush=True)
+            elif page_id in loaded:
+                done += 1  # loaded by an earlier run: counts toward --pages, so a rerun stops early
             el.clear()
             if done >= args.pages:
                 break
