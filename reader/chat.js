@@ -40,7 +40,7 @@ export function chatPanel({ article, onClose }) {
   el.close.addEventListener("click", () => closeChat(active));
   el.minimise.addEventListener("click", hide);
   // An empty chat is reused rather than stacking up more blank tabs.
-  el.newChat.addEventListener("click", () => show(chats.find((c) => c.turn === 0 && !c.busy) ?? create({ title: "New chat" })));
+  el.newChat.addEventListener("click", newChat);
   el.historyButton.addEventListener("click", () => toggleHistory());
   el.tabs.addEventListener("click", (e) => {
     const tab = e.target.closest(".chat-tab");
@@ -61,7 +61,29 @@ export function chatPanel({ article, onClose }) {
   addEventListener("mousedown", (e) => {
     if (!el.history.hidden && !e.target.closest(".chat-history, .tray-history")) toggleHistory(false);
   });
-  addEventListener("keydown", (e) => e.key === "Escape" && toggleHistory(false));
+  addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || el.history.hidden) return;
+    e.preventDefault(); // this Esc closes only the History list
+    toggleHistory(false);
+  });
+
+  // N opens a new chat; Esc closes the chat window to its tab while you're working in it (typing there, or
+  // the last thing you clicked), so Esc elsewhere still belongs to the rest of the page.
+  let inChat = false;
+  addEventListener("pointerdown", (e) => (inChat = !!e.target.closest?.(".chat")), true);
+  addEventListener("keydown", (e) => {
+    if (e.metaKey || e.ctrlKey || e.altKey || e.isComposing || e.defaultPrevented || menuOpen()) return;
+    const typing = e.target.closest?.("input, textarea, select, [contenteditable='true']");
+    if (e.key === "Escape" && !el.panel.hidden && (inChat || e.target === el.textarea)) {
+      e.preventDefault();
+      el.textarea.blur();
+      inChat = false;
+      hide();
+    } else if (e.key.toLowerCase() === "n" && !e.repeat && !typing) {
+      e.preventDefault();
+      newChat();
+    }
+  });
   el.compose.addEventListener("submit", (e) => {
     e.preventDefault();
     const prompt = el.textarea.value.trim();
@@ -71,7 +93,6 @@ export function chatPanel({ article, onClose }) {
     send(active, { mode: "ask", label: "Ask", prompt, context: null });
   });
   el.textarea.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") el.textarea.blur();
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
       el.compose.requestSubmit();
@@ -95,6 +116,11 @@ export function chatPanel({ article, onClose }) {
 
   return { ask, hide };
 
+  // An empty chat is reused rather than stacking up more blank tabs.
+  function newChat() {
+    show(chats.find((c) => c.turn === 0 && !c.busy) ?? create({ title: "New chat" }));
+  }
+
   // A request from the menu: a new chat, opened beside where it came from.
   function ask({ mode, label, prompt, context, from }) {
     const chat = create({ title: shorten(prompt, 38) });
@@ -116,6 +142,7 @@ export function chatPanel({ article, onClose }) {
     el.title.textContent = chat.title;
     const wasHidden = el.panel.hidden;
     el.panel.hidden = false;
+    inChat = true;
     if (!docked && (from || !place)) place = { x: newChatX(), y: topLine() };
     layout();
     if (!docked && from) growFrom(from);
@@ -442,7 +469,7 @@ function build() {
   tray.setAttribute("aria-label", "Chats");
   tray.innerHTML = `
     <div class="chat-tabs"></div>
-    <button type="button" class="tray-btn tray-new">
+    <button type="button" class="tray-btn tray-new" title="New chat (N)" aria-keyshortcuts="N">
       <svg viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9" /></svg>New chat
     </button>
     <button type="button" class="tray-btn tray-history" aria-label="History" aria-expanded="false">
@@ -477,5 +504,7 @@ const paragraphs = (text) =>
     .join("");
 const escape = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 const reduceMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+// The Q menu is open: its own keys (A, F, L, Esc) come first.
+const menuOpen = () => document.querySelector(".qm")?.hidden === false;
 const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
 const shorten = (text, max) => (text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text);
