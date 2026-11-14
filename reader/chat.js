@@ -8,12 +8,11 @@ import "./cite-tip.js";
 // bottom right; closed ones move to History. One window shows the active chat, either floating
 // beside where the request came from (drag it by the header) or docked to the right as a side panel.
 
-const W = 400;
-const H = 680;
+const W = 480;
 const EDGE = 16;
 const GAP = 12;
 const TRAY = 60;
-const SIDE_W = 420;
+const SIDE_W = 520;
 
 // A new chat opens on the right, except in Explore, where the details panel is on the right and the
 // chat tray on the left.
@@ -258,7 +257,7 @@ export function chatPanel({ article, onClose }) {
   }
 
   function floatSize() {
-    return { w: Math.min(W, innerWidth - EDGE * 2), h: Math.min(H, innerHeight - EDGE - TRAY) };
+    return { w: Math.min(W, innerWidth - EDGE * 2), h: innerHeight - topLine() - TRAY };
   }
 
   function layout() {
@@ -271,8 +270,8 @@ export function chatPanel({ article, onClose }) {
     } else {
       const { w, h } = floatSize();
       const x = clamp(place.x, EDGE, innerWidth - EDGE - w);
-      const y = clamp(place.y, EDGE, innerHeight - TRAY - h);
-      Object.assign(el.panel.style, { left: `${x}px`, top: `${y}px`, width: `${w}px`, height: `${h}px` });
+      // Full height, from under the top bar down to the tray; moving it only moves it sideways.
+      Object.assign(el.panel.style, { left: `${x}px`, top: `${topLine()}px`, width: `${w}px`, height: `${h}px` });
     }
     sync();
   }

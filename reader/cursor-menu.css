@@ -851,7 +851,7 @@ html.qm-following ::selection {
 
 /* While docked, the article moves to the left edge (a slim gutter on the left, the spare room on
    the right next to the panel) and gets the reader's narrower layouts based on the space left beside
-   the panel (444px), not the window width. Same breakpoints as styles.css at 1380px and 1080px. */
+   the panel (544px), not the window width. Same breakpoints as styles.css at 1380px and 1080px. */
 @media (min-width: 900px) {
   .layout {
     transition: grid-template-columns 320ms cubic-bezier(0.22, 1, 0.36, 1);
@@ -868,7 +868,7 @@ html.qm-following ::selection {
   --docked-gutter: clamp(24px, 3vw, 56px);
 }
 
-@media (min-width: 900px) and (max-width: 1824px) {
+@media (min-width: 900px) and (max-width: 1924px) {
   html.chat-docked .layout {
     grid-template-columns: var(--docked-gutter) var(--toc) var(--gap) var(--col) minmax(24px, 1fr);
   }
@@ -879,7 +879,7 @@ html.qm-following ::selection {
   }
 }
 
-@media (min-width: 900px) and (max-width: 1524px) {
+@media (min-width: 900px) and (max-width: 1624px) {
   html.chat-docked .layout {
     grid-template-columns: var(--docked-gutter) minmax(0, var(--col)) minmax(16px, 1fr);
   }

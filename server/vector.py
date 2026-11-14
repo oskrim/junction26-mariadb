@@ -43,9 +43,12 @@ CANDIDATES = 4  # vectors read per result wanted: some are of articles not loade
 def nearest(cur, vector, limit, exclude=()):
     """[(page_id, distance)] of the openable articles closest to vector, nearest first."""
     wanted = (limit + len(exclude)) * CANDIDATES
-    cur.execute(f"SET mhnsw_ef_search = {max(EF_SEARCH, wanted)}")
+    if wanted > EF_SEARCH:  # an index search looks at no more than ef_search candidates
+        cur.execute(f"SET mhnsw_ef_search = {wanted}")
     cur.execute(f"""SELECT v.page_id, v.distance FROM ({NEAREST}) v
                     JOIN m_article_stats s USING (page_id) ORDER BY v.distance""", (vector, wanted))
+    if wanted > EF_SEARCH:
+        cur.execute(f"SET mhnsw_ef_search = {EF_SEARCH}")
     return [(r["page_id"], r["distance"]) for r in cur.fetchall() if r["page_id"] not in exclude][:limit]
 
 
