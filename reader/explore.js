@@ -99,6 +99,9 @@ export async function mountExplore(root, { id }) {
   // grownFrom remembers which opened article brought each added one in.
   let trail = [];
   let grownFrom = new Map();
+  // The middle article's own links and their cards, so its ring can come back after it folded away.
+  let ring = [];
+  let ringCards = [];
   let branchSize = 0;
   let moving = false;
   let settleUntil = 0;
@@ -136,7 +139,7 @@ export async function mountExplore(root, { id }) {
 
   // --- Layout -------------------------------------------------------------------------------
 
-  async function center(nextId, from, include = null) {
+  async function center(nextId, from) {
     await load(nextId);
     centerId = nextId;
     trail = [];
@@ -147,11 +150,12 @@ export async function mountExplore(root, { id }) {
     const allSet = new Set(all);
     const score = (n) => nodes.get(n).chars + 4000 * [...links.get(n)].filter((m) => allSet.has(m)).length;
     const near = all.sort((a, b) => score(b) - score(a)).slice(0, MAX_NEAR);
-    if (include !== null && allSet.has(include) && !near.includes(include)) near[near.length - 1] = include;
     const further = [];
     hop = new Map([[nextId, 0], ...near.map((n) => [n, 1])]);
 
     const chosen = await chooseCards(near);
+    ring = near;
+    ringCards = chosen;
     // Articles that don't belong to the new map drift outward as they fade, like flying past them.
     for (const [n, p] of pos) {
       if (!hop.has(n)) away.set(n, { x: p.x * 1.7, y: p.y * 1.7, z: p.z * 1.7 });
@@ -176,12 +180,19 @@ export async function mountExplore(root, { id }) {
   // Adds an opened article's links that aren't on the map yet, in a small cloud just beyond it,
   // pointing away from the middle so the branch reads as "further out".
   async function grow(n) {
-    if (n === centerId) return;
+    if (n === centerId) {
+      trail = [];
+      fold();
+      prune();
+      return;
+    }
     if (n === trail.at(-1)) return branchSize;
     const at = trail.indexOf(n);
+    const parent = hop.get(n) === 3 ? trail.indexOf(grownFrom.get(n)) : -1;
     if (at >= 0) trail = trail.slice(0, at + 1);
-    else if (hop.get(n) === 3 && grownFrom.get(n) === trail.at(-1)) trail.push(n);
+    else if (parent >= 0) trail = [...trail.slice(0, parent + 1), n];
     else trail = [n];
+    fold();
     prune();
     await load(n);
 
@@ -231,15 +242,37 @@ export async function mountExplore(root, { id }) {
     return added.length;
   }
 
-  // Drops added articles that are no longer on the path, along with their cards.
+  // Drops added articles that are neither on the path nor links of the last two opened articles,
+  // along with their cards.
   function prune() {
+    const open = trail.slice(-2);
     for (const [m, h] of hop) {
-      if (h !== 3 || trail.includes(m)) continue;
+      if (h !== 3 || trail.includes(m) || open.includes(grownFrom.get(m))) continue;
       hop.delete(m);
       grownFrom.delete(m);
     }
     for (const [m, el] of cards) if (!hop.has(m)) dropCard(m, el);
     edges = graphEdges.filter((e) => hop.has(e.source) && hop.has(e.target) && e.source !== e.target);
+  }
+
+  // At most two articles have their links out. Once a second article is opened, the middle article's
+  // links fold away, except the ones on the path; opening one of its links again brings them back.
+  function fold() {
+    const showRing = trail.length < 2;
+    for (const m of ring) {
+      const keep = showRing || trail.includes(m);
+      if (!keep && hop.get(m) === 1) hop.delete(m);
+      if (keep && !hop.has(m)) {
+        hop.set(m, 1);
+        if (!pos.has(m)) pos.set(m, { ...target.get(m), a: 0 });
+      }
+    }
+    if (!showRing) return;
+    for (const { n, p } of ringCards) {
+      if (cards.has(n) || !hop.has(n)) continue;
+      const el = addCard(n, p);
+      Object.assign(el, { w: el.offsetWidth, h: el.offsetHeight });
+    }
   }
 
   function dropCard(n, el) {
@@ -705,9 +738,6 @@ export async function mountExplore(root, { id }) {
 
   // Opening an article grows the map from it; the middle article stays put.
   async function select(n) {
-    // At most two articles have their links out: opening a link of the last opened article moves the
-    // middle to that article, so the first one folds away.
-    if (hop.get(n) === 3 && grownFrom.get(n) === trail.at(-1)) return exploreFrom(trail.at(-1), n);
     selectedId = n;
     const count = await grow(n);
     if (selectedId !== n) return;
@@ -782,7 +812,7 @@ export async function mountExplore(root, { id }) {
 
   // Moving to another article happens in three steps you can follow: it lights up, the view
   // glides over until it sits in the middle, and then its own links bloom out around it.
-  async function exploreFrom(n, then = null) {
+  async function exploreFrom(n) {
     if (moving) return;
     moving = true;
     selectedId = n;
@@ -802,10 +832,9 @@ export async function mountExplore(root, { id }) {
     history.replaceState(null, "", url);
     selectedId = null;
     settleUntil = performance.now() + 2200;
-    await center(n, n, then);
+    await center(n, n);
+    openPanel(n);
     moving = false;
-    if (then !== null && hop.has(then)) await select(then);
-    else openPanel(n);
   }
 
 
