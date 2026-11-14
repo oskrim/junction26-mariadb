@@ -303,9 +303,26 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
           `hsla(${h},${sat}%,${light}%,${alpha * a})`, `hsla(${h},${sat}%,${light - 22}%,${alpha * a})`);
       // Walked road is solid, so roads meeting at the lane don't blend into each other; the part still
       // to walk is faint, and drawn only where the walker hasn't been.
-      const walked = done ? stopZ[b.k] : walking ? Math.min(stopZ[b.k], nowZ) : stopZ[b.k - 1];
-      if (walked > stopZ[b.k - 1]) road(stopZ[b.k - 1], walked, 1);
-      if (walked < stopZ[b.k]) road(walked, stopZ[b.k], walking ? 0.25 : 0.1);
+      const z0 = stopZ[b.k - 1];
+      const z1 = stopZ[b.k];
+      if (!walking) {
+        road(z0, z1, done ? 1 : 0.1);
+        continue;
+      }
+      // Around the walker the road fades from solid to faint over a short stretch, in slices that meet
+      // edge to edge, so there is no hard step.
+      const FADE = 160;
+      const fadeFrom = Math.max(z0, Math.min(z1, nowZ - FADE));
+      const fadeTo = Math.max(z0, Math.min(z1, nowZ + FADE / 2));
+      if (fadeFrom > z0) road(z0, fadeFrom, 1);
+      const SLICES = 8;
+      for (let q = 0; q < SLICES && fadeTo > fadeFrom; q++) {
+        const sa = fadeFrom + ((fadeTo - fadeFrom) * q) / SLICES;
+        const sb = fadeFrom + ((fadeTo - fadeFrom) * (q + 1)) / SLICES;
+        const t = ((sa + sb) / 2 - (nowZ - FADE)) / (FADE * 1.5);
+        road(sa, sb, 1 - 0.75 * smoothstep(0, 1, t));
+      }
+      if (fadeTo < z1) road(fadeTo, z1, 0.25);
     }
 
 
