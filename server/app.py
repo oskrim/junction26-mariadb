@@ -13,7 +13,6 @@ import unicodedata
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from socketserver import ForkingMixIn
 from urllib.parse import parse_qs, quote, urlparse
 
 import pymysql
@@ -25,7 +24,7 @@ READER = Path(__file__).resolve().parent.parent / "reader"
 LANDER = Path(__file__).resolve().parent.parent / "lander"
 TYPES = {".html": "text/html", ".js": "text/javascript", ".json": "application/json", ".css": "text/css",
          ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-         ".gz": "application/gzip", ".ico": "image/x-icon"}
+         ".gz": "application/gzip", ".ico": "image/x-icon", ".woff2": "font/woff2"}
 # The infobox picture (| kuva = X.jpg), else the first [[File:...]] in the text.
 IMAGES = [re.compile(r"\|\s*(?:kuva|image)\s*=\s*(?:\[\[\s*(?:File|Image|Tiedosto|Kuva)\s*:)?\s*"
                      r"([^|\]\n{}<>=]+\.(?:jpe?g|png|gif|svg|tiff?|webp))", re.I),
@@ -41,12 +40,29 @@ def connect():
         host=os.environ.get("DB_HOST", "127.0.0.1"), port=int(os.environ.get("DB_PORT", 3309)),
         user=os.environ.get("DB_USER", "wiki"), password=os.environ.get("DB_PASSWORD", "wiki"),
         database=os.environ.get("DB_NAME", "wiki"),
-        charset="utf8mb4", cursorclass=pymysql.cursors.DictCursor,
+        charset="utf8mb4", cursorclass=pymysql.cursors.DictCursor, autocommit=True,
         # The server's certificate is self-signed, so the connection is encrypted but not verified.
         ssl={"verify_mode": False} if os.environ.get("DB_SSL") == "1" else None,
     )
     con.cursor().execute("SET time_zone = '+00:00'")
     return con
+
+
+db = None  # this worker's connection, kept between requests: opening one costs ~35 ms
+
+
+def database():
+    """This worker's MariaDB connection, opened again when the last one broke."""
+    global db
+    if db is not None:
+        try:
+            db.ping(reconnect=False)
+            return db
+        except pymysql.Error:
+            pass  # a failed ping has already closed the socket
+    db = None
+    db = connect()
+    return db
 
 
 def number(params, name, default=None, kind=int):
@@ -365,12 +381,17 @@ ROUTES = {"/api/articles": articles, "/api/article": article, "/api/history": hi
 POST_ROUTES = {"/api/ask": ask.serve, "/api/learn": learn.serve}
 
 
-class Server(ForkingMixIn, HTTPServer):
-    """A process per request: the History view sends ~90 requests at once, and threads would share one core."""
+# Each API answer's browser cache life in seconds. A change by rev never changes; the rest only when the data
+# is reloaded.
+IMMUTABLE = {"/api/change"}
+MAX_AGE = 300
+WORKERS = int(os.environ.get("WORKERS", 16))  # ask and learn hold a worker while Gemini answers
+
+
+class Server(HTTPServer):
     # The proxy opens a connection per request. The default backlog of 5 drops the rest of a burst, and the
     # client's TCP retries back off for up to a minute.
     request_queue_size = 256
-    max_children = 64
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -402,7 +423,7 @@ class Handler(BaseHTTPRequestHandler):
             route = POST_ROUTES.get(urlparse(self.path).path)
             if not route:
                 return self.send(404, "application/json", b'{"error": "not found"}')
-            route(self, connect)
+            route(self, database)
         finally:
             self.log_message('"%s" %s %.0f ms', self.requestline, self.status, (time.perf_counter() - started) * 1000)
 
@@ -424,8 +445,10 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(404, "application/json", b'{"error": "not found"}')
         body = path.read_bytes()
         # Files change on deploy, so the browser asks every time, and a revisit costs a 304 without a body.
+        # A file under vendor/ never changes: a new version gets a new name.
         etag = f'"{hashlib.sha1(body).hexdigest()}"'
-        headers = (("ETag", etag), ("Cache-Control", "no-cache"))
+        cache = "public, max-age=31536000, immutable" if rel.startswith("vendor/") else "no-cache"
+        headers = (("ETag", etag), ("Cache-Control", cache))
         if etag in self.headers.get("If-None-Match", ""):
             return self.send(304, None, b"", headers)
         self.send(200, TYPES.get(path.suffix, "application/octet-stream"), body, headers)
@@ -435,14 +458,18 @@ class Handler(BaseHTTPRequestHandler):
         if not route:
             return self.send(404, "application/json", b'{"error": "not found"}')
         try:
-            con = connect()
-            try:
-                status, result = 200, route(con.cursor(), parse_qs(url.query))
-            finally:
-                con.close()
+            status, result = 200, route(database().cursor(), parse_qs(url.query))
         except BadRequest as error:
             status, result = 400, {"error": str(error)}
-        self.send(status, "application/json", json.dumps(result, ensure_ascii=False, default=str).encode())
+        body = json.dumps(result, ensure_ascii=False, default=str).encode()
+        if status != 200:
+            return self.send(status, "application/json", body)
+        cache = "public, max-age=31536000, immutable" if url.path in IMMUTABLE else f"public, max-age={MAX_AGE}"
+        etag = f'"{hashlib.sha1(body).hexdigest()}"'
+        headers = (("ETag", etag), ("Cache-Control", cache))
+        if etag in self.headers.get("If-None-Match", ""):
+            return self.send(304, None, b"", headers)
+        self.send(200, "application/json", body, headers)
 
     def send(self, status, kind, body, headers=()):
         self.send_response(status)
@@ -455,7 +482,34 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
+def fork_worker(server):
+    pid = os.fork()
+    if pid == 0:
+        try:
+            try:
+                database()  # before the first request, not during it
+            except pymysql.Error as error:
+                print(f"worker {os.getpid()}: no database yet: {error}", flush=True)
+            server.serve_forever()
+        finally:
+            os._exit(1)
+    return pid
+
+
+def serve(port, workers):
+    """WORKERS processes take turns accepting on one socket, each with its own database connection.
+
+    A shared socket, not SO_REUSEPORT: the kernel then gives each new request to an idle worker, never to
+    one that is streaming an answer. A worker that dies is replaced."""
+    server = Server(("127.0.0.1", port), Handler)
+    print(f"http://127.0.0.1:{port} ({workers} workers)", flush=True)
+    for _ in range(workers):
+        fork_worker(server)
+    while True:
+        pid, status = os.wait()
+        print(f"worker {pid} exited ({status}); starting another", flush=True)
+        fork_worker(server)
+
+
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8010))
-    print(f"http://127.0.0.1:{port}")
-    Server(("127.0.0.1", port), Handler).serve_forever()
+    serve(int(os.environ.get("PORT", 8010)), WORKERS)
