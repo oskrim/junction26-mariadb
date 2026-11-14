@@ -15,6 +15,12 @@ const GAP = 12;
 const TRAY = 60;
 const SIDE_W = 420;
 
+// A new chat opens on the right, except in Explore, where the details panel is on the right and the
+// chat tray on the left.
+function newChatX() {
+  return document.body.dataset.view === "explore" ? 20 : innerWidth - 20 - Math.min(W, innerWidth - EDGE * 2);
+}
+
 // Panels on the right start 20px below the top bar, like Explore's details panel.
 function topLine() {
   return (document.querySelector(".bar")?.getBoundingClientRect().bottom ?? 0) + 21;
@@ -99,7 +105,7 @@ export function chatPanel({ article, onClose }) {
     el.title.textContent = chat.title;
     const wasHidden = el.panel.hidden;
     el.panel.hidden = false;
-    if (!docked && (from || !place)) place = from ? spotNear(from, avoid) : { x: innerWidth - 20 - floatSize().w, y: topLine() };
+    if (!docked && (from || !place)) place = from ? spotNear(from, avoid) : { x: newChatX(), y: topLine() };
     layout();
     if (!docked && from) growFrom(from);
     else if (wasHidden) popIn();
