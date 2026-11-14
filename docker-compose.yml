@@ -1,0 +1,21 @@
+services:
+  mariadb:
+    image: mariadb:lts
+    command: --innodb-buffer-pool-size=512M --max-allowed-packet=64M
+    environment:
+      MARIADB_ROOT_PASSWORD: wiki
+      MARIADB_DATABASE: wiki
+      MARIADB_USER: wiki
+      MARIADB_PASSWORD: wiki
+    ports:
+      - "127.0.0.1:3308:3306"
+    mem_limit: 2g
+    volumes:
+      - wiki-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      retries: 30
+
+volumes:
+  wiki-data:
