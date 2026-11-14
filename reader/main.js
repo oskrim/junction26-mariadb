@@ -51,7 +51,7 @@ if (!version || !summary) {
   start.addEventListener("click", async () => {
     const { startHistoryPlay } = await import("./history-play.js");
     start.disabled = true;
-    startHistoryPlay({ id, body, toc, renderToc, onClose: () => (start.disabled = false) });
+    startHistoryPlay({ id, body, onClose: () => (start.disabled = false) });
   });
   hoverCard({
     root: body,
