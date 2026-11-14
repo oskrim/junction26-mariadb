@@ -454,8 +454,9 @@ export function startHistoryPlay({ id, body, onClose }) {
         continue;
       }
       const place = { adds: [], rewrites: [], removes: [], size: 0 };
+      const partner = partners(r.a, r.b);
       r.b.forEach((next, k) => {
-        const prev = r.a[k];
+        const prev = partner[k];
         kept.push({ key: next.key, el: next.el });
         if (prev && prev.el.tagName === next.el.tagName) {
           place.rewrites.push({ old: prev.el, next: next.el });
@@ -468,7 +469,8 @@ export function startHistoryPlay({ id, body, onClose }) {
           place.size += textOf(next.el).length + 40;
         }
       });
-      for (const prev of r.a.slice(r.b.length)) {
+      const paired = new Set(partner);
+      for (const prev of r.a.filter((a) => !paired.has(a))) {
         place.removes.push(prev.el);
         out.push(prev.el);
         place.size += textOf(prev.el).length;
@@ -547,7 +549,6 @@ export function startHistoryPlay({ id, body, onClose }) {
   // the old words a letter at a time and typing the new ones, one change after another. Paragraphs then
   // settle into the article's own text, links and all.
   async function applyTyped(place, token) {
-    for (const el of place.removes) await openUp(el, el.offsetHeight, SHUT / rate, 0).then(() => el.remove());
     const jobs = [];
     for (const el of place.adds) {
       for (const k of Object.keys(CLOSED)) el.style[k] = "";
@@ -567,14 +568,17 @@ export function startHistoryPlay({ id, body, onClose }) {
         next.classList.add("hp-changed");
         continue;
       }
-      const draft = blank(next);
-      old.replaceWith(draft);
-      jobs.push({ draft, next, ops: wordEdits(textOf(old), textOf(next)), from: old });
+      // The old paragraph stays as it is until the cursor gets to it.
+      jobs.push({ draft: blank(next), next, ops: wordEdits(textOf(old), textOf(next)), from: old });
     }
+    // The cursor goes through the place from top to bottom.
+    const at = (job) => (job.from?.isConnected ? job.from : job.draft);
+    jobs.sort((a, b) => (at(a).compareDocumentPosition(at(b)) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1));
     // Once the version's QUOTA is typed, the rest fades in: new paragraphs open up, and edits left in a
     // paragraph appear at once.
     const quota = { left: QUOTA };
     for (const job of jobs) {
+      if (job.from?.isConnected) job.from.replaceWith(job.draft);
       if (quota.left > 0 || !job.ops[0].whole) {
         await typeInto(job.draft, job.ops, quota, token);
         continue;
@@ -584,6 +588,8 @@ export function startHistoryPlay({ id, body, onClose }) {
       job.draft = null;
       openUp(job.next, 0, GROW / rate);
     }
+    // Paragraphs that are gone close once the new text is in.
+    await Promise.all(place.removes.map((el) => openUp(el, el.offsetHeight, SHUT / rate, 0).then(() => el.remove())));
     if (jobs.length) await wait(SETTLE / rate, token);
     for (const { draft, next } of jobs) {
       if (!draft?.isConnected) continue;
@@ -841,6 +847,34 @@ function sectionTitle(el) {
     if (/^H[2-4]$/.test(at.tagName)) return at.textContent.trim();
   }
   return null;
+}
+
+// For each new block in a changed run, the old block it is an edit of: the one of the same kind that
+// shares the most words with it (at least a fifth of the longer one's), so text that moved is edited, not removed and
+// typed again. Very long runs pair by position.
+function partners(before, after) {
+  const same = (a, b) => a.el.tagName === b.el.tagName;
+  if (before.length * after.length > 4000) return after.map((b, k) => (before[k] && same(before[k], b) ? before[k] : null));
+  const wordsOf = (block) => new Set(block.key.slice(block.key.indexOf(":") + 1).toLowerCase().match(/[\p{L}\d]+/gu) ?? []);
+  const sets = new Map([...before, ...after].map((block) => [block, wordsOf(block)]));
+  const used = new Set();
+  return after.map((b, k) => {
+    let best = null;
+    let bestScore = 0.2;
+    for (const a of before) {
+      if (used.has(a) || !same(a, b)) continue;
+      const x = sets.get(a);
+      const y = sets.get(b);
+      let shared = 0;
+      for (const w of x) if (y.has(w)) shared++;
+      const score = shared / Math.max(1, x.size, y.size);
+      if (score > bestScore) [best, bestScore] = [a, score];
+    }
+    // Blocks without words (images, empty lines) pair by position.
+    if (!best && !sets.get(b).size && before[k] && !used.has(before[k]) && same(before[k], b)) best = before[k];
+    if (best) used.add(best);
+    return best;
+  });
 }
 
 // A heading and the elements under it, up to the next heading of the same or a higher level.
