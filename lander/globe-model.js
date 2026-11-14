@@ -1,6 +1,6 @@
 // The real Wikipedia puzzle globe (official 3D render, CC BY-SA 3.0, slimmed from 122 MB to ~150 KB).
 // 51 pieces, each its own mesh so it can lift off the ball. The letters are an image wrapped
-// around the ball (model/letters.png) instead of millions of carved triangles.
+// around the ball with the seams (model/surface.png) instead of millions of carved triangles.
 import * as THREE from "./vendor/three.module.min.js";
 import { MeshoptDecoder } from "./vendor/meshopt_decoder.module.js";
 
@@ -14,7 +14,7 @@ const VERT = /* glsl */ `
     vR = normalMatrix * position;
     // shrink the piece a hair around its own middle so a groove opens between neighbours
     vec3 c = uDir * ${(RADIUS - 0.012).toFixed(3)};
-    vec3 p = c + (position - c) * 0.99;
+    vec3 p = c + (position - c) * 0.996;
     vec4 mv = modelViewMatrix * vec4(p, 1.);
     vView = mv.xyz;
     gl_Position = projectionMatrix * mv;
@@ -42,7 +42,11 @@ const FRAG = /* glsl */ `
       col *= mix(0.84, 1., smoothstep(0., 0.6, facing));
       col += pow(max(dot(reflect(-L, N), V), 0.), 10.) * 0.04;
       vec2 uv = vec2(atan(vP.y, vP.x) / (2. * PI) + 0.5, acos(clamp(vP.z / r, -1., 1.)) / PI);
-      float ink = texture2D(uLetters, uv).r;
+      // one grey channel: 0–0.39 is a seam between pieces, 0.39–1 is a letter
+      float t = texture2D(uLetters, uv).r;
+      float seam = clamp(t / 0.39, 0., 1.);
+      float ink = clamp((t - 0.39) / 0.61, 0., 1.);
+      col = mix(col, col * 0.58, seam * (1. - ink));
       col = mix(col, vec3(0.12, 0.12, 0.13), ink * mix(0.55, 0.95, smoothstep(0.05, 0.5, facing)));
     } else if (r < ${(RADIUS - 0.022).toFixed(3)}) {
       // inside of the shell, seen through the open top
@@ -101,7 +105,7 @@ export function createGlobe(canvas) {
   model.scale.setScalar(1 / RADIUS);
   spin.add(model);
 
-  const letters = new THREE.TextureLoader().load(new URL("./model/letters.png", import.meta.url).href);
+  const letters = new THREE.TextureLoader().load(new URL("./model/surface.png", import.meta.url).href);
   letters.flipY = false;
   letters.generateMipmaps = false;
   letters.minFilter = THREE.LinearFilter;
