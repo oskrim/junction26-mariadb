@@ -4,14 +4,40 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Wikipedia Reader</title>
+    <script>
+      // main.js imports the open view's modules only after the article loads; fetch them alongside it.
+      {
+        const views = {
+          explore: ["explore.js"],
+          history: ["history.js", "article-panel.js", "diff.js", "history-cards.js", "history-model.js", "minimap.js", "timeline3d.js", "war-replay.js"],
+        };
+        for (const file of views[new URLSearchParams(location.search).get("view")] ?? []) {
+          const link = Object.assign(document.createElement("link"), { rel: "modulepreload", href: `./${file}` });
+          document.head.append(link);
+        }
+      }
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,500;0,8..60,600;1,8..60,400&display=swap"
       rel="stylesheet"
     />
+    <link rel="modulepreload" href="./main.js" />
+    <link rel="modulepreload" href="./api.js" />
+    <link rel="modulepreload" href="./chat.js" />
+    <link rel="modulepreload" href="./assistant.js" />
+    <link rel="modulepreload" href="./fake/assistant.js" />
+    <link rel="modulepreload" href="./learn.js" />
+    <link rel="modulepreload" href="./model3d.js" />
+    <link rel="modulepreload" href="./cursor-menu.js" />
+    <link rel="modulepreload" href="./hover-card.js" />
+    <link rel="modulepreload" href="./search.js" />
+    <link rel="modulepreload" href="./wikitext.js" />
+    <link rel="modulepreload" href="./censor.js" />
+    <link rel="modulepreload" href="./steps.js" />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
     <link rel="stylesheet" href="./styles.css" />
     <link rel="stylesheet" href="./explore.css" />
     <link rel="stylesheet" href="./cursor-menu.css" />

@@ -3,6 +3,7 @@
     uv run --with pymysql python server/app.py      # http://127.0.0.1:8010 ($PORT)
 """
 import difflib
+import hashlib
 import html
 import json
 import os
@@ -214,8 +215,23 @@ def extract(markdown):
     return ""
 
 
-def preview(cur, params):
-    title = normalize(params.get("title", [""])[0])
+THUMB_WIDTH = 330  # a standard Wikimedia thumbnail width (others answer 400), wider than every place that shows one
+
+
+def thumbnail_url(name):
+    """The direct upload.wikimedia.org thumbnail of a Commons file: Special:FilePath costs two redirects.
+
+    Mirrors fileUrl in reader/api.js."""
+    name = name.replace(" ", "_")
+    digest = hashlib.md5(name.encode()).hexdigest()
+    suffix = ".png" if name.lower().endswith(".svg") else ".jpg" if name.lower().endswith((".tif", ".tiff")) else ""
+    prefix = "lossy-page1-" if suffix == ".jpg" else ""
+    return (f"https://upload.wikimedia.org/wikipedia/commons/thumb/{digest[0]}/{digest[:2]}/{quote(name)}/"
+            f"{prefix}{THUMB_WIDTH}px-{quote(name)}{suffix}")
+
+
+def preview_of(cur, title):
+    title = normalize(title)
     if not title:
         raise BadRequest("title is required")
     # Find the page_id first and read text by primary key: selecting text in a scan reads all of it.
@@ -233,10 +249,23 @@ def preview(cur, params):
     image = next(filter(None, (pattern.search(m["text"]) for pattern in IMAGES)), None) if m else None
     thumbnail = None
     if image:
-        name = normalize(image.group(1).strip())
-        thumbnail = {"url": f"https://commons.wikimedia.org/wiki/Special:FilePath/{quote(name)}?width=640",
-                     "width": 640, "height": None}
+        thumbnail = {"url": thumbnail_url(normalize(image.group(1).strip())), "width": THUMB_WIDTH, "height": None}
     return {"title": found["title"], "extract": extract(s["text"]) if s else "", "thumbnail": thumbnail}
+
+
+def preview(cur, params):
+    return preview_of(cur, params.get("title", [""])[0])
+
+
+MAX_PREVIEWS = 100
+
+
+def previews(cur, params):
+    """Many previews in one request: {title: preview | null} for titles=a|b|c (titles cannot hold "|")."""
+    titles = list(dict.fromkeys(t for t in params.get("titles", [""])[0].split("|") if t.strip()))
+    if not titles or len(titles) > MAX_PREVIEWS:
+        raise BadRequest(f"titles must name 1 to {MAX_PREVIEWS} articles")
+    return {title: preview_of(cur, title) for title in titles}
 
 
 def prose(markdown):
@@ -322,7 +351,7 @@ def search(cur, params):
 
 
 ROUTES = {"/api/articles": articles, "/api/article": article, "/api/history": history, "/api/change": change,
-          "/api/graph": graph, "/api/topics": topics, "/api/preview": preview, "/api/search": search}
+          "/api/graph": graph, "/api/topics": topics, "/api/preview": preview, "/api/previews": previews, "/api/search": search}
 # POST handlers write their own response, so they can stream.
 POST_ROUTES = {"/api/ask": ask.serve, "/api/learn": learn.serve}
 
