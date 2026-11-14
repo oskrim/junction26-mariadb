@@ -364,7 +364,8 @@ export function startHistoryPlay({ id, body, onClose }) {
   };
   function setPan(px, ms = 0, easing = "linear") {
     const { view, full } = stripWidth();
-    pan = Math.min(full - view, Math.max(0, px));
+    // It may pan past either end, so the marker can stay in the middle from the first year to the last.
+    pan = Math.min(full - view / 2, Math.max(-view / 2, px));
     const inner = $(".hp-map-inner");
     inner.style.width = `${full}px`;
     inner.style.transition = `transform ${ms}ms ${easing}`;
@@ -381,7 +382,11 @@ export function startHistoryPlay({ id, body, onClose }) {
       setPan(pan);
       return;
     }
-    setPan(x - view / 2, ms, easing);
+    // Coming back from where the reader left it, the strip glides rather than snapping.
+    const back = panHeld && Math.abs(pan - (x - view / 2)) > 4;
+    panHeld = 0;
+    if (back) setPan(x - view / 2, Math.max(ms, 600), "cubic-bezier(0.25, 0.8, 0.25, 1)");
+    else setPan(x - view / 2, ms, easing);
   }
 
   // The year strip can be dragged: the marker follows the pointer, the road glides along, and the
