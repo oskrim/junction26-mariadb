@@ -39,7 +39,8 @@ FIND_RULES = """You find where one Wikipedia article says something. Read the ar
   Prefer prose sentences; use a table row or template only when no sentence says it. "section" is the heading it is under ("" for the lead).
 - term: the key word or name from the request, in the article's language, cut to its stem so that a substring
   search also finds inflected forms (for example "vankileir" for "vankileirit", "Mannerhei" for "Mannerheimin").
-- summary: one sentence, in the language of the request, saying what the quotes show."""
+- summary: one sentence saying what the quotes show, written in the language of the request, not of the
+  article: an English request gets an English summary even though the quotes stay in Finnish."""
 
 FIND_SCHEMA = {
     "type": "OBJECT",
