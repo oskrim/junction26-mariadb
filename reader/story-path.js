@@ -60,6 +60,9 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
       // each fighter keeps to their own side of the road.
       side: [-1, 1][inWar.get(to)?.fighters.indexOf(e.user)] ?? (net >= 0 ? 1 : -1),
       changed,
+      // Characters added and cut since the stop before, shown like a diff's +/−.
+      added: k ? span.reduce((n, x) => n + Math.max(0, x.delta), 0) : e.chars,
+      cut: k ? span.reduce((n, x) => n + Math.max(0, -x.delta), 0) : 0,
       color: reverts ? [0, 62, 58] : net < -100 ? [0, 45, 78] : userColor(e.user, e.kind),
     };
   });
@@ -363,9 +366,18 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
       const name = shorten(censor(b.user));
       ctx.font = `${walking ? 600 : 500} 11px Inter, system-ui, sans-serif`;
       const w = ctx.measureText(name).width;
-      // Labels sit on the outer side of the disc, kept inside the canvas.
-      const lx = Math.max(4, Math.min(width - w - 4, b.side > 0 ? foot.x + r + 5 : foot.x - r - 5 - w));
-      const box = { x: lx - 3, y: cy - 8, w: w + 6, h: 16 };
+      // The walker's label has a second line: +added −cut, in characters.
+      const diff = walking && [b.added && `+${b.added.toLocaleString("en-US")}`, b.cut && `−${b.cut.toLocaleString("en-US")}`].filter(Boolean);
+      // Labels sit on the outer side of the disc, inside the panel's clear middle away from its faded edges.
+      ctx.font = "600 10.5px Inter, system-ui, sans-serif";
+      const dw = diff?.length ? ctx.measureText(diff.join("  ")).width : 0;
+      ctx.font = `${walking ? 600 : 500} 11px Inter, system-ui, sans-serif`;
+      const lw = Math.max(w, dw);
+      // On the road's outer side when there is room, otherwise on the other side of the disc.
+      const right = foot.x + r + 5;
+      const left = foot.x - r - 5 - lw;
+      const lx = b.side > 0 ? (right + lw <= width * 0.9 ? right : left) : left >= width * 0.1 ? left : right;
+      const box = { x: lx - 3, y: cy - 8, w: lw + 6, h: diff?.length ? 30 : 16 };
       if (!walking && labels.some((o) => box.x < o.x + o.w && o.x < box.x + box.w && box.y < o.y + o.h && o.y < box.y + box.h)) return;
       labels.push(box);
       ctx.fillStyle = `rgba(255,255,255,${0.85 * a})`;
@@ -375,6 +387,14 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
       ctx.fillStyle = `rgba(32,33,34,${(walking ? 0.95 : 0.7) * a})`;
       ctx.textAlign = "left";
       ctx.fillText(name, lx, cy + 4);
+      if (!diff?.length) return;
+      ctx.font = "600 10.5px Inter, system-ui, sans-serif";
+      let dx = lx;
+      for (const part of diff) {
+        ctx.fillStyle = part[0] === "+" ? `rgba(26,127,55,${a})` : `rgba(207,34,46,${a})`;
+        ctx.fillText(part, dx, cy + 18);
+        dx += ctx.measureText(part).width + 6;
+      }
     }
 
     function drawSign(sign) {

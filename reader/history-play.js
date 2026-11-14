@@ -266,6 +266,10 @@ export function startHistoryPlay({ id, body, onClose }) {
       if (frames[i].war) {
         if (travel?.time !== time) travelTo(time, MIN_TRIP / rate);
         if (!(await wait(Math.max(0, travel.end - performance.now()), token))) return;
+      } else if (!frames[i].round && travel?.time !== time) {
+        // The next editor sets off at once, while their version is still loading.
+        path.setStop(i);
+        travelTo(time, MIN_TRIP / rate);
       }
       // A war round with nothing to type (its edit touched only the infobox, a table or the sources) passes
       // as quickly as the blow on the road.
@@ -357,10 +361,12 @@ export function startHistoryPlay({ id, body, onClose }) {
     // During playback the marker and road travel here while the version is written; after a jump they
     // glide over at once.
     path.setStop(i);
+    // A jump goes straight there.
     if (!animate && !$(".hp-map").classList.contains("is-dragging")) {
       travel = null;
-      moveMarker(frame.edit.time, 450, "cubic-bezier(0.25, 0.8, 0.25, 1)");
-      path.setTime(frame.edit.time);
+      panHeld = 0;
+      moveMarker(frame.edit.time, 0);
+      path.setTime(frame.edit.time, { instant: true });
     }
     path.setWar(frame.war ?? null);
     // On the road the fighters trade blows round by round; the last round names the winner.
@@ -519,8 +525,8 @@ export function startHistoryPlay({ id, body, onClose }) {
       if (panned) return;
       if (!moved) {
         panHeld = 0;
-        moveMarker(time, 450, "cubic-bezier(0.25, 0.8, 0.25, 1)");
-        path.setTime(time);
+        moveMarker(time, 0);
+        path.setTime(time, { instant: true });
       }
       jump(frameAt(time));
     };
