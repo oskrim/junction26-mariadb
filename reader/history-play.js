@@ -16,15 +16,15 @@ const AGAIN = `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8a4.5 4
 // Milliseconds at 1×: the pause after each version, longer where a war starts; a paragraph opening or
 // closing; and how long a changed paragraph shows its new words.
 const STEP = 300;
-const ROUND_HOLD = 250;
-const QUIET_ROUND = 550;
+const ROUND_HOLD = 60;
+const QUIET_ROUND = 300;
 const MIN_TRIP = 2600;
 const ERASE = 550;
 const REVEAL = 900;
 // Rounds of a war shown at most, and how fast ordinary versions and war rounds play, at 1×.
 const ROUNDS = 10;
 const FAST = 2;
-const SLOW = 1;
+const SLOW = 1.6;
 const WAR_HOLD = 1800;
 const GROW = 700;
 const SHUT = 420;
@@ -279,7 +279,11 @@ export function startHistoryPlay({ id, body, onClose }) {
       if (travel?.time !== time) travelTo(time, hold());
       // The next version waits for the walker to reach the end of this road, so every road is walked at
       // about the same pace; at most MIN_TRIP more, so a long estimate never stalls playback.
-      const waited = await wait(Math.min(Math.max(hold(), MIN_TRIP / rate), Math.max(0, travel.end - performance.now())), token);
+      // War rounds don't wait for the road: blow follows blow.
+      const waited = await wait(
+        frames[i].round ? hold() : Math.min(Math.max(hold(), MIN_TRIP / rate), Math.max(0, travel.end - performance.now())),
+        token,
+      );
       if (!waited) return;
     }
     if (token === run) {
@@ -734,7 +738,7 @@ export function startHistoryPlay({ id, body, onClose }) {
       openUp(el, el.offsetHeight, SHUT / rate, 0).then(() => el.remove());
     }
     // In a war the next blow follows straight on.
-    if (jobs.length) await wait((typist?.war ? 150 : SETTLE) / rate, token);
+    if (jobs.length) await wait((typist?.war ? 40 : SETTLE) / rate, token);
     for (const { draft, next } of jobs) {
       if (!draft?.isConnected) continue;
       const from = draft.offsetHeight;
