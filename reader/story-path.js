@@ -298,7 +298,7 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
     // editor's color, the one being walked fills in up to the camera, and those to come are faint. Rounds of
     // an edit war have no side road of their own: the war's two branches stand for them.
     // An editor's versions in a row make one road, drawn as one piece so there are no seams where they
-    // meet: walked part solid, a soft fade around the walker, the rest faint.
+    // meet.
     for (const head of blocks) {
       if (!head.k || head.joinPrev || inWar.has(stops[head.k])) continue;
       const run = [head];
@@ -315,27 +315,8 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
       const walking = run.find((b) => b.k === walkK);
       const [h, sat, light] = (walking ?? head).color;
       const flat = (alpha, dl) => `hsla(${h},${sat}%,${light + dl}%,${alpha * a})`;
-      if (last.k < walkK) {
-        slab(z0, z1, offset, half, LANE_H, flat(1, 0), flat(1, -22));
-        continue;
-      }
-      if (head.k > walkK) {
-        slab(z0, z1, offset, half, LANE_H, flat(0.1, 0), flat(0.1, -22));
-        continue;
-      }
-      // Being walked: the colour runs along the road on screen, solid behind the walker and faint ahead.
-      const FADE = 160;
-      const za = Math.max(camZ + NEAR, nowZ - FADE);
-      const zb = nowZ + FADE / 2;
-      const pa = project(offset(za), LANE_H, za);
-      const pb = project(offset(zb), LANE_H, zb);
-      const shade = (dl) => {
-        const g = ctx.createLinearGradient(pa.x, pa.y, pb.x, pb.y);
-        g.addColorStop(0, flat(1, dl));
-        g.addColorStop(1, flat(0.25, dl));
-        return g;
-      };
-      slab(z0, z1, offset, half, LANE_H, shade(0), shade(-22));
+      // Every road is in full colour all the time.
+      slab(z0, z1, offset, half, LANE_H, flat(1, 0), flat(1, -22));
     }
 
 
