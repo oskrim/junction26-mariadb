@@ -19,9 +19,6 @@ const STEP = 300;
 const ROUND_HOLD = 250;
 const QUIET_ROUND = 550;
 const MIN_TRIP = 1600;
-// Years the strip shows at a time; it follows the marker unless the reader has just panned it.
-const ZOOM_YEARS = 6;
-const PAN_HOLD = 5000;
 const ERASE = 550;
 const REVEAL = 900;
 // Rounds of a war shown at most, and how fast ordinary versions and war rounds play, at 1×.
@@ -164,8 +161,6 @@ export function startHistoryPlay({ id, body, onClose }) {
     minimap = createMinimap({ root: $(".hp-map"), edits, wars, onPick: () => {} });
     colorStrip(wars);
     scrub();
-    // The strip takes its zoomed width first, so the swords are spaced out at that width.
-    moveMarker(edits[0].time, 0);
     drawSwords(wars);
     path = createStoryPath({
       canvas: side.querySelector("canvas"),
@@ -362,9 +357,8 @@ export function startHistoryPlay({ id, body, onClose }) {
     // glide over at once.
     path.setStop(i);
     // A jump goes straight there.
-    if (!animate && !$(".hp-map").classList.contains("is-dragging")) {
+    if (!animate) {
       travel = null;
-      panHeld = 0;
       moveMarker(frame.edit.time, 0);
       path.setTime(frame.edit.time, { instant: true });
     }
@@ -380,7 +374,6 @@ export function startHistoryPlay({ id, body, onClose }) {
     );
     $(".hp-date").textContent = formatDate(parseRowStart(version.row_start));
     $(".hp-who").innerHTML = `${escape(censor(version.user))} <span>· version ${(frame.edit.index + 1).toLocaleString("en-US")} of ${edits.length.toLocaleString("en-US")}</span>`;
-    if (!frame.war && announced && (frame.edit.time > announced.end || frame.edit.time < announced.start)) announce(null);
     rate = speed * (frame.round ? SLOW : FAST);
     showRound(frame);
     // In a war the fighters type in their own colors, and an undo says so.
@@ -391,8 +384,10 @@ export function startHistoryPlay({ id, body, onClose }) {
       color: fighter >= 0 && fighter < 8 ? colorFor(fighter) : editorColor(frame.edit.user, frame.edit.kind),
       war: !!frame.round,
     };
-    // The title and round count change with the globe, as the round starts, not once it is written.
-    if (frame.war) announce(frame.war);
+    // The title and round count change with the globe, as the round starts, not once it is written,
+    // and from any round, so landing mid-war shows them too.
+    if (frame.round && announced !== frame.round) announce(frame.round);
+    else if (!frame.round && announced) announce(null);
     showRound(frame);
     await render(version, renderMath, token, animate, onPlan, frame.round);
     if (token !== run || closed) return;
@@ -415,45 +410,14 @@ export function startHistoryPlay({ id, body, onClose }) {
     }
   }
 
-  // The strip shows ZOOM_YEARS at a time, panning with the marker so the marker stays in the middle;
-  // after the reader drags or scrolls it, it stays where they left it for PAN_HOLD.
-  let pan = 0;
-  let panHeld = 0;
-  const stripWidth = () => {
-    const view = $(".hp-map").clientWidth;
-    const span = edits.at(-1).time - edits[0].time;
-    return { view, full: Math.max(view, view * (span / (ZOOM_YEARS * 31_557_600_000))) };
-  };
-  function setPan(px, ms = 0, easing = "linear") {
-    const { view, full } = stripWidth();
-    // It may pan past either end, so the marker can stay in the middle from the first year to the last.
-    pan = Math.min(full - view / 2, Math.max(-view / 2, px));
-    const inner = $(".hp-map-inner");
-    inner.style.width = `${full}px`;
-    inner.style.transition = `transform ${ms}ms ${easing}`;
-    inner.style.transform = `translateX(${-pan}px)`;
-  }
   function moveMarker(time, ms, easing = "linear") {
     const marker = $(".minimap-now");
     marker.style.transitionDuration = `${ms}ms`;
     marker.style.transitionTimingFunction = easing;
     minimap.setTime(time);
-    const { view, full } = stripWidth();
-    const x = ((time - edits[0].time) / (edits.at(-1).time - edits[0].time)) * full;
-    if (performance.now() < panHeld) {
-      setPan(pan);
-      return;
-    }
-    // Coming back from where the reader left it, the strip glides rather than snapping.
-    const back = panHeld && Math.abs(pan - (x - view / 2)) > 4;
-    panHeld = 0;
-    if (back) setPan(x - view / 2, Math.max(ms, 600), "cubic-bezier(0.25, 0.8, 0.25, 1)");
-    else setPan(x - view / 2, ms, easing);
   }
 
-  // The year strip can be dragged: the marker follows the pointer, the road glides along, and the
-  // article shows the nearest version as it passes. A click glides the marker there instead of jumping.
-  // Letting go carries on from there, playing or paused as before.
+  // The year strip: hovering shows the date, and a click jumps there.
   function scrub() {
     const map = $(".hp-map");
     const hover = document.createElement("div");
@@ -465,83 +429,19 @@ export function startHistoryPlay({ id, body, onClose }) {
       const r = map.querySelector(".minimap-svg").getBoundingClientRect();
       return start + Math.min(1, Math.max(0, (event.clientX - r.left) / r.width)) * (end - start);
     };
-    let drag = null;
-    let shownAt = -1;
-    // One version loads at a time while dragging; when it is shown, the latest one asked for comes next.
-    let wanted = null;
-    let busy = false;
-    const preview = async (i) => {
-      wanted = i;
-      if (busy) return;
-      busy = true;
-      while (drag && wanted !== null) {
-        const k = wanted;
-        wanted = null;
-        if (k === shownAt) continue;
-        shownAt = k;
-        await show(k, ++run, false);
-      }
-      busy = false;
-    };
     map.addEventListener("pointermove", (event) => {
       const time = timeAt(event);
       hover.textContent = formatDate(time);
       hover.style.left = `${((time - start) / (end - start)) * 100}%`;
-      if (!drag) return;
-      if (Math.abs(event.clientX - drag.x) > 4) drag.moved = true;
-      if (!drag.moved) return;
-      // Dragging the strip itself pans it; dragging the marker's handle scrubs.
-      if (drag.panning) {
-        panHeld = performance.now() + PAN_HOLD;
-        setPan(drag.pan - (event.clientX - drag.x));
-        return;
-      }
-      // The strip holds still under the pointer while the marker is scrubbed.
-      panHeld = performance.now() + PAN_HOLD;
-      moveMarker(time, 0);
-      path.setTime(time);
-      $(".hp-date").textContent = formatDate(time);
-      preview(frameAt(time));
     });
-    map.addEventListener("pointerdown", (event) => {
-      if (event.target.closest(".hp-sword") || event.button !== 0) return;
-      map.setPointerCapture(event.pointerId);
-      closeWar();
-      run++;
-      looping = false;
-      const handle = $(".minimap-now").getBoundingClientRect();
-      drag = { x: event.clientX, moved: false, pan, panning: Math.abs(event.clientX - (handle.left + handle.width / 2)) > 14 };
-      map.classList.add("is-dragging");
-    });
-    const finish = (event) => {
-      if (!drag) return;
+    // Click-only: a click anywhere on the strip jumps there.
+    map.addEventListener("click", (event) => {
+      if (event.target.closest(".hp-sword")) return;
       const time = timeAt(event);
-      const moved = drag.moved;
-      const wasPanning = drag.panning;
-      drag = null;
-      shownAt = -1;
-      map.classList.remove("is-dragging");
-      const panned = moved && wasPanning;
-      if (panned) return;
-      if (!moved) {
-        panHeld = 0;
-        moveMarker(time, 0);
-        path.setTime(time, { instant: true });
-      }
+      moveMarker(time, 0);
+      path.setTime(time, { instant: true });
       jump(frameAt(time));
-    };
-    // A sideways scroll, or a vertical one, pans the strip too.
-    map.addEventListener(
-      "wheel",
-      (event) => {
-        event.preventDefault();
-        panHeld = performance.now() + PAN_HOLD;
-        setPan(pan + (Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY));
-      },
-      { passive: false },
-    );
-    map.addEventListener("pointerup", finish);
-    map.addEventListener("pointercancel", finish);
+    });
   }
 
   function jump(i) {
