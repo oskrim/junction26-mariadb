@@ -10,7 +10,8 @@ CREATE TABLE IF NOT EXISTS s_article (
   url           VARCHAR(500) NOT NULL,
   date_modified DATETIME,
   text          MEDIUMTEXT   NOT NULL,
-  PRIMARY KEY (lang, page_id)
+  PRIMARY KEY (lang, page_id),
+  KEY title (lang, title)
 ) CHARACTER SET utf8mb4;
 
 -- S: which categories each Finnish article is in.
