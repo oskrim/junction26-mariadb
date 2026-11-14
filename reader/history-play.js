@@ -18,7 +18,7 @@ const AGAIN = `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8a4.5 4
 const STEP = 300;
 const ROUND_HOLD = 250;
 const QUIET_ROUND = 550;
-const MIN_TRIP = 1600;
+const MIN_TRIP = 2600;
 const ERASE = 550;
 const REVEAL = 900;
 // Rounds of a war shown at most, and how fast ordinary versions and war rounds play, at 1×.
@@ -277,9 +277,9 @@ export function startHistoryPlay({ id, body, onClose }) {
       });
       if (token !== run) return;
       if (travel?.time !== time) travelTo(time, hold());
-      // The next version starts after the pause, even if the road is still on its way: an estimate that ran
-      // long must not leave the page waiting.
-      const waited = await wait(Math.min(hold(), Math.max(0, travel.end - performance.now())), token);
+      // The next version waits for the walker to reach the end of this road, so every road is walked at
+      // about the same pace; at most MIN_TRIP more, so a long estimate never stalls playback.
+      const waited = await wait(Math.min(Math.max(hold(), MIN_TRIP / rate), Math.max(0, travel.end - performance.now())), token);
       if (!waited) return;
     }
     if (token === run) {
