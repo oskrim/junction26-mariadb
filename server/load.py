@@ -1,7 +1,7 @@
 """Load the MariaDB Finnish Wikipedia datasets into the tables in schema.sql.
 
     uv run --with pymysql --with pyarrow python server/load.py s                  # S: fi, sv, en + categories
-    uv run --with pymysql --with pyarrow python server/load.py s --vectors        # ... and S's bge-m3 vectors
+    uv run --with pymysql --with pyarrow python server/load.py s --vectors        # ... and the bge-m3 vectors
     uv run --with pymysql --with pyarrow python server/load.py m                  # M: Suomen sisällissota + 19 more
     uv run --with pymysql --with pyarrow python server/load.py m --articles all   # M: every article
     uv run --with pymysql --with pyarrow python server/load.py l                  # L: the rest of Finnish Wikipedia
@@ -13,7 +13,6 @@ import argparse
 import csv
 import os
 import re
-import struct
 import sys
 import time
 from collections import Counter
@@ -119,23 +118,73 @@ def load_s(con, cur):
     print(f"s_category: {len(rows)} rows, {time.time() - started:.1f} s")
 
 
+EXTRA_VECTORS = "exports/vectors-bge-m3-extra-fi.parquet"  # embed.py's vectors, exported by `load.py export-vectors`
+VECTOR_BATCH = 2_000
+
+
+def vector_files():
+    """S's vector files, then the exported extra file when it has been downloaded."""
+    files = [DATA / f"s-2026-10/vectors-bge-m3-{lang}.parquet" for lang in ("fi", "sv", "en")]
+    return files + [DATA / EXTRA_VECTORS] if (DATA / EXTRA_VECTORS).exists() else files
+
+
+def vector_bytes(column):
+    """Each vector of a fixed-size float32 list column as raw bytes, which is how MariaDB takes a VECTOR:
+    1024 little-endian float32 numbers. Arrow stores the numbers the same way, one after another."""
+    values = column.flatten()
+    data, start, size = values.buffers()[1], values.offset * 4, column.type.list_size * 4
+    return [data[start + i * size : start + (i + 1) * size].to_pybytes() for i in range(len(column))]
+
+
 def load_s_vectors(con, cur):
-    """S's ready-made bge-m3 vectors. Each row goes into the vector index as it is inserted."""
-    for lang in ("fi", "sv", "en"):
-        started = time.time()
-        cur.execute("SELECT page_id FROM article_vector WHERE lang = %s", (lang,))
-        loaded = {p for (p,) in cur.fetchall()}
-        path = DATA / f"s-2026-10/vectors-bge-m3-{lang}.parquet"
-        ids = pq.read_table(path, columns=["page_id"])["page_id"].to_pylist()
-        rows = []
-        if set(ids) - loaded:
-            # MariaDB takes a VECTOR as raw bytes: 1024 little-endian float32 numbers.
-            rows = [(r["lang"], r["page_id"], r["model"], r["truncated"], struct.pack(f"<{len(r['embedding'])}f", *r["embedding"]))
-                    for r in pq.read_table(path).to_pylist() if r["page_id"] not in loaded]
-            insert_batched(cur, """INSERT INTO article_vector (lang, page_id, model, truncated, embedding)
-                                   VALUES (%s,%s,%s,%s,%s)""", rows, lambda r: 8_400)
-            con.commit()
-        print(f"article_vector {lang}: {len(rows)} new, {len(loaded)} already loaded, {time.time() - started:.1f} s")
+    """S's ready-made bge-m3 vectors and the extra file. Each row goes into the vector index as it is inserted."""
+    cur.execute("SELECT lang, page_id FROM article_vector")
+    loaded = set(cur.fetchall())
+    for path in vector_files():
+        started, new = time.time(), 0
+        for batch in pq.ParquetFile(path).iter_batches(batch_size=VECTOR_BATCH):
+            vectors = vector_bytes(batch.column("embedding"))
+            rows = [(lang, page_id, model, truncated, vector)
+                    for lang, page_id, model, truncated, vector in zip(
+                        batch.column("lang").to_pylist(), batch.column("page_id").to_pylist(),
+                        batch.column("model").to_pylist(), batch.column("truncated").to_pylist(), vectors)
+                    if (lang, page_id) not in loaded]
+            if rows:
+                insert_batched(cur, """INSERT INTO article_vector (lang, page_id, model, truncated, embedding)
+                                       VALUES (%s,%s,%s,%s,%s)""", rows, lambda r: 8_400)
+                con.commit()
+                new += len(rows)
+        print(f"article_vector from {path.name}: {new} new, {time.time() - started:.1f} s", flush=True)
+
+
+def export_vectors(cur, out, m_only):
+    """The Finnish vectors that S's file lacks into a Parquet file shaped like S's, and SHA256SUMS next to it.
+
+    m_only: only the M articles (wikitext), not the L articles added to the main table."""
+    import hashlib
+    import pyarrow as pa
+    started = time.time()
+    in_s = set(pq.read_table(DATA / "s-2026-10/vectors-bge-m3-fi.parquet", columns=["page_id"])["page_id"].to_pylist())
+    schema = pq.read_schema(DATA / "s-2026-10/vectors-bge-m3-fi.parquet")
+    join = "JOIN m_article a ON a.page_id = v.page_id AND a.format = 'wikitext'" if m_only else ""
+    cur.execute(f"SELECT v.page_id FROM article_vector v {join} WHERE v.lang = 'fi' ORDER BY v.page_id")
+    ids = [p for (p,) in cur.fetchall() if p not in in_s]
+    out.parent.mkdir(parents=True, exist_ok=True)
+    part = out.with_name(out.name + ".part")
+    with pq.ParquetWriter(part, schema, compression="zstd") as writer:
+        for i in range(0, len(ids), VECTOR_BATCH):
+            cur.execute("""SELECT page_id, model, truncated, embedding FROM article_vector
+                           WHERE lang = 'fi' AND page_id IN %s ORDER BY page_id""", (ids[i : i + VECTOR_BATCH],))
+            rows = cur.fetchall()
+            flat = pa.Array.from_buffers(pa.float32(), len(rows) * 1024, [None, pa.py_buffer(b"".join(r[3] for r in rows))])
+            writer.write_table(pa.table({
+                "lang": ["fi"] * len(rows), "page_id": pa.array([r[0] for r in rows], pa.uint32()),
+                "model": [r[1] for r in rows], "truncated": [bool(r[2]) for r in rows],
+                "embedding": pa.FixedSizeListArray.from_arrays(flat, 1024)}, schema=schema))
+    part.rename(out)
+    digest = hashlib.sha256(out.read_bytes()).hexdigest()
+    (out.parent / "SHA256SUMS").write_text(f"{digest}  {out.name}\n")
+    print(f"{out}: {len(ids)} vectors, {out.stat().st_size / 1e6:.1f} MB, {time.time() - started:.0f} s")
 
 
 def m_files():
@@ -314,16 +363,21 @@ def save_l(cur, rows):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("dataset", choices=["s", "m", "l"])
+    parser.add_argument("dataset", choices=["s", "m", "l", "export-vectors"])
     parser.add_argument("--articles", default="20", help="how many M articles to load, or 'all'")
     parser.add_argument("--reset", action="store_true", help="drop and recreate the dataset's tables first")
-    parser.add_argument("--vectors", action="store_true", help="s: also load S's ready-made vectors into article_vector")
+    parser.add_argument("--vectors", action="store_true",
+                        help=f"s: also load S's ready-made vectors and $WIKI_DATA/{EXTRA_VECTORS} into article_vector")
+    parser.add_argument("--out", type=Path, help="export-vectors: the Parquet file to write")
+    parser.add_argument("--m-only", action="store_true", help="export-vectors: only the M articles' vectors")
     args = parser.parse_args()
     count = "all" if args.articles == "all" else int(args.articles)
     con = connect()
     cur = con.cursor()
     cur.execute("SET time_zone = '+00:00'")  # Wikipedia's times are UTC
     cur.execute("SET system_versioning_insert_history = 1")
+    if args.dataset == "export-vectors":
+        return export_vectors(cur, args.out, args.m_only)
     create_tables(cur, args.dataset, args.reset)
     started = time.time()
     if args.dataset == "s":

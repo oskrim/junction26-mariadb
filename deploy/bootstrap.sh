@@ -146,9 +146,15 @@ EOF
 }
 
 write_caddyfile() {
+  mkdir -p /data/exports
   cat > /etc/caddy/Caddyfile <<EOF
 ${PUBLIC_IP//./-}.sslip.io {
 	encode zstd gzip
+	# Files for teammates' local copies, such as the vectors embed.py computed (load.py export-vectors).
+	handle_path /exports/* {
+		root * /data/exports
+		file_server browse
+	}
 	reverse_proxy 127.0.0.1:${PORT}
 }
 EOF
