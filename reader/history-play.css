@@ -34,7 +34,6 @@
 
 .hp-mode .layout {
   --toc: 300px;
-  padding-bottom: 160px;
 }
 
 .layout {
@@ -52,15 +51,18 @@
   position: sticky;
   top: 0;
   align-self: start;
-  height: calc(100vh - 92px);
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
   margin-left: -40px;
   animation: hp-path-in 0.8s ease 0.2s both;
 }
 
 .hp-path canvas {
   display: block;
+  flex: 1;
+  min-height: 0;
   width: 100%;
-  height: 100%;
   /* Soft edges: the road fades out at the sides and the top instead of being cut off */
   mask-image:
     linear-gradient(to right, transparent, #000 14%, #000 86%, transparent),
@@ -87,7 +89,7 @@
 .hp-moment {
   position: absolute;
   right: 16px;
-  bottom: 18px;
+  bottom: 150px;
   text-align: right;
   pointer-events: none;
 }
@@ -114,8 +116,22 @@
   }
 }
 
+/* Without room for the road, only the controls stay, along the bottom of the window */
 @media (max-width: 1080px) {
   .hp-path {
+    position: fixed;
+    inset: auto 0 0;
+    z-index: 25;
+    height: auto;
+    margin: 0;
+    padding: 0 16px;
+    background: var(--paper);
+    border-top: 1px solid var(--rule);
+  }
+
+  .hp-path canvas,
+  .hp-path .hp-key,
+  .hp-path .hp-moment {
     display: none;
   }
 }
@@ -523,13 +539,10 @@
   }
 }
 
-/* The chat tray sits above the dock */
-.hp-mode .chat-tray {
-  bottom: 104px;
-}
-
+/* No chats while the article is being written */
+.hp-mode .chat-tray,
 .hp-mode .chat-history {
-  bottom: 152px;
+  display: none;
 }
 
 /* Typing: a cursor deletes old words and types new ones */
@@ -628,4 +641,94 @@
   color: var(--ink-3);
   text-decoration: line-through;
   text-decoration-color: rgb(180 35 35 / 0.45);
+}
+
+/* The dock under the road: the strip, zoomed to a few years, and a small row of controls */
+.hp-path .hp-dock {
+  position: relative;
+  inset: auto;
+  z-index: auto;
+  padding: 4px 16px 14px 40px;
+  border: 0;
+  background: none;
+  backdrop-filter: none;
+  animation: none;
+}
+
+.hp-path .hp-map {
+  overflow: hidden;
+  mask-image: linear-gradient(to right, transparent, #000 8%, #000 92%, transparent);
+}
+
+.hp-map-inner {
+  position: relative;
+}
+
+.hp-path .hp-row {
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.hp-path .hp-play {
+  width: 28px;
+  height: 28px;
+}
+
+.hp-path .hp-play svg {
+  width: 11px;
+  height: 11px;
+}
+
+.hp-path .hp-when {
+  flex: 1;
+  width: auto;
+}
+
+.hp-path .hp-date {
+  font-size: 12.5px;
+}
+
+.hp-path .hp-who {
+  font-size: 11px;
+}
+
+.hp-path .hp-who span {
+  display: none;
+}
+
+.hp-path .hp-speed,
+.hp-path .hp-close {
+  height: 24px;
+  min-width: 24px;
+  padding: 0 6px;
+  border-color: transparent;
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
+.hp-path .hp-close {
+  font-size: 16px;
+}
+
+/* The war note: the two fighters and the round */
+.hp-war {
+  align-items: center;
+  padding: 6px 10px 6px 6px;
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+.hp-war b {
+  color: var(--ink);
+}
+
+.hp-war-where {
+  display: none;
+}
+
+.hp-war-round {
+  flex: none;
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-3);
 }

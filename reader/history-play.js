@@ -20,6 +20,7 @@ const STEP = 300;
 const ROUND_HOLD = 250;
 const QUIET_ROUND = 550;
 const MIN_TRIP = 1600;
+const ZOOM_YEARS = 5;
 const ERASE = 550;
 const REVEAL = 900;
 // Rounds of a war shown at most, and how fast ordinary versions and war rounds play, at 1×.
@@ -48,17 +49,19 @@ const HANDS_OFF = 6000;
 
 const DOCK = `
   <div class="hp-war" hidden></div>
+  <div class="minimap hp-map">
+    <div class="hp-map-inner">
+      <div class="hp-swords"></div>
+      <svg class="minimap-svg" preserveAspectRatio="none"></svg>
+      <div class="minimap-now"></div>
+      <div class="minimap-years"></div>
+    </div>
+  </div>
   <div class="hp-row">
     <button type="button" class="hp-play" aria-label="Pause">${PAUSE}</button>
     <div class="hp-when">
       <p class="hp-date">Loading history…</p>
       <p class="hp-who"></p>
-    </div>
-    <div class="minimap hp-map">
-      <div class="hp-swords"></div>
-      <svg class="minimap-svg" preserveAspectRatio="none"></svg>
-      <div class="minimap-now"></div>
-      <div class="minimap-years"></div>
     </div>
     <button type="button" class="hp-speed" aria-label="Playback speed">1×</button>
     <button type="button" class="hp-close" aria-label="Back to today's article">×</button>
@@ -82,7 +85,8 @@ export function startHistoryPlay({ id, body, onClose }) {
   const dock = document.createElement("div");
   dock.className = "hp-dock";
   dock.innerHTML = DOCK;
-  document.body.append(dock);
+  // Under the road, or along the bottom of the window when the road has no room.
+  side.append(dock);
   document.body.classList.add("hp-mode");
   // The war note sits at the top of the road panel, above the fight.
   side.append(dock.querySelector(".hp-war"));
@@ -137,6 +141,8 @@ export function startHistoryPlay({ id, body, onClose }) {
     // Clicks and drags on the strip are handled by scrub(), not the strip's own click.
     minimap = createMinimap({ root: $(".hp-map"), edits, wars, onPick: () => {} });
     scrub();
+    // The strip takes its zoomed width first, so the swords are spaced out at that width.
+    moveMarker(edits[0].time, 0);
     drawSwords(wars);
     path = createStoryPath({
       canvas: side.querySelector("canvas"),
@@ -332,17 +338,24 @@ export function startHistoryPlay({ id, body, onClose }) {
     const round = $(".hp-war-round");
     const last = frame.round.edits.findLast((e) => frame.round.fighters.slice(0, 2).includes(e.user));
     if (round) {
-      round.textContent =
-        frame.n === frame.of && last ? `${censor(last.user)} has the last word` : `round ${frame.n} of ${frame.of}`;
+      round.textContent = frame.n === frame.of && last ? `${censor(last.user)} wins` : `${frame.n}/${frame.of}`;
     }
-    if (frame.n > 1) $(".hp-war b").textContent = frame.round.kind === "dispute" ? "Edit war" : "Vandalism fought off";
   }
 
+  // The strip shows ZOOM_YEARS at a time, panning with the marker so the marker stays in the middle.
   function moveMarker(time, ms, easing = "linear") {
     const marker = $(".minimap-now");
     marker.style.transitionDuration = `${ms}ms`;
     marker.style.transitionTimingFunction = easing;
     minimap.setTime(time);
+    const inner = $(".hp-map-inner");
+    const view = $(".hp-map").clientWidth;
+    const span = edits.at(-1).time - edits[0].time;
+    const full = Math.max(view, view * (span / (ZOOM_YEARS * 31_557_600_000)));
+    inner.style.width = `${full}px`;
+    const x = ((time - edits[0].time) / span) * full;
+    inner.style.transition = `transform ${ms}ms ${easing}`;
+    inner.style.transform = `translateX(${-Math.min(full - view, Math.max(0, x - view / 2))}px)`;
   }
 
   // The year strip can be dragged: the marker follows the pointer, the road glides along, and the
@@ -352,7 +365,7 @@ export function startHistoryPlay({ id, body, onClose }) {
     const map = $(".hp-map");
     const hover = document.createElement("div");
     hover.className = "hp-hover";
-    map.append(hover);
+    map.querySelector(".hp-map-inner").append(hover);
     const start = edits[0].time;
     const end = edits.at(-1).time;
     const timeAt = (event) => {
@@ -906,8 +919,8 @@ export function startHistoryPlay({ id, body, onClose }) {
     const [a, b] = war.fighters.map(censor);
     note.innerHTML = `
       <span class="hp-war-icon">${SWORDS}</span>
-      <span><b>${war.kind === "dispute" ? "Edit war breaks out" : "Vandalism fought off"}</b>
-        <span class="hp-war-where">${war.section ? `over “${escape(war.section)}”` : ""}</span> · ${escape(a)} vs ${escape(b)} · <span class="hp-war-round"></span></span>`;
+      <span><b>${escape(a)}</b> vs <b>${escape(b)}</b><span class="hp-war-where"></span></span>
+      <span class="hp-war-round"></span>`;
     note.hidden = false;
     note.classList.remove("is-new");
     void note.offsetWidth;
