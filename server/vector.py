@@ -58,17 +58,29 @@ def count(cur):
     return cur.fetchone()["n"]
 
 
-def hybrid_sql(keyword_sql):
-    """One statement that fuses a keyword ranking and the vector ranking with reciprocal rank fusion.
+SHORT_QUERY_WORDS = 2  # a query of this many words or fewer is usually a name: its title matches lead
+SHORT_QUERY_VECTOR_WEIGHT = 0.25
 
-    keyword_sql selects page_id and a keyword_rank (1 = best) and takes its own parameters; the vector list takes
-    (vector, limit). Each article scores the sum of 1 / (RRF_K + rank) over the lists it is in. Equal scores go
-    to the article nearer by meaning, which also finds it across languages."""
+
+def vector_weight(word_count):
+    """How much the vector rank counts next to the keyword rank (1). For a name, the vectors mostly add the articles
+    the keywords miss; for a question in words, and across languages, they count as much as the keywords."""
+    return SHORT_QUERY_VECTOR_WEIGHT if word_count <= SHORT_QUERY_WORDS else 1.0
+
+
+def hybrid_sql(keyword_sql):
+    """One statement that fuses a keyword ranking and the vector ranking with weighted reciprocal rank fusion.
+
+    keyword_sql selects page_id and a keyword_rank (1 = best) and takes its own parameters; then come (vector,
+    candidates, vector weight, query, limit). Each article scores 1 / (RRF_K + rank) in the keyword list plus
+    weight / (RRF_K + rank) in the vector list. The article titled as the query (in any case or accent) comes
+    first; equal scores go to the article nearer by meaning."""
     return f"""WITH keyword AS ({keyword_sql}),
      meaning AS (SELECT page_id, ROW_NUMBER() OVER (ORDER BY distance) AS vector_rank FROM ({NEAREST}) v)
 SELECT page_id, MIN(keyword_rank) AS keyword_rank, MIN(vector_rank) AS vector_rank,
-       SUM(1 / ({RRF_K} + IFNULL(keyword_rank, vector_rank))) AS score
+       SUM(IF(keyword_rank IS NULL, %s, 1) / ({RRF_K} + IFNULL(keyword_rank, vector_rank))) AS score,
+       MAX(title = %s) AS exact
 FROM (SELECT page_id, keyword_rank, NULL AS vector_rank FROM keyword
       UNION ALL SELECT page_id, NULL, vector_rank FROM meaning) ranks
 JOIN m_article_stats USING (page_id)
-GROUP BY page_id ORDER BY score DESC, vector_rank IS NULL, vector_rank, page_id LIMIT %s"""
+GROUP BY page_id ORDER BY exact DESC, score DESC, vector_rank IS NULL, vector_rank, page_id LIMIT %s"""

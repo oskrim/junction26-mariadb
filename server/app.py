@@ -425,7 +425,8 @@ def search(cur, params):
     keyword_sql, keyword_args = keyword_ranking(q)
     try:
         query_vector = vector.embed(q)
-        cur.execute(vector.hybrid_sql(keyword_sql), (*keyword_args, query_vector, SEARCH_CANDIDATES, limit))
+        cur.execute(vector.hybrid_sql(keyword_sql), (*keyword_args, query_vector, SEARCH_CANDIDATES,
+                                                     vector.vector_weight(len(words(q))), q, limit))
     except vector.Unavailable as error:
         print(f"search: keywords only: {error}", flush=True)
         cur.execute(f"SELECT page_id, keyword_rank, NULL AS vector_rank FROM ({keyword_sql}) k "
