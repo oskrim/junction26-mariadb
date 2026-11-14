@@ -325,7 +325,7 @@ body[data-view="explore"] {
 .ex-panel {
   position: absolute;
   top: 20px;
-  left: 20px;
+  right: 20px;
   width: 340px;
   max-height: calc(100% - 124px);
   overflow-y: auto;
@@ -334,7 +334,7 @@ body[data-view="explore"] {
   box-shadow: 0 1px 2px rgb(0 0 0 / 0.06), 0 12px 40px rgb(0 0 0 / 0.1);
   opacity: 0;
   pointer-events: none;
-  transform: translateX(-16px);
+  transform: translateX(16px);
   transition: opacity 0.2s, transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
   z-index: 7000;
   scrollbar-width: none;
@@ -695,4 +695,11 @@ body[data-view="explore"] {
   background: var(--tint);
   font: 400 40px/1 var(--serif);
   color: rgb(32 33 34 / 0.35);
+}
+
+/* In Explore the details panel is on the right, so the chat tray and its history list go to the left. */
+body[data-view="explore"] .chat-tray,
+body[data-view="explore"] .chat-history {
+  right: auto;
+  left: 12px;
 }
