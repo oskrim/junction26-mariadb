@@ -488,44 +488,27 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
     ctx.restore();
   }
 
-  // A grey globe with a few meridians and parallels and a W, lit from the top left.
+  // The Wikipedia globe, as beside the prompt bar: the logo on a round white chip with a soft shadow.
   function globe(x, y, R, tilt) {
     ctx.save();
     ctx.translate(x, y);
     ctx.rotate(tilt);
-    ctx.fillStyle = "rgba(0,0,0,0.08)";
-    ctx.beginPath();
-    ctx.ellipse(0, R * 1.18, R * 0.8, R * 0.14, 0, 0, Math.PI * 2);
-    ctx.fill();
-    const g = ctx.createRadialGradient(-R * 0.35, -R * 0.4, R * 0.1, 0, 0, R);
-    g.addColorStop(0, "#fafafa");
-    g.addColorStop(0.7, "#d4d6d9");
-    g.addColorStop(1, "#a9adb2");
-    ctx.fillStyle = g;
+    ctx.shadowColor = "rgba(0,0,0,0.16)";
+    ctx.shadowBlur = 18;
+    ctx.shadowOffsetY = 4;
+    ctx.fillStyle = "#fff";
     ctx.beginPath();
     ctx.arc(0, 0, R, 0, Math.PI * 2);
     ctx.fill();
-    ctx.save();
-    ctx.clip();
-    ctx.strokeStyle = "rgba(60,64,68,0.35)";
+    ctx.shadowColor = "transparent";
+    ctx.strokeStyle = "rgba(32,33,34,0.08)";
     ctx.lineWidth = 1;
-    for (const k of [-0.6, -0.2, 0.2, 0.6]) {
-      ctx.beginPath();
-      ctx.ellipse(0, 0, R * Math.abs(k) * 1.1, R, 0, 0, Math.PI * 2);
-      ctx.stroke();
+    ctx.stroke();
+    if (GLOBE.complete && GLOBE.naturalWidth) {
+      const w = R * 1.55;
+      const h = (w * GLOBE.naturalHeight) / GLOBE.naturalWidth;
+      ctx.drawImage(GLOBE, -w / 2, -h / 2, w, h);
     }
-    for (const k of [-0.5, 0, 0.5]) {
-      ctx.beginPath();
-      ctx.ellipse(0, k * R, R * Math.sqrt(1 - k * k), R * 0.18, 0, 0, Math.PI * 2);
-      ctx.stroke();
-    }
-    ctx.restore();
-    ctx.fillStyle = "rgba(40,42,45,0.8)";
-    ctx.font = `400 ${Math.round(R * 0.8)}px "Source Serif 4", Georgia, serif`;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText("W", 0, R * 0.05);
-    ctx.textBaseline = "alphabetic";
     ctx.restore();
   }
 
@@ -685,6 +668,9 @@ function lastEditor(war) {
 }
 
 // The two main fighters keep their blue and red; the others get their own colors.
+// The Wikipedia globe the prompt bar shows.
+const GLOBE = Object.assign(new Image(), { src: new URL("files/wikipedia-globe.png", import.meta.url).href });
+
 const MORE_COLORS = ["#2a9d6f", "#c97a16", "#7b52c4", "#1f8fa8", "#b0487a", "#6d7a1f"];
 export function colorFor(k) {
   return k < 2 ? FIGHTER_COLORS[k] : MORE_COLORS[(k - 2) % MORE_COLORS.length];
