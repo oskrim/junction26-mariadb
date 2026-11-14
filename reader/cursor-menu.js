@@ -34,9 +34,9 @@ const MODES = [
   },
 ];
 
-const CORE_R = 22;
+const CARET_GAP = 20;
 const BLOB = 36;
-const REACH = 64;
+const REACH = 58;
 const BAR_W = 400;
 const BAR_H = 48;
 const EDGE = 16;
@@ -62,7 +62,7 @@ export function cursorMenu({ root, onSubmit }) {
   let frame = 0;
   let last = 0;
 
-  const core = new Spring(0);
+  const presence = new Spring(0); // 0 hidden, 1 shown: scales the caret in and out
   const blobs = MODES.map(() => ({ x: new Spring(0), y: new Spring(0), w: new Spring(0), h: new Spring(0), phase: "home" }));
 
   addEventListener("pointermove", (e) => (mouse = { x: e.clientX, y: e.clientY }), { passive: true });
@@ -133,11 +133,11 @@ export function cursorMenu({ root, onSubmit }) {
     if (mouse) setState("follow");
     else pinAt(innerWidth / 2, innerHeight / 2);
     const { x, y } = center();
-    core.snap(0);
-    core.to = CORE_R;
+    presence.snap(0);
+    presence.to = 1;
     blobs.forEach((b, i) => {
       b.phase = "home";
-      for (const [s, v] of [[b.x, x], [b.y, y], [b.w, BLOB], [b.h, BLOB]]) s.snap(v);
+      for (const [s, v] of [[b.x, x], [b.y, y], [b.w, 0], [b.h, 0]]) s.snap(v);
       later(60 + i * STAGGER, () => (b.phase = "out"));
     });
     el.input.value = "";
@@ -150,7 +150,7 @@ export function cursorMenu({ root, onSubmit }) {
     setState("closing");
     if (!keepPaint) clearPaint();
     for (const b of blobs) b.phase = "gone";
-    later(90, () => (core.to = 0));
+    later(90, () => (presence.to = 0));
     el.input.blur();
   }
 
@@ -235,10 +235,10 @@ export function cursorMenu({ root, onSubmit }) {
     });
   }
 
-  // The bar grows beside the core, on whichever side has room; on narrow screens it sits below or above.
+  // The bar grows beside the caret, on whichever side has room; on narrow screens it sits below or above.
   function barRect({ x, y }) {
     const w = Math.min(BAR_W, innerWidth - EDGE * 2);
-    const gap = CORE_R + 12;
+    const gap = CARET_GAP;
     if (x + gap + w <= innerWidth - EDGE) return { x: x + gap, y: clamp(y - BAR_H / 2, EDGE, innerHeight - EDGE - BAR_H), w, h: BAR_H };
     if (x - gap - w >= EDGE) return { x: x - gap - w, y: clamp(y - BAR_H / 2, EDGE, innerHeight - EDGE - BAR_H), w, h: BAR_H };
     const below = y + gap + BAR_H <= innerHeight - EDGE;
@@ -257,8 +257,7 @@ export function cursorMenu({ root, onSubmit }) {
     const c = center();
     const targets = spots(c);
     const bar = barRect(c);
-    const coreFeel = core.to > 0 ? FEEL.open : FEEL.close;
-    core.step(dt, ...coreFeel);
+    presence.step(dt, ...(presence.to > 0 ? FEEL.open : FEEL.close));
 
     blobs.forEach((b, i) => {
       let to;
@@ -270,7 +269,7 @@ export function cursorMenu({ root, onSubmit }) {
         to = { x: bar.x + bar.w / 2, y: bar.y + bar.h / 2, w: bar.w, h: bar.h };
         feel = FEEL.bar;
       } else {
-        to = { ...c, w: b.phase === "gone" ? 0 : BLOB, h: b.phase === "gone" ? 0 : BLOB };
+        to = { ...c, w: 0, h: 0 };
       }
       b.x.to = to.x;
       b.y.to = to.y;
@@ -281,7 +280,7 @@ export function cursorMenu({ root, onSubmit }) {
 
     draw(c, bar);
 
-    const done = state === "closing" && core.v < 0.5 && blobs.every((b) => b.w.v < 0.5);
+    const done = state === "closing" && presence.v < 0.02 && blobs.every((b) => b.w.v < 0.5);
     if (done) {
       setState("closed");
       el.root.hidden = true;
@@ -292,11 +291,7 @@ export function cursorMenu({ root, onSubmit }) {
   }
 
   function draw(c, bar) {
-    const r = Math.max(core.v, 0);
-    el.core.setAttribute("cx", c.x);
-    el.core.setAttribute("cy", c.y);
-    el.core.setAttribute("r", r);
-    el.caret.style.transform = `translate(${c.x}px, ${c.y}px) scale(${Math.min(r / CORE_R, 1.15)})`;
+    el.caret.style.transform = `translate(${c.x}px, ${c.y}px) scale(${clamp(presence.v, 0, 1.15)})`;
 
     blobs.forEach((b, i) => {
       const w = Math.max(b.w.v, 0);
@@ -358,11 +353,23 @@ function build() {
       </defs>
       <g filter="url(#qm-goo)">
         ${MODES.map(() => `<rect class="qm-blob" />`).join("")}
-        <circle class="qm-core" />
       </g>
     </svg>
     <span class="qm-caret" aria-hidden="true">
-      <svg viewBox="0 0 16 22"><path d="M4.5 2.5c2 0 3.5.6 3.5 2.5v12c0 1.9-1.5 2.5-3.5 2.5M11.5 2.5C9.5 2.5 8 3.1 8 5v12c0 1.9 1.5 2.5 3.5 2.5M5.5 11h5" /></svg>
+      <svg viewBox="0 0 20 30">
+        <defs>
+          <linearGradient id="qm-caret-fill" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#3d7bff" />
+            <stop offset="1" stop-color="#21c6d4" />
+          </linearGradient>
+          <linearGradient id="qm-caret-shine" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0" stop-color="#fff" stop-opacity="0.55" />
+            <stop offset="1" stop-color="#fff" stop-opacity="0" />
+          </linearGradient>
+        </defs>
+        <path class="qm-caret-body" d="M4 3h12a2 2 0 0 1 0 4h-4v16h4a2 2 0 0 1 0 4H4a2 2 0 0 1 0-4h4V7H4a2 2 0 0 1 0-4Z" />
+        <path class="qm-caret-shine" d="M8.9 7.6h1.2v14.8H8.9z" />
+      </svg>
     </span>
     ${MODES.map(
       (m, i) => `
@@ -378,7 +385,6 @@ function build() {
     </form>`;
   return {
     root,
-    core: root.querySelector(".qm-core"),
     rects: [...root.querySelectorAll(".qm-blob")],
     caret: root.querySelector(".qm-caret"),
     buttons: [...root.querySelectorAll(".qm-btn")],
