@@ -998,11 +998,6 @@ body.history {
   color: var(--war);
 }
 
-.replay-round {
-  margin-left: 8px;
-  color: var(--ink-3);
-}
-
 .replay-comment {
   margin-top: 4px !important;
   font-family: var(--serif);
@@ -1020,59 +1015,86 @@ body.history {
 .replay-controls {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 16px;
   margin-top: 14px;
 }
 
-.replay-controls > button {
-  min-width: 34px;
-  height: 34px;
-  padding: 0 10px;
+.replay-controls button {
+  height: 32px;
   border: 1px solid var(--rule);
   border-radius: 999px;
   background: #fff;
-  font: 500 14px var(--sans);
-  color: var(--ink);
+  font: 500 12.5px var(--sans);
+  color: var(--ink-2);
   cursor: pointer;
 }
 
-.replay-controls .replay-play {
-  background: var(--ink);
-  border-color: var(--ink);
-  color: #fff;
-  font-size: 11px;
+.replay-play {
+  width: 32px;
+  background: var(--ink) !important;
+  border-color: var(--ink) !important;
+  font-size: 10px !important;
+  color: #fff !important;
 }
 
-.replay-steps {
-  display: flex;
-  flex: 1;
-  align-items: center;
-  gap: 4px;
-  margin: 0 6px;
+.replay-speed {
+  padding: 0 10px;
 }
 
-.replay-steps button {
+/* One tick per turn, in the editor's color; the line fills up to the current turn */
+.replay-track {
+  position: relative;
   flex: 1;
+  height: 20px;
+  cursor: pointer;
+}
+
+.replay-track::before,
+.replay-fill {
+  content: "";
+  position: absolute;
+  top: 9px;
+  left: 0;
+  height: 2px;
+  border-radius: 1px;
+}
+
+.replay-track::before {
+  right: 0;
+  background: #eaecf0;
+}
+
+.replay-fill {
+  background: #a2a9b1;
+  transition: width 0.4s ease;
+}
+
+.replay-track i {
+  position: absolute;
+  top: 6px;
+  width: 8px;
   height: 8px;
-  padding: 0;
-  border: 0;
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--c) 25%, #fff);
-  cursor: pointer;
-  transition: background 0.2s, transform 0.2s;
+  margin-left: -4px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--c) 35%, #fff);
+  transition: background 0.3s ease;
 }
 
-.replay-steps button.is-done {
-  background: color-mix(in srgb, var(--c) 70%, #fff);
-}
-
-.replay-steps button.is-current {
+.replay-track i.is-past {
   background: var(--c);
-  transform: scaleY(1.6);
 }
 
-.replay-steps button.is-undo {
+.replay-track i.is-undo {
   border-radius: 2px;
+}
+
+.replay-count {
+  min-width: 44px;
+  font: 500 12.5px var(--sans);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: var(--ink-3);
 }
 
 .panel-doc del + ins {
@@ -1083,8 +1105,27 @@ body.history {
   transition: opacity 0.2s ease;
 }
 
-.replay-cursor.is-idle span {
-  opacity: 0;
+/* Waiting cursors bob gently in the corner, each slightly out of step */
+.replay-cursor.is-idle .replay-cursor-body {
+  opacity: 0.85;
+  animation: waiting 2.2s ease-in-out infinite;
+  animation-delay: var(--delay);
+}
+
+@keyframes waiting {
+  0%,
+  100% {
+    translate: 0 0;
+  }
+  50% {
+    translate: 3px -4px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .replay-cursor.is-idle .replay-cursor-body {
+    animation: none;
+  }
 }
 
 .replay-p.is-empty {

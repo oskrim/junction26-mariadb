@@ -1,3 +1,5 @@
+import { censor } from "./censor.js";
+
 // Turns MediaWiki markup (the `text` field from /api/article) into reader HTML.
 // Rendered fragments are parked in `store` and referenced by control-character placeholders,
 // so later passes never re-read HTML as wiki markup.
@@ -139,7 +141,7 @@ export function renderWikitext(source, { fileUrl, renderMath }) {
     return s;
   };
 
-  let text = source.replace(/<!--[\s\S]*?-->/g, "").replace(/__[A-Z]+__/g, "");
+  let text = censor(source).replace(/<!--[\s\S]*?-->/g, "").replace(/__[A-Z]+__/g, "");
   text = text.replace(/<math([^>]*)>([\s\S]*?)<\/math>/g, (_, attrs, tex) =>
     /display\s*=\s*"?block/.test(attrs)
       ? keepBlock(`<div class="math-block">${renderMath(tex.trim(), true)}</div>`)
@@ -348,7 +350,7 @@ function attr(s) {
 
 // Short plain-text version of a wiki markup fragment, for previews of what an edit changed.
 export function plainText(s) {
-  return s
+  return censor(s)
     .replace(/<ref[^>]*\/>|<ref[^>]*>[\s\S]*?(<\/ref>|$)/g, "")
     .replace(/\{\{[^{}]*\}\}/g, "")
     .replace(/\{\{[\s\S]*$|^[\s\S]*?\}\}/g, "")

@@ -1,3 +1,4 @@
+import { censor } from "./censor.js";
 import { FIGHTER_COLORS } from "./timeline3d.js";
 import { plainText } from "./wikitext.js";
 
@@ -14,7 +15,7 @@ function editCard(edit, change) {
     <article class="tl-card">
       <header class="tl-head">
         ${avatar(edit.user, edit.kind, null)}
-        <div class="tl-who"><b>${esc(edit.user)}</b><time>${formatDate(edit.time)}</time></div>
+        <div class="tl-who"><b>${esc(censor(edit.user))}</b><time>${formatDate(edit.time)}</time></div>
         ${created ? `<span class="tl-delta is-new">Created</span>` : deltaBadge(edit.delta)}
       </header>
       <p class="tl-summary">
@@ -32,7 +33,7 @@ function warCard(war, change) {
   const fighter = (user, k) => `
     <div class="tl-fighter">
       ${avatar(user, kindOf(war, user), FIGHTER_COLORS[k])}
-      <div><b>${esc(user)}</b><span>${count(user)} edits</span></div>
+      <div><b>${esc(censor(user))}</b><span>${count(user)} edits</span></div>
     </div>`;
   const contested = [...(change?.added ?? []), ...(change?.removed ?? [])].map(plainText).find((s) => s.length > 20) ?? null;
   return `
@@ -120,7 +121,7 @@ function kindOf(war, user) {
 
 // Edit summaries are wiki markup too; keep only the words.
 export function cleanComment(comment) {
-  return comment
+  return censor(comment)
     .replace(/\/\*.*?\*\//, "")
     .replace(/\[\[(?:[^[\]|]*\|)?([^[\]]*)\]\]/g, "$1")
     .replace(/\s+/g, " ")

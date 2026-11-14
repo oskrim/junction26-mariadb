@@ -1,3 +1,4 @@
+import { censor } from "./censor.js";
 import { diff, words } from "./diff.js";
 import { fileUrl, getArticle } from "./fake/api.js";
 import { formatDate } from "./history-cards.js";
@@ -61,7 +62,7 @@ export function createArticlePanel({ root, articleId }) {
     }
 
     meta.innerHTML = `
-      <p class="panel-when">${formatDate(parseRowStart(version.row_start))} <span>· ${escape(version.user)}</span></p>
+      <p class="panel-when">${formatDate(parseRowStart(version.row_start))} <span>· ${escape(censor(version.user))}</span></p>
       ${shown ? `<p class="panel-diff">${summary(counts, shown.time)}</p>` : `<p class="panel-diff">The article as it read on this day</p>`}`;
     shown = { revId: version.rev_id, time: parseRowStart(version.row_start), blocks };
     if (first) scroller.scrollTo({ top: first.offsetTop - 96, behavior: "smooth" });
