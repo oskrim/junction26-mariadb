@@ -107,9 +107,8 @@ articles.
   `load.py export-vectors --scope m --out /data/exports` (`vectors-bge-m3-extra-fi.parquet`, the 457 M articles S
   lacks, 2.3 MB) and `--scope l` (`vectors-bge-m3-l-fi.parquet`, the L articles), served at
   <https://65-109-75-60.sslip.io/exports/> with `SHA256SUMS`.
-- On your machine: `VECTORS=1 server/local.sh` downloads the M file (with `L=1` also the L file) when its
-  checksum changed, loads it, and runs `embed.py serve` for the questions (CPU: ~55 ms a question on 12 cores;
-  GPU: ~7 ms).
+- `embed.py serve` on a laptop CPU takes ~55 ms a question on 12 cores (GPU: ~7 ms). `server/local.sh` does not
+  run it: on your machine search uses the Voyage vectors or keywords only ("Voyage vectors" below).
 - Every other Finnish article: `embed.py articles`, a GPU batch job (below). The search uses only the `fi` rows.
 - `M=16`, not the default 6: with 1024 dimensions `M=6` found only 79% of the true top 10 (MariaDB's RAG
   starter). The app sets `mhnsw_ef_search = 200` on each connection (measured below); `deploy.sh` sets
@@ -272,6 +271,108 @@ The exports for local copies: `vectors-bge-m3-extra-fi.parquet` (457 M articles,
 `vectors-bge-m3-l-fi.parquet` (549,131 L articles, 2.25 GB), written by `load.py export-vectors` in 24 s.
 The NVIDIA driver comes from Ubuntu's prebuilt modules for the running kernel (`bootstrap.sh`), loaded with
 `modprobe`, without a reboot.
+
+## Voyage vectors
+
+A second set of article vectors: [voyage-4-lite](https://docs.voyageai.com/docs/embeddings) for the articles,
+voyage-4-large for the questions. The Voyage 4 models share one embedding space ("All embeddings created with the
+4 series are compatible with each other"), so a large-model question is compared with lite-model articles. Both
+give 2048 numbers, their largest `output_dimension`; nothing is truncated.
+
+| Table | What it holds |
+|---|---|
+| `article_vector_voyage` | `page_id`, `model`, `tokens`, `embedding VECTOR(2048) NOT NULL`, `VECTOR INDEX (embedding) M=16 DISTANCE=cosine` |
+
+- The text is the one `embed.py` gives bge-m3: title + current text, Markdown as it is, wikitext made plain.
+  Voyage cuts it at 32,000 tokens (bge-m3: 8,192). `tokens` is the article's share of its request's token count.
+- The key is the Secret Manager secret `voyage-api-key-global`, a MongoDB Atlas key: it works only at
+  `https://ai.mongodb.com/v1/embeddings` (`api.voyageai.com` answers 403). Price: voyage-4-lite $0.02 and
+  voyage-4-large $0.12 per million tokens (Voyage's list price; the first 200M tokens of each are free on a Voyage
+  account). The whole corpus is roughly 450M tokens, about $9; a test run of the first 300 page ids counted
+  1.77M tokens.
+- `VECTOR_MODEL` picks the vectors search, Ask and Learn use: `bge` (default, `article_vector` and `embed.py
+  serve`), `voyage` (`article_vector_voyage`, questions to Voyage with a 3 s timeout, then bge-m3 if Voyage fails)
+  or `none` (keywords only). The box has `VOYAGE_API_KEY` and `VECTOR_MODEL=bge` in `/etc/junction-wiki.env`
+  (`provision.sh` keeps both).
+- A voyage-4-large question takes 215 ms from the box (p50 of 20; p90 235 ms), against ~7 ms for bge-m3 on the GPU.
+- Hybrid search maps cosines with `vector.VOYAGE`: floor 0.15, weight 3. A voyage-4-large question gives 200
+  random articles a median cosine of 0.05 (95th percentile 0.07-0.23) and its best matches 0.4-0.6; bge-m3 gives
+  unrelated text about 0.4. These two numbers are first estimates, not tuned on the full corpus yet.
+
+### How to run the embedding from another machine
+
+The job reads the texts from the live database over TLS, embeds the articles that have no row yet, and writes the
+vectors in one transaction per chunk while the next chunk is embedded. Stop it at any time; the next run continues.
+
+```bash
+export DB_HOST=65.109.75.60 DB_PORT=3306 DB_SSL=1 DB_USER=oskari DB_NAME=wiki_full
+export DB_PASSWORD=$(gcloud secrets versions access latest --secret=junction-wiki-db-oskari --project=nimble-valve-390508)
+# VOYAGE_API_KEY is read from Secret Manager (voyage-api-key-global) when it is not set.
+uv run -q --with pymysql python -u server/voyage.py articles --limit 300            # a test run
+uv run -q --with pymysql python -u server/voyage.py articles \
+  --tokens-per-minute 20000000 --concurrency 24 --batch-tokens 300000 --chunk 20000
+```
+
+| Flag | Default | What it does |
+|---|---|---|
+| `--tokens-per-minute` | 20,000,000 | Token budget, spent from an estimate (3 characters a token) before each request. Keep it at or under 20M: production uses the same key. |
+| `--concurrency` | 24 | Requests at once |
+| `--batch-tokens` | 300,000 | Estimated tokens per request (the API allows 1,000 texts and 1M tokens for voyage-4-lite); a request Voyage finds too large is split in two |
+| `--chunk` | 20,000 | Articles read and written together |
+| `--limit` | none | Stop after this many articles |
+
+429, 5xx and network errors are retried 8 times with exponential backoff and jitter. Each progress line shows the
+articles done, articles/s, tokens a minute and the seconds spent writing: if writing grows to the whole time, the
+vector index is the limit, not Voyage.
+
+### Copies for local machines
+
+On the box, once the vectors are in: `uv run -q --with pymysql --with pyarrow python server/voyage.py export --out
+/data/exports --scope m` (and `--scope l`) writes `vectors-voyage-4-lite-m-fi.parquet` and
+`vectors-voyage-4-lite-l-fi.parquet` (~8 KB an article, so ~4.5 GB for L) with their `SHA256SUMS` lines.
+`server/local.sh` reads the Voyage key with gcloud; with it, `VECTORS=1` downloads the M file (with `L=1` also the
+L file) and loads it with `voyage.py import`, and the app runs with `VECTOR_MODEL=voyage`. Without the key it runs
+with `VECTOR_MODEL=none`: search, Ask and Learn use keywords, and no embedding model is downloaded.
+
+### Switch the box to Voyage
+
+When the job has covered every article (`SELECT COUNT(*) FROM article_vector_voyage` = 568,873):
+
+```bash
+sed -i 's/^VECTOR_MODEL=.*/VECTOR_MODEL=voyage/' /etc/junction-wiki.env && systemctl restart wiki-app
+```
+
+### bge-m3 against Voyage
+
+Vector-only top 3 for 15 questions. bge-m3 searched all 568,873 vectors through the index. Voyage ranked only a
+pool per question (bge-m3's top 60 + the FULLTEXT text top 40 + title top 20, ~110 articles), because the corpus
+was not embedded yet: it shows Voyage's ordering, not what it would find outside that pool.
+
+| Question | bge-m3 | Voyage (lite articles, large question) |
+|---|---|---|
+| sisällissota | Suomen sisällissodan aikajana; Venäjän sisällissota; Yhdysvaltain sisällissota | Sisällissota; Luettelo sisällissodista; Suomen sisällissodan nimet |
+| Mannerheim | Johan Mannerheim; Mannerheim-museo; Mannerheiminpuisto | Marsalkka Mannerheimille myönnetyt kunnianosoitukset; Mannerheim (elokuvahanke); Augustin Mannerheim |
+| Tampereen taistelu | Tampereen taistelu; Taipaleenkylän taistelu; Länkipohjan taistelu | Tampereen taistelu; Hämeen rintama; Punainen Tampere |
+| punakaarti | Punakaarti (kulttuurivallankumous); Punakaarti; Suomen Punainen Kaarti | Suomen Punainen Kaarti; Punakaarti, kuningas, vehnäpulla ja porvari; Punakaarti (kulttuurivallankumous) |
+| talvisota | Talvisota; Operaatio Barbarossa; Operaatio Talvimyrsky | Neuvostoliiton divisioonat talvisodassa; Talvisodan tausta; Talvisota (videopeli) |
+| battle of Tampere | Tampereen taistelu; Talvisodan pommitukset Tampereella; Taipaleenkylän taistelu | Tampereen taistelu; Hämeen rintama; Punainen Tampere |
+| who led the Reds in 1918 | Major League Baseball -kausi 1918; Cincinnati Reds; Boston Reds (1890–1891) | Luettelo punakaartilaisista; Punaisten ja valkoisten taistelu Suomessa 1918; Tampereen punakaarti |
+| why did Finland lose Karelia | Karjala; Karjalan historia; ProKarelia | Suur-Suomi; Karjala; Karjalan historia |
+| Finnish independence declaration | Yhdysvaltain itsenäisyysjulistus; Viron itsenäisyysjulistus; Emancipation Proclamation | Suomen itsenäistyminen; Suomen itsenäisyysjulistus; Viron itsenäisyysjulistus |
+| famine years 1860s | 1860-luku; Kirjallisuusvuosi 1860; Suuret nälkävuodet | Suuret nälkävuodet; 1860-luku; Irlannin suuri nälänhätä |
+| Lapuan liike | Lapuanliikkeen valtuuskunta; Lapuanliikkeen johto; Lapuanliike | Lapua; Lapuanliikkeen johto; Lapua-Seura |
+| Paavo Nurmi olympialaiset | Paavo Nurmi; Yleisurheilu kesäolympialaisissa 1924 – miesten 5 000 m; Paavo Nurmi Marathon | Paavo Nurmi; Luettelo suomalaisista kestävyysjuoksun arvokisamitalisteista; Yleisurheilu kesäolympialaisissa 1924 – miesten 5 000 m |
+| ruotsin kielen asema Suomessa | Ruotsin kielipolitiikka; Ruotsin kieli; Suomen kielipolitiikka | Pakkoruotsi; Ruotsin kielipolitiikka; Toinen kotimainen kieli |
+| vankileirit 1918 | Beretta 1918; Uhrit 1918; Suomen sisällissodan vankileirit | Kuopion vankileiri; Oulun vankileiri; Santahaminan vankileiri |
+| Kalevala and Elias Lönnrot | Lönnrotin hengessä 2002; Kalevala; Elias Lönnrot | Elias Lönnrot; Suomalainen kansanrunous; Kalevalainen runous |
+
+Voyage is clearly better on the English and natural questions: "who led the Reds in 1918" (bge-m3 returns
+baseball teams), "Finnish independence declaration" (bge-m3 ranks the US and Estonian declarations first),
+"famine years 1860s", "vankileirit 1918". On short Finnish names it is mixed: bge-m3 ranks "Talvisota" and
+"Lapuanliike" first, and Voyage leaves both out of its top 5 for list-like or similar-sounding titles. In hybrid
+search the exact-title bonus puts "Talvisota" first anyway, but not "Lapuanliike" for "Lapuan liike". Overall Voyage
+looks better; the switch waits for a check of hybrid search on the full corpus. A lite-model question instead of the large one agrees on 4-10 of the top 10 and is
+also sensible; the large one is slightly better on the natural questions.
 
 ## Scale
 
