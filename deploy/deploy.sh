@@ -29,6 +29,8 @@ main() {
     echo "deploy: server/compose.yml is not on main yet; nothing to start"
     return 0
   fi
+  # MariaDB's buffer pool (compose.yml): a quarter of the box's memory unless the env file sets it.
+  export DB_CACHE=${DB_CACHE:-$(($(awk '/^MemTotal:/ {print $2}' /proc/meminfo) / 4))K}
   local compose=(docker compose -p wiki -f server/compose.yml -f deploy/compose.prod.yml)
   "${compose[@]}" up -d --wait
   ensure_db_users "${compose[@]}"

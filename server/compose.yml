@@ -6,7 +6,10 @@ services:
       MARIADB_DATABASE: wiki
       MARIADB_USER: wiki
       MARIADB_PASSWORD: ${DB_PASSWORD:-wiki}
-    command: ["--max-allowed-packet=64M"]
+    # FULLTEXT indexes words of 2+ characters (default 3), so "YK" and "EU" are found. It applies to indexes
+    # built after the server starts with it.
+    command: ["--max-allowed-packet=64M", "--innodb-ft-min-token-size=2",
+              "--innodb-buffer-pool-size=${DB_CACHE:-2G}"]
     ports:
       - "${DB_BIND:-127.0.0.1}:${DB_PORT:-3309}:3306"
     volumes:

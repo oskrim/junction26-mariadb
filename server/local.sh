@@ -4,6 +4,7 @@
 #
 #     server/local.sh                  # first run downloads ~450 MB and loads all of M (~20-30 min)
 #     ARTICLES=200 server/local.sh     # a quicker partial load; run again later without it to load the rest
+#     L=1 server/local.sh              # also the rest of Finnish Wikipedia (L, ~500 MB download, ~15 min)
 #
 # Safe to run again: downloads, loaded articles and the database are kept, so later runs start the app
 # in seconds. Ask, Find and Learn need GEMINI_API_KEY in your environment; without it the other views work.
@@ -27,13 +28,14 @@ download() {  # one dataset release into $WIKI_DATA/<tag>, checked against its S
 download s-2026-10
 download m-2026-10
 
+if [ "${L:-}" = 1 ]; then download l-2026-10; fi
+
+# DB_CACHE (default 2G) is MariaDB's buffer pool: a bigger one makes the load and the queries much faster.
 docker compose -f server/compose.yml up -d --wait
-# A bigger cache makes the load and the queries much faster; it lasts until the container restarts.
-docker compose -f server/compose.yml exec -T mariadb \
-  mariadb -uroot -p"${DB_ROOT_PASSWORD:-wiki}" -e "SET GLOBAL innodb_buffer_pool_size = ${DB_CACHE:-2147483648}"
 
 uv run -q --with pymysql --with pyarrow python -u server/load.py s --vectors
 uv run -q --with pymysql --with pyarrow python -u server/load.py m --articles "${ARTICLES:-all}"
+if [ "${L:-}" = 1 ]; then uv run -q --with pymysql --with pyarrow python -u server/load.py l; fi
 
 if [ -z "${GEMINI_API_KEY:-}" ] && command -v gcloud >/dev/null; then
   GEMINI_API_KEY=$(gcloud secrets versions access latest --project nimble-valve-390508 --secret google-aistudio-api-key 2>/dev/null || true)

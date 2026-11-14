@@ -5,14 +5,11 @@
 }
 
 .views {
-  position: absolute;
-  left: 50%;
   display: flex;
   gap: 2px;
   padding: 3px;
   border-radius: 999px;
   background: #f0f1f3;
-  transform: translateX(-50%);
 }
 
 .views button {
@@ -487,11 +484,6 @@ body[data-view="explore"] {
 }
 
 @media (max-width: 720px) {
-  .views {
-    position: static;
-    transform: none;
-  }
-
   .bar .search {
     display: none;
   }

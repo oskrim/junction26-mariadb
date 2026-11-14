@@ -4,6 +4,7 @@
     uv run --with pymysql --with pyarrow python server/load.py s --vectors        # ... and S's bge-m3 vectors
     uv run --with pymysql --with pyarrow python server/load.py m                  # M: Suomen sisällissota + 19 more
     uv run --with pymysql --with pyarrow python server/load.py m --articles all   # M: every article
+    uv run --with pymysql --with pyarrow python server/load.py l                  # L: the rest of Finnish Wikipedia
 
 Safe to run again: articles already in the tables are skipped. --reset empties the dataset's tables first.
 Data comes from $WIKI_DATA (default ~/datasets/mariadb-wikipedia).
@@ -15,7 +16,6 @@ import re
 import struct
 import sys
 import time
-import unicodedata
 from collections import Counter
 from datetime import timedelta
 from pathlib import Path
@@ -30,7 +30,8 @@ DEMO_ARTICLE = 1150  # Suomen sisällissota
 BATCH_BYTES = 16_000_000  # rows sent together; the server allows 64 MB packets
 LINK = re.compile(r"\[\[([^\[\]|#]+)")
 # article_vector is not dropped by --reset: it also holds the vectors embed.py computed on the GPU.
-TABLES = {"s": ["s_article", "s_category"], "m": ["m_article", "m_link", "m_article_stats", "m_search"]}
+TABLES = {"s": ["s_article", "s_category"], "m": ["m_article", "m_link", "m_article_stats", "m_search"], "l": []}
+L_BATCH = 2000  # L articles per transaction
 
 
 def connect():
@@ -46,27 +47,31 @@ def normalize(title):
     return title[:1].upper() + title[1:]
 
 
-def fold(text):
-    """Lowercase without accents: the form m_search stores and app.py's search compares."""
-    return "".join(c for c in unicodedata.normalize("NFKD", text.lower()) if not unicodedata.combining(c))
-
-
 def create_tables(cur, dataset, reset):
     if reset:
         for table in TABLES[dataset]:
             cur.execute(f"DROP TABLE IF EXISTS {table}")
+    # m_search once held lowercased text without accents as bytes, for INSTR; fill_search writes it again.
+    cur.execute("""SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE()
+                   AND TABLE_NAME = 'm_search' AND COLUMN_NAME = 'text' AND DATA_TYPE = 'mediumblob'""")
+    if dataset in ("m", "l") and cur.fetchone():
+        cur.execute("DROP TABLE m_search")
     sql = "\n".join(line for line in SCHEMA.read_text().splitlines() if not line.startswith("--"))
     for statement in filter(str.strip, sql.split(";")):
         cur.execute(statement)
     # Tables created before these keys were in schema.sql.
     if dataset == "s":
         cur.execute("ALTER TABLE s_article ADD INDEX IF NOT EXISTS title (lang, title)")
-    if dataset == "m":
+    if dataset in ("m", "l"):
+        cur.execute("SET system_versioning_alter_history = KEEP")
+        cur.execute("ALTER TABLE m_article ADD COLUMN IF NOT EXISTS format ENUM('wikitext', 'markdown') "
+                    "NOT NULL DEFAULT 'wikitext' AFTER text")
         cur.execute("ALTER TABLE m_article ADD INDEX IF NOT EXISTS start_key (page_id, row_start), "
                     "ADD INDEX IF NOT EXISTS rev_id (rev_id), ADD INDEX IF NOT EXISTS title (title)")
         cur.execute("ALTER TABLE m_link ADD INDEX IF NOT EXISTS dst (dst)")
         cur.execute("ALTER TABLE m_article_stats ADD COLUMN IF NOT EXISTS topic VARCHAR(255), "
                     "ADD INDEX IF NOT EXISTS title (title)")
+        cur.execute("ALTER TABLE m_article_stats ADD FULLTEXT INDEX IF NOT EXISTS title_ft (title)")
         # Articles loaded before m_article_stats existed.
         cur.execute("SELECT EXISTS (SELECT 1 FROM m_article_stats)")
         if not cur.fetchone()[0]:
@@ -262,15 +267,54 @@ def fill_search(con, cur):
         cur.execute("""SELECT a.page_id, IF(s.page_id IS NULL, a.text, s.text) FROM m_article a
                        LEFT JOIN s_article s ON s.lang = 'fi' AND s.page_id = a.page_id
                        WHERE a.page_id IN %s""", (missing[i : i + 500],))
-        rows = [(page_id, fold(text).encode()) for page_id, text in cur.fetchall()]
-        insert_batched(cur, "INSERT INTO m_search (page_id, text) VALUES (%s,%s)", rows, lambda r: len(r[1]) * 2 + 100)
+        rows = cur.fetchall()
+        insert_batched(cur, "INSERT INTO m_search (page_id, text) VALUES (%s,%s)", rows, lambda r: len(r[1]) * 4 + 100)
         con.commit()
     print(f"m_search: {len(missing)} new, {time.time() - started:.1f} s")
 
 
+def load_l(con, cur):
+    """The L articles that M does not have, into m_article as one current Markdown version each (stored
+    with its date_modified), with their m_article_stats and m_search rows. Committed every batch, so the
+    app finds them while the load runs."""
+    fill_search(con, cur)  # M's own rows first, when m_search has just been made again
+    started = time.time()
+    cur.execute("SELECT page_id FROM m_article_stats")
+    loaded = {p for (p,) in cur.fetchall()}
+    f = pq.ParquetFile(DATA / "l-2026-10/articles-fi.parquet")
+    new = 0
+    for group in range(f.metadata.num_row_groups):
+        table = f.read_row_group(group, columns=["page_id", "rev_id", "title", "date_modified", "text"])
+        rows = [r for r in table.to_pylist() if r["page_id"] not in loaded]
+        for i in range(0, len(rows), L_BATCH):
+            save_l(cur, rows[i : i + L_BATCH])
+            con.commit()
+        new += len(rows)
+        print(f"  row group {group + 1}/{f.metadata.num_row_groups}: {len(rows)} new, {time.time() - started:.0f} s",
+              flush=True)
+    print(f"l: {new} new articles, {len(loaded)} already in M, {time.time() - started:.0f} s")
+    if new:
+        fill_topics(con, cur)
+
+
+def save_l(cur, rows):
+    rows = sorted(rows, key=lambda r: r["page_id"])
+    for r in rows:
+        r["text"] = r["text"] or ""
+        r["at"] = r["date_modified"].replace("T", " ").rstrip("Z")
+    insert_batched(cur, """INSERT INTO m_article (page_id, title, rev_id, anonymous, minor, bytes, text, format,
+                           row_start) VALUES (%s,%s,%s,0,0,%s,%s,'markdown',%s)""",
+                   [(r["page_id"], r["title"], r["rev_id"], len(r["text"].encode()), r["text"], r["at"]) for r in rows],
+                   lambda r: len(r[4]) * 4 + 500)
+    cur.executemany("INSERT INTO m_article_stats (page_id, title, versions, first) VALUES (%s,%s,1,%s)",
+                    [(r["page_id"], r["title"], r["at"]) for r in rows])
+    insert_batched(cur, "INSERT INTO m_search (page_id, text) VALUES (%s,%s)",
+                   [(r["page_id"], r["text"]) for r in rows], lambda r: len(r[1]) * 4 + 100)
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("dataset", choices=["s", "m"])
+    parser.add_argument("dataset", choices=["s", "m", "l"])
     parser.add_argument("--articles", default="20", help="how many M articles to load, or 'all'")
     parser.add_argument("--reset", action="store_true", help="drop and recreate the dataset's tables first")
     parser.add_argument("--vectors", action="store_true", help="s: also load S's ready-made vectors into article_vector")
@@ -286,8 +330,10 @@ def main():
         load_s(con, cur)
         if args.vectors:
             load_s_vectors(con, cur)
-    else:
+    elif args.dataset == "m":
         load_m(con, cur, count)
+    else:
+        load_l(con, cur)
     for table in TABLES[args.dataset]:
         versioned = table in ("m_article", "m_link")
         cur.execute(f"SELECT COUNT(*) FROM {table}" + (" FOR SYSTEM_TIME ALL" if versioned else ""))
