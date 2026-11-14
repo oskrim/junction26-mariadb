@@ -1,0 +1,454 @@
+/* Watch it being written: the article rewrites itself from its first version, with a timeline of its
+   edits and edit wars docked at the bottom (history-play.js) */
+
+.hp-start {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 16px;
+  padding: 6px 14px 6px 11px;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  background: var(--paper);
+  font: 500 13px var(--sans);
+  color: var(--ink);
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.hp-start:hover {
+  border-color: var(--ink-3);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.06);
+}
+
+.hp-start:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.hp-start svg {
+  width: 11px;
+  height: 11px;
+  fill: currentColor;
+}
+
+.hp-mode .layout {
+  padding-bottom: 160px;
+}
+
+/* The dock */
+
+.hp-dock {
+  position: fixed;
+  inset: auto 0 0;
+  z-index: 25;
+  padding: 10px 24px 12px;
+  border-top: 1px solid var(--rule);
+  background: rgb(255 255 255 / 0.94);
+  backdrop-filter: blur(12px);
+  font-family: var(--sans);
+  animation: hp-dock-in 0.35s cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition: translate 0.3s ease;
+}
+
+.hp-dock.is-leaving,
+.war-mode .hp-dock {
+  translate: 0 110%;
+}
+
+@keyframes hp-dock-in {
+  from {
+    translate: 0 100%;
+  }
+}
+
+.hp-row {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.hp-play {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--ink);
+  color: var(--paper);
+  cursor: pointer;
+}
+
+.hp-play svg {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+}
+
+.hp-when {
+  flex: none;
+  width: 230px;
+  min-width: 0;
+}
+
+.hp-when p {
+  margin: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.hp-date {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.hp-who {
+  margin-top: 2px !important;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.hp-who span {
+  color: var(--ink-3);
+}
+
+.hp-speed,
+.hp-close {
+  flex: none;
+  height: 30px;
+  min-width: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  background: var(--paper);
+  font: 500 12px var(--sans);
+  color: var(--ink-2);
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+
+.hp-close {
+  border-color: transparent;
+  font-size: 20px;
+  font-weight: 400;
+  line-height: 1;
+}
+
+.hp-speed:hover,
+.hp-close:hover {
+  color: var(--ink);
+  border-color: var(--ink-3);
+}
+
+/* The timeline: the History view's year strip, with a swords button over each war */
+
+.minimap.hp-map {
+  position: relative;
+  inset: auto;
+  flex: 1;
+  min-width: 0;
+  height: auto;
+}
+
+.hp-map .minimap-svg {
+  height: 36px;
+}
+
+.hp-map .minimap-now {
+  top: 18px;
+  height: 42px;
+  transition-property: left;
+  transition-timing-function: linear;
+}
+
+.hp-swords {
+  position: relative;
+  height: 20px;
+}
+
+.hp-sword {
+  position: absolute;
+  bottom: 2px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  translate: -50% 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: #d73333;
+  cursor: pointer;
+  transition: scale 0.15s ease;
+}
+
+.hp-sword.is-vandalism {
+  color: #e48f8f;
+}
+
+.hp-sword:hover {
+  scale: 1.25;
+}
+
+.hp-sword svg {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+}
+
+/* The war being reached rings once and stays filled */
+.hp-sword.is-on {
+  background: currentColor;
+}
+
+.hp-sword.is-on svg {
+  stroke: var(--paper);
+}
+
+.hp-sword.is-on::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+  animation: hp-ring 1.1s ease-out 2;
+  pointer-events: none;
+}
+
+@keyframes hp-ring {
+  to {
+    opacity: 0;
+    scale: 2.6;
+  }
+}
+
+/* The note above the dock while a war breaks out */
+.hp-war {
+  position: absolute;
+  bottom: calc(100% + 12px);
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: calc(100vw - 32px);
+  padding: 6px 6px 6px 8px;
+  translate: -50% 0;
+  border: 1px solid #f0c4c4;
+  border-radius: 999px;
+  background: var(--paper);
+  box-shadow: 0 6px 24px rgb(0 0 0 / 0.1);
+  font-size: 13px;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+.hp-war[hidden] {
+  display: none;
+}
+
+.war-mode .hp-war {
+  display: none;
+}
+
+.hp-war > span:nth-child(2) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hp-war b {
+  font-weight: 600;
+  color: #b42323;
+}
+
+.hp-war.is-new {
+  animation: hp-war-in 0.45s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+
+@keyframes hp-war-in {
+  from {
+    opacity: 0;
+    translate: -50% 10px;
+    scale: 0.96;
+  }
+}
+
+.hp-war-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #d73333;
+  color: var(--paper);
+}
+
+.hp-war-icon svg {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+}
+
+.hp-war.is-new .hp-war-icon svg {
+  animation: hp-clash 0.5s ease 0.15s 2;
+}
+
+@keyframes hp-clash {
+  50% {
+    rotate: -14deg;
+    scale: 1.15;
+  }
+}
+
+.hp-watch {
+  flex: none;
+  padding: 5px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--ink);
+  font: 500 12px var(--sans);
+  color: var(--paper);
+  cursor: pointer;
+}
+
+/* The article being written */
+
+.body.hp-swap {
+  animation: hp-swap 0.45s ease;
+}
+
+@keyframes hp-swap {
+  from {
+    opacity: 0.35;
+  }
+}
+
+.hp-added {
+  animation:
+    hp-write 0.8s cubic-bezier(0.2, 0.7, 0.2, 1),
+    hp-glow 2.6s ease;
+}
+
+@keyframes hp-write {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+@keyframes hp-glow {
+  from,
+  30% {
+    background-color: #fff4cc;
+  }
+}
+
+.hp-changed ins {
+  text-decoration: none;
+  border-radius: 2px;
+  animation:
+    hp-ink 0.5s ease var(--d, 0ms) both,
+    hp-glow 2.6s ease var(--d, 0ms) both;
+}
+
+@keyframes hp-ink {
+  from {
+    opacity: 0;
+    filter: blur(3px);
+  }
+}
+
+.hp-changed del {
+  color: var(--ink-3);
+  text-decoration-color: rgb(215 51 51 / 0.6);
+  animation: hp-fade 1.6s ease 0.6s both;
+}
+
+@keyframes hp-fade {
+  to {
+    opacity: 0.25;
+  }
+}
+
+.hp-removed {
+  opacity: 0;
+  transition: opacity 0.5s ease;
+}
+
+/* The heading of the section a war broke out over */
+.hp-fought {
+  background: linear-gradient(#d73333, #d73333) left bottom / 0 2px no-repeat;
+  animation: hp-fought 2.4s ease;
+}
+
+@keyframes hp-fought {
+  0% {
+    color: inherit;
+    background-size: 0 2px;
+  }
+  25%,
+  70% {
+    color: #b42323;
+    background-size: 100% 2px;
+  }
+  100% {
+    background-size: 100% 2px;
+    background-position: right bottom;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hp-added,
+  .hp-changed ins,
+  .hp-fought,
+  .hp-war.is-new,
+  .hp-sword.is-on::after {
+    animation-duration: 0.01s;
+  }
+}
+
+@media (max-width: 720px) {
+  .hp-dock {
+    padding: 8px 16px 10px;
+  }
+
+  .hp-row {
+    flex-wrap: wrap;
+    gap: 10px 12px;
+  }
+
+  .hp-when {
+    flex: 1;
+    width: auto;
+  }
+
+  .hp-map {
+    order: 5;
+    flex-basis: 100%;
+  }
+}
+
+/* The chat tray sits above the dock */
+.hp-mode .chat-tray {
+  bottom: 104px;
+}
+
+.hp-mode .chat-history {
+  bottom: 152px;
+}

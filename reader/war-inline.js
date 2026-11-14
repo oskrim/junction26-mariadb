@@ -40,6 +40,21 @@ export async function addWarMarkers({ body, id }) {
 
 let active = null;
 
+// The heading of the section `war` was fought over, in the article shown in `body`, if it still has one.
+export function warHeading(body, war) {
+  const headings = [...body.querySelectorAll("h2, h3")].map((el) => ({ el, title: el.textContent }));
+  return (war.section && bestHeading(war.section, headings)?.el) || null;
+}
+
+// Replays `war` under `heading`, as the swords button does.
+export function playWar({ heading, war, edits, id }) {
+  play(heading, war, edits[war.edits[0].index - 1], id);
+}
+
+export function closeWar() {
+  active?.close();
+}
+
 async function play(heading, war, before, articleId) {
   active?.close();
   const section = sectionOf(heading);
@@ -85,7 +100,6 @@ async function play(heading, war, before, articleId) {
   document.addEventListener("click", onOutside, true);
   active = { close };
 
-  stage.replaceChildren();
   try {
     replay = await openWarReplay({ mount: stage, articleId, war, before, inline: true, onClose: finish });
   } catch {
