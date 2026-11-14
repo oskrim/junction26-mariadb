@@ -21,6 +21,7 @@ import ask
 import bm25
 import learn
 import vector
+import voice
 
 READER = Path(__file__).resolve().parent.parent / "reader"
 LANDER = Path(__file__).resolve().parent.parent / "lander"
@@ -424,7 +425,7 @@ def by(scored):
 ROUTES = {"/api/articles": articles, "/api/article": article, "/api/history": history, "/api/change": change,
           "/api/graph": graph, "/api/topics": topics, "/api/preview": preview, "/api/previews": previews, "/api/search": search}
 # POST handlers write their own response, so they can stream.
-POST_ROUTES = {"/api/ask": ask.serve, "/api/learn": learn.serve}
+POST_ROUTES = {"/api/ask": ask.serve, "/api/learn": learn.serve, "/api/speak": voice.speak, "/api/voice": voice.voice}
 
 
 # Each API answer's browser cache life in seconds. A change by rev never changes; the rest only when the data

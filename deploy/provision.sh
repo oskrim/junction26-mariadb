@@ -142,6 +142,9 @@ write_box_env() {
     echo "GEMINI_API_KEY=$(secret_read google-aistudio-api-key)"
     echo "VOYAGE_API_KEY=$(secret_read voyage-api-key-global)"
     echo "VECTOR_MODEL=$(ssh_box "sed -n 's/^VECTOR_MODEL=//p' /etc/junction-wiki.env 2>/dev/null" | grep . || echo bge)"
+    # Learn's voice (server/voice.py); optional, so the app still starts without them.
+    echo "ELEVENLABS_API_KEY=$(secret_read elevenlabs-api-key 2>/dev/null || true)"
+    echo "ELEVENLABS_AGENT_ID=$(secret_read elevenlabs-agent-id 2>/dev/null || true)"
   } | ssh_box 'umask 077 && cat > /etc/junction-wiki.env'
 }
 

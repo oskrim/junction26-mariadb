@@ -22,4 +22,8 @@ export DB_NAME=${DB_NAME:-wiki}
 DB_PASSWORD=$(secret junction-wiki-db-password)
 GEMINI_API_KEY=$(secret google-aistudio-api-key)
 export DB_PASSWORD GEMINI_API_KEY
+# Learn's voice; Listen and Talk say what is missing when these secrets don't exist yet.
+ELEVENLABS_API_KEY=$(secret elevenlabs-api-key 2>/dev/null || true)
+ELEVENLABS_AGENT_ID=$(secret elevenlabs-agent-id 2>/dev/null || true)
+export ELEVENLABS_API_KEY ELEVENLABS_AGENT_ID
 uv run -q --with pymysql --with snowballstemmer --with PyStemmer python server/app.py

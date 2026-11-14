@@ -189,7 +189,7 @@ def serve(handler, database):
             "type": "sources", "explored": explored,
             "here": {"title": here["title"], "page_id": request["page_id"], "quote": quotes.get(0)},
             "items": [{"n": i + 1, "title": s["title"], "why": s["why"], "page_id": s["page_id"], "url": s["url"],
-                       "quote": quotes.get(i + 1)} for i, s in enumerate(sources)]})
+                       "quote": quotes.get(i + 1), "text": s["section"]} for i, s in enumerate(sources)]})
     handler.log_message("learn %s", json.dumps(timings))
 
 
