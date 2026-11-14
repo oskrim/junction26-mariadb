@@ -10,7 +10,8 @@ const MAX_CARDS = 12;
 const MAX_NEAR = 60;
 const FOCAL = 900;
 const DIST = 1060;
-const CARD_SPACING = 210;
+const CARD_SPACING = 150;
+const RING = 260;
 const MAX_GROWN = 24;
 const GROWN_CARDS = 3;
 
@@ -73,10 +74,9 @@ export async function mountExplore(root, { id }) {
     linksOut.add(`${source}>${target}`);
   }
 
-  // Each topic always sits on the same side, and each article always sits in the same spot within
-  // its topic, so moving to another article slides the map instead of reshuffling it.
+  // Topics always go round the ring in the same order, and each article keeps its spot within its
+  // topic, so moving to another article slides the map instead of reshuffling it.
   const topicOrder = [...new Set(Object.values(topics))].sort();
-  const anchors = new Map(topicOrder.map((topic, i) => [topic, onSphere(i, topicOrder.length, 400)]));
 
   const previews = new Map();
   const preview = (title) => {
@@ -112,7 +112,7 @@ export async function mountExplore(root, { id }) {
   let alive = null;
   let aliveLinks = null;
 
-  const cam = { yaw: 0.6, pitch: -0.22, dist: DIST, distTo: DIST, focus: { x: 0, y: 0, z: 0 }, focusTo: { x: 0, y: 0, z: 0 } };
+  const cam = { yaw: 0, home: 0, turn: 1, pitch: -0.12, dist: DIST, distTo: DIST, focus: { x: 0, y: 0, z: 0 }, focusTo: { x: 0, y: 0, z: 0 } };
   let width = 0;
   let height = 0;
   let hoverId = null;
@@ -128,6 +128,7 @@ export async function mountExplore(root, { id }) {
     canvas.width = width * dpr;
     canvas.height = height * dpr;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    if (hop.size) fitView();
   }).observe(stage);
 
   await center(centerId, null);
@@ -155,10 +156,8 @@ export async function mountExplore(root, { id }) {
       if (!hop.has(n)) away.set(n, { x: p.x * 1.7, y: p.y * 1.7, z: p.z * 1.7 });
     }
     // A small article gets a tight cluster and the view moves in; a big one spreads out.
-    const r1 = clamp(120 + Math.sqrt(near.length) * 14, 150, 290);
-    fitDist = DIST * clamp((r1 + 220) / 510, 0.72, 1);
-    cam.distTo = fitDist;
-    target = placeInSpace(nextId, near, further, new Set(chosen.map(({ n }) => n)), r1);
+    fitView();
+    target = placeInSpace(nextId, near, further, new Set(chosen.map(({ n }) => n)));
     const start = from ? { ...pos.get(from) } : { x: 0, y: 0, z: 0 };
     for (const [n, t] of target) {
       if (pos.has(n)) continue;
@@ -250,19 +249,22 @@ export async function mountExplore(root, { id }) {
   // Each topic gets its own patch of a sphere. Linked articles sit closer to the middle than the ones
   // a step further away, and a few rounds of nudging keep dots from landing on top of each other
   // and give picture cards room so they rarely cover one another.
-  function placeInSpace(cid, near, further, withCards, r1) {
+  // The linked articles sit in a ring around the middle card, facing you, so none hide behind it.
+  // Each topic gets a slice of the ring, in a fixed order, sized by how many articles it has.
+  function placeInSpace(cid, near, further, withCards) {
     const placed = new Map([[cid, { x: 0, y: 0, z: 0 }]]);
-    for (const [n, h] of hop) {
-      if (h === 0) continue;
-      const a = anchors.get(topics[n]);
-      const reach = (h === 1 ? r1 : r1 + 160) / 400;
-      const spread = (h === 1 ? 0.24 : 0.19) * (h === 1 ? r1 : r1 + 160);
-      const rand = seeded(n);
-      placed.set(n, {
-        x: a.x * reach + gauss(rand) * spread,
-        y: a.y * reach + gauss(rand) * spread,
-        z: a.z * reach + gauss(rand) * spread,
+    const groups = Map.groupBy(near, (n) => topics[n]);
+    let angle = -Math.PI / 2;
+    for (const topic of topicOrder.filter((t) => groups.has(t))) {
+      const members = groups.get(topic).sort((a, b) => a - b);
+      const span = (members.length / near.length) * Math.PI * 2;
+      members.forEach((n, i) => {
+        const rand = seeded(n);
+        const a = angle + (span * (i + 0.2 + rand() * 0.6)) / members.length;
+        const r = RING * (0.72 + rand() * 0.6);
+        placed.set(n, { x: Math.cos(a) * r, y: Math.sin(a) * r * 0.82, z: (rand() - 0.5) * 140 });
       });
+      angle += span;
     }
     const list = [...placed.entries()];
     const room = (a, b) =>
@@ -383,7 +385,11 @@ export async function mountExplore(root, { id }) {
     last = t;
     const ease = 1 - Math.exp(-dt / (t < settleUntil ? 520 : 160));
 
-    if (!drag && selectedId === null && hoverId === null && t - idleSince > 2200) cam.yaw += dt * 0.00006;
+    // When idle the map rocks gently around where you left it, instead of spinning all the way round.
+    if (!drag && selectedId === null && hoverId === null && t - idleSince > 2200) {
+      if (Math.abs(cam.yaw - cam.home) > 0.32) cam.turn = -Math.sign(cam.yaw - cam.home);
+      cam.yaw += dt * 0.00005 * cam.turn;
+    }
     cam.dist += (cam.distTo - cam.dist) * ease;
     for (const k of ["x", "y", "z"]) cam.focus[k] += (cam.focusTo[k] - cam.focus[k]) * ease;
 
@@ -421,6 +427,15 @@ export async function mountExplore(root, { id }) {
     const z2 = y * sp + z1 * cp;
     const s = FOCAL / Math.max(80, cam.dist - z2);
     return { x: middleX() + x1 * s, y: height / 2 - 16 + y2 * s, s, near: clamp((z2 + 380) / 760, 0, 1) };
+  }
+
+  // Smart zoom: the ring always fills the free space beside the panel, whatever the article's size.
+  function fitView() {
+    const w = stage.clientWidth;
+    const h = stage.clientHeight;
+    const free = Math.min((w > 900 ? w - 380 : w) - 80, h - 190) / 2;
+    fitDist = (FOCAL * (RING * 1.15 + 40)) / Math.max(free, 160);
+    cam.distTo = fitDist;
   }
 
   // The panel covers the left side on wide screens, so the map centers in the space beside it.
@@ -488,7 +503,7 @@ export async function mountExplore(root, { id }) {
       const point = pos.get(n);
       if (point.a < 0.02 || placedCards.has(n)) continue;
       const h = hop.get(n) ?? 2;
-      const size = (1.4 + Math.sqrt(nodes.get(n).chars) / 95) * p.s * (h === 2 ? 0.85 : 1.1);
+      const size = (2 + Math.sqrt(nodes.get(n).chars) / 90) * (p.s / (FOCAL / fitDist)) * (h === 2 ? 0.85 : 1.1);
       const shade = Math.round(36 + (1 - p.near) * 150 + (h === 2 ? 40 : 0));
       const dimmed = focusSet && !focusSet.has(n);
       ctx.globalAlpha = point.a * (dimmed ? 0.25 : 1);
@@ -519,7 +534,7 @@ export async function mountExplore(root, { id }) {
     for (const [n, el] of list) {
       const p = projected.get(n);
       const point = pos.get(n);
-      const scale = clamp(p.s / (FOCAL / DIST), 0.7, 1.15) * (n === centerId ? 1 : 0.92 + 0.08 * p.near);
+      const scale = clamp(p.s / (FOCAL / fitDist), 0.7, 1.15) * (n === centerId ? 1 : 0.92 + 0.08 * p.near);
       const rect = { x: p.x - (el.w * scale) / 2, y: p.y - (el.h * scale) / 2, w: el.w * scale, h: el.h * scale };
       const covered = [...placed.values()].some((r) => overlaps(r, rect, -14));
       const visible = point.a > 0.3 && (!covered || priority(n) > 0);
@@ -546,7 +561,8 @@ export async function mountExplore(root, { id }) {
         pill.el.style.opacity = 0;
         continue;
       }
-      const p = project(average(shown.map((n) => pos.get(n))));
+      const mid = average(shown.map((n) => pos.get(n)));
+      const p = project(hop.get(pill.members[0]) === 1 ? { x: mid.x * 1.45, y: mid.y * 1.45, z: mid.z } : mid);
       const base = { x: p.x - pill.w / 2, y: p.y - pill.h / 2, w: pill.w, h: pill.h };
       const rect = PILL_OFFSETS.map(([dx, dy]) => ({ ...base, x: base.x + dx, y: base.y + dy })).find(
         (r) => !rects.some((c) => overlaps(c, r, 6)),
@@ -587,6 +603,7 @@ export async function mountExplore(root, { id }) {
   stage.addEventListener("pointerup", (event) => {
     const clicked = drag && !drag.moved;
     drag = null;
+    cam.home = cam.yaw;
     idleSince = performance.now();
     stage.classList.remove("is-dragging");
     if (!clicked) return;
@@ -604,7 +621,7 @@ export async function mountExplore(root, { id }) {
     "wheel",
     (event) => {
       event.preventDefault();
-      cam.distTo = clamp(cam.distTo * Math.exp(event.deltaY * 0.0012), 420, 1900);
+      cam.distTo = clamp(cam.distTo * Math.exp(event.deltaY * 0.0012), fitDist * 0.45, fitDist * 2);
       idleSince = performance.now();
     },
     { passive: false },
@@ -681,7 +698,7 @@ export async function mountExplore(root, { id }) {
     if (selectedId !== n) return;
     const t = target.get(n);
     cam.focusTo = n === centerId ? { x: 0, y: 0, z: 0 } : { x: t.x * 0.75, y: t.y * 0.75, z: t.z * 0.75 };
-    cam.distTo = Math.min(cam.distTo, 900);
+    cam.distTo = Math.min(cam.distTo, fitDist * 0.9);
     openPanel(n, count);
   }
 
@@ -853,13 +870,6 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function linkKey(a, b) {
   return a < b ? `${a}-${b}` : `${b}-${a}`;
-}
-
-function onSphere(i, count, radius) {
-  const y = 1 - (2 * (i + 0.5)) / count;
-  const r = Math.sqrt(1 - y * y);
-  const turn = i * 2.39996;
-  return { x: Math.cos(turn) * r * radius, y: y * radius * 0.62, z: Math.sin(turn) * r * radius };
 }
 
 function average(points) {
