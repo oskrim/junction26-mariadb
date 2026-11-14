@@ -1,4 +1,5 @@
-import { fileUrl, getArticle, getArticles } from "./fake/api.js";
+import { fileUrl, getArticle, getArticles, getPreview } from "./fake/api.js";
+import { hoverCard } from "./hover-card.js";
 import { renderWikitext } from "./wikitext.js";
 
 const DEFAULT_ARTICLE = 4011;
@@ -32,7 +33,21 @@ if (!version || !summary) {
   toc.innerHTML = renderToc(doc.toc);
   document.body.classList.add("is-ready");
   trackActiveSection(doc.toc);
-  setUpReferencePreviews();
+  hoverCard({
+    root: body,
+    selector: "a.wl",
+    card: document.querySelector(".card-preview"),
+    showDelay: 350,
+    render: renderPreview,
+  });
+  hoverCard({
+    root: body,
+    selector: ".ref a",
+    card: document.querySelector(".card-ref"),
+    showDelay: 80,
+    render: (link) =>
+      `<span class="card-ref-n">${link.dataset.ref}</span>${document.getElementById(`cite-${link.dataset.ref}`).innerHTML}`,
+  });
   body.addEventListener("click", (event) => {
     if (event.target.closest("a.wl")) event.preventDefault();
   });
@@ -124,25 +139,15 @@ function trackActiveSection(entries) {
   update();
 }
 
-function setUpReferencePreviews() {
-  const popover = document.querySelector(".popover");
-  let hideTimer = 0;
-  const hide = () => (hideTimer = setTimeout(() => (popover.hidden = true), 140));
-  body.addEventListener("mouseover", (event) => {
-    const link = event.target.closest(".ref a");
-    if (!link) return;
-    clearTimeout(hideTimer);
-    const source = document.getElementById(`cite-${link.dataset.ref}`);
-    popover.innerHTML = `<span class="popover-n">${link.dataset.ref}</span>${source.innerHTML}`;
-    popover.hidden = false;
-    const r = link.getBoundingClientRect();
-    const width = popover.offsetWidth;
-    popover.style.left = `${Math.min(Math.max(16, r.left + r.width / 2 - width / 2), innerWidth - width - 16)}px`;
-    popover.style.top = `${r.bottom + scrollY + 10}px`;
-  });
-  body.addEventListener("mouseout", (event) => {
-    if (event.target.closest(".ref a")) hide();
-  });
-  popover.addEventListener("mouseenter", () => clearTimeout(hideTimer));
-  popover.addEventListener("mouseleave", hide);
+async function renderPreview(link) {
+  const preview = await getPreview(link.dataset.title);
+  if (!preview) return null;
+  const thumb = preview.thumbnail;
+  // Drawings (SVG) are shown whole on a soft backdrop; photos fill the frame.
+  const media = thumb
+    ? `<div class="card-media${/\.svg\b/i.test(thumb.url) ? " is-diagram" : ""}">
+        <img src="${thumb.url}" alt="" onerror="this.parentElement.remove()">
+      </div>`
+    : "";
+  return `${media}<div class="card-text">${preview.extract}</div>`;
 }

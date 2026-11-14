@@ -304,7 +304,7 @@ a {
 .body a.ext,
 .figure figcaption a,
 .references a,
-.popover a {
+.card a {
   color: var(--link);
   text-decoration: none;
 }
@@ -313,7 +313,7 @@ a {
 .body a.ext:hover,
 .figure figcaption a:hover,
 .references a:hover,
-.popover a:hover {
+.card a:hover {
   color: var(--link-hover);
   text-decoration: underline;
   text-underline-offset: 0.18em;
@@ -400,22 +400,109 @@ sup.ref a:hover {
   color: var(--link-hover);
 }
 
-.popover {
+/* Hover cards: link previews and footnote sources */
+
+.card {
   position: absolute;
   z-index: 10;
+  top: 0;
+  left: 0;
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  box-shadow: 0 16px 40px -16px rgb(32 33 34 / 0.24), 0 2px 6px rgb(32 33 34 / 0.05);
+  color: var(--ink-2);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(4px);
+  transition: opacity 0.18s ease, transform 0.18s ease, visibility 0s linear 0.18s;
+}
+
+.card[data-side="above"] {
+  transform: translateY(-4px);
+}
+
+.card.is-visible {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: none;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+/* Caret pointing at the link */
+.card::before {
+  content: "";
+  position: absolute;
+  left: calc(var(--caret-x, 24px) - 6px);
+  width: 11px;
+  height: 11px;
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  transform: rotate(45deg);
+}
+
+.card[data-side="below"]::before {
+  top: -6px;
+  border-right: 0;
+  border-bottom: 0;
+}
+
+.card[data-side="above"]::before {
+  bottom: -6px;
+  border-top: 0;
+  border-left: 0;
+}
+
+.card-preview {
+  width: 340px;
+  overflow: visible;
+}
+
+.card-media {
+  height: 180px;
+  overflow: hidden;
+  border-radius: 7px 7px 0 0;
+  border-bottom: 1px solid var(--rule);
+  background: #f8f9fa;
+}
+
+.card-media img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 25%;
+}
+
+.card-media.is-diagram img {
+  padding: 14px;
+  object-fit: contain;
+  mix-blend-mode: multiply;
+}
+
+/* Long openings fade out instead of ending mid-word */
+.card-text {
+  max-height: calc(14.5px * 1.55 * 7);
+  margin: 16px 18px 18px;
+  overflow: hidden;
+  font-size: 14.5px;
+  line-height: 1.55;
+  color: var(--ink);
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 1.6em), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 1.6em), transparent);
+}
+
+.card-ref {
   width: max-content;
   max-width: 360px;
   padding: 14px 16px;
-  background: var(--paper);
-  border: 1px solid var(--rule);
-  border-radius: 6px;
-  box-shadow: 0 12px 32px -12px rgb(32 33 34 / 0.18);
-  font-size: 14.5px;
+  font-size: 14px;
   line-height: 1.5;
-  color: var(--ink-2);
 }
 
-.popover-n {
+.card-ref-n {
   margin-right: 8px;
   font-family: var(--sans);
   font-size: 12px;

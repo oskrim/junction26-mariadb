@@ -34,6 +34,9 @@ const LOCAL_FILES = {
   "BQP complexity class diagram.svg": "bqp-complexity-class-diagram.png",
 };
 
+// Opening lines and lead image of each article this page links to, keyed by link target.
+const PREVIEWS = await fetch(new URL("./previews.json", import.meta.url)).then((r) => r.json());
+
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // fetch("/api/articles").then((r) => r.json())
@@ -62,6 +65,13 @@ export async function getArticle(id, at) {
       text,
     },
   };
+}
+
+// Not in app.py yet. A real version could look the title up in /api/articles, then take the
+// first paragraph of /api/article. Returns { title, extract, thumbnail: { url, width, height } | null } or null.
+export async function getPreview(title) {
+  await delay(60);
+  return PREVIEWS[title] ?? null;
 }
 
 // Not an API request: turns a [[File:...]] name from the article text into an image URL.
