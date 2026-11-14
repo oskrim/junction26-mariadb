@@ -10,7 +10,8 @@ const SHOWN_PARAGRAPHS = 3;
 // Replays an edit war between its two main fighters on the passage they fought over most, inside `mount`.
 // Each has a named cursor that waits in the corner, then selects, deletes and types their real edit.
 // Edits by anyone else are applied silently between turns. `onTurn` hears each fighter edit as it starts.
-export async function openWarReplay({ mount, articleId, war, before, onTurn, onClose }) {
+// `inline` plays it inside the article itself: no header, and the controls float at the bottom.
+export async function openWarReplay({ mount, articleId, war, before, onTurn = () => {}, onClose, inline = false }) {
   const fighters = war.fighters.slice(0, 2);
   const edits = [before, ...war.edits];
   const texts = await Promise.all(edits.map(async (e) => (await getArticle(articleId, Math.floor(e.time / 1000))).version?.text ?? ""));
@@ -19,7 +20,19 @@ export async function openWarReplay({ mount, articleId, war, before, onTurn, onC
   const colorOf = (user) => FIGHTER_COLORS[fighters.indexOf(user)];
 
   const root = mount;
-  root.innerHTML = `
+  root.innerHTML = inline
+    ? `
+      <div class="replay-page">
+        <p class="replay-tab"></p>
+        <div class="replay-doc"></div>
+      </div>
+      <footer class="replay-foot">
+        <button type="button" class="replay-play" aria-label="Pause">❚❚</button>
+        <p class="replay-caption"></p>
+        <span class="replay-count"></span>
+        <button type="button" class="replay-close" aria-label="Leave the replay">×</button>
+      </footer>`
+    : `
       <header class="replay-head">
         <div>
           <p class="replay-kicker">${war.kind === "dispute" ? "Edit war" : "Vandalism fought off"} · replay</p>
@@ -317,10 +330,14 @@ function tokenSpan(className) {
 function pointAt(cursor, target, atEnd) {
   const doc = cursor.parentElement;
   const page = doc.parentElement;
-  const view = page.getBoundingClientRect();
+  const scrolls = page.scrollHeight > page.clientHeight + 1;
+  const view = scrolls ? page.getBoundingClientRect() : { top: 0, bottom: innerHeight, height: innerHeight };
   const spot = target.getBoundingClientRect();
   if (spot.top < view.top + 60 || spot.bottom > view.bottom - 60) {
-    page.scrollTo({ top: page.scrollTop + spot.top - view.top - view.height / 3, behavior: atEnd ? "auto" : "smooth" });
+    const by = spot.top - view.top - view.height / 3;
+    const behavior = atEnd ? "auto" : "smooth";
+    if (scrolls) page.scrollTo({ top: page.scrollTop + by, behavior });
+    else scrollBy({ top: by, behavior });
   }
   const box = doc.getBoundingClientRect();
   const rects = target.getClientRects();
