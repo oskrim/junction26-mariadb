@@ -466,6 +466,22 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
     const hit = !ended && f.by >= 0 && u > 0.3 && u < 0.85 ? Math.sin(((u - 0.3) / 0.55) * Math.PI) : 0;
     const angleOf = (k) => -Math.PI / 2 + (k / people.length) * Math.PI * 2 + (people.length === 2 ? Math.PI / 2 : 0);
 
+    // The blow's size flies out of the globe, away from the cursor that struck: green for text added,
+    // red for text cut, fading as it goes.
+    const fly = Math.min(1, (now - f.t0) / 1300);
+    if (!ended && f.by >= 0 && f.delta && fly < 1) {
+      const away = angleOf(f.by) + Math.PI;
+      const d = R * 1.2 + fly * R * 2.2;
+      const text = `${f.delta > 0 ? "+" : "−"}${Math.abs(f.delta).toLocaleString("en-US")}`;
+      ctx.globalAlpha = focus * smoothstep(0, 0.12, fly) * (1 - smoothstep(0.55, 1, fly));
+      ctx.font = `700 ${Math.round(13 + 3 * (1 - fly))}px Inter, system-ui, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = f.delta > 0 ? "#1a7f37" : "#cf222e";
+      ctx.fillText(text, cx + Math.cos(away) * d * 0.7, cy + Math.sin(away) * d - fly * 10);
+      ctx.textBaseline = "alphabetic";
+    }
+
     // The globe, nudged away from the cursor that pokes it.
     const push = f.by >= 0 ? angleOf(f.by) : 0;
     const gx = cx - Math.cos(push) * hit * R * 0.12;

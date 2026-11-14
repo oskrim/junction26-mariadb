@@ -352,6 +352,7 @@ export function startHistoryPlay({ id, body, onClose }) {
         war: frame.round,
         by: frame.round.fighters.indexOf(frame.edit.user),
         revert: frame.edit.revertsTo !== null,
+        delta: frame.edit.delta,
         final: frame.n === frame.of,
       },
     );
