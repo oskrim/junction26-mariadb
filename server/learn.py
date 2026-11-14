@@ -1,7 +1,8 @@
 """POST /api/learn: explores the article's links for the reader and streams a short, sourced explanation.
 
 1. Candidates: the article's links as of `at` (m_link), with the lead of each linked article
-   (m_article as of `at`, else the current Finnish s_article).
+   (m_article as of `at`, else the current Finnish s_article), and the articles nearest to the question by
+   meaning (article_vector) that it does not link to, as of `at`.
 2. One fast Gemini call picks the 3 to 6 linked articles that matter for the question.
 3. The relevant part of each pick: its first 4,000 characters, or its lead plus a window around the focus term.
 4. One streamed Gemini call writes the explanation, citing the picks as [1], [2], ..., and after it, held back
@@ -20,7 +21,9 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 
-from ask import QUOTES_TAG, AskError, Progress, answer_texts, day, event, read_version, send_json, until_quotes
+import vector
+from ask import (QUOTES_TAG, AskError, Progress, answer_texts, day, event, read_version, send_json, until_quotes,
+                 vector_count)
 
 # Measured on page 1150 with 150 links: ranking takes ~1.4 s on 3.5 Flash Lite and ~4 s on 3.8 Flash; writing
 # takes ~3 s on 3.5 Flash and ~5.5 s on 3.8 Flash, and 3.5 Flash Lite ignores the language of the question.
@@ -33,6 +36,7 @@ READ_CHARS = 20_000
 SECTION_CHARS = 4_000
 SECTION_LEAD = 1_200
 MIN_PICKS, MAX_PICKS = 3, 6
+RELATED = 10  # candidates found by meaning, next to the linked ones
 NARROW_W = 700
 MAX_HISTORY = 8
 WRITE_READER_CHARS = 3_000
@@ -85,6 +89,7 @@ def serve(handler, database):
         cur = database().cursor()
         here = read_version(cur, progress, request)
         candidates = linked_articles(cur, progress, request["page_id"], request["at"])
+        candidates += related_articles(cur, progress, request, {c["page_id"] for c in candidates})
         timings["db_ms"] = ms(started)
         if candidates:
             picks = rank(progress, request, here, candidates)
@@ -165,6 +170,29 @@ def linked_articles(cur, progress, page_id, at):
     candidates = [{**found[t], "lead": found[t]["text"][:LEAD_CHARS]} for t in titles if t in found and found[t]["text"]]
     progress.finish(f"Read {len(candidates):,} of the {len(titles):,} articles this one links to (as of {day(at)})")
     return candidates
+
+
+def related_articles(cur, progress, request, linked):
+    """Up to RELATED articles nearest to the question by meaning, as of `at`, other than this one and the linked ones."""
+    label = "Finding related articles by meaning"
+    progress.step(label)
+    try:
+        question = vector.embed(request["prompt"])
+    except vector.Unavailable:
+        progress.finish(f"{label}: skipped, the embedding service is not answering")
+        return []
+    stamp = request["at"].strftime("%Y-%m-%d %H:%M:%S.%f")
+    found = []
+    for page_id, _ in vector.nearest(cur, question, RELATED, exclude={request["page_id"], *linked}):
+        cur.execute("""SELECT title, text FROM m_article FOR SYSTEM_TIME AS OF TIMESTAMP %s
+                       WHERE page_id = %s ORDER BY row_start DESC LIMIT 1""", (stamp, page_id))
+        version = cur.fetchone()
+        text = version and wikitext_plain(version["text"])[:READ_CHARS]
+        if text:
+            found.append({"title": version["title"], "page_id": page_id, "url": wiki_url(version["title"]),
+                          "text": text, "lead": text[:LEAD_CHARS]})
+    progress.finish(f"{label}: {len(found)} of {vector_count(cur):,}")
+    return found
 
 
 def rank(progress, request, here, candidates):

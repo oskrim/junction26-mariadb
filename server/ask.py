@@ -4,8 +4,10 @@ Both modes stream Server-Sent Events, the same as /api/learn:
   step      {id, text, done}: one piece of work; a later event with the same id updates its text or ends it
   thinking  a piece of Gemini's thought summary (a JSON string)
   message   ask: a piece of the answer text, with markers [1], [2], ... after its claims
-  sources   ask, after the answer: {type: "quotes", here, items: [{n, title, section, quote}]}, the passages the
-            markers cite, each found word for word in the article; a marker without an item cites nothing
+  sources   ask, after the answer: {type: "quotes", here, items: [{n, title, section, quote, link}]}, the passages
+            the markers cite, each found word for word in a text Gemini was given; link (null for the version
+            being read) opens the related article or the other version it is in; a marker without an item
+            cites nothing
   result    find: {text, attachment, version}: quotes that answer the prompt, when the top one first appeared,
             and other articles that mention the key term
   error     the message of the failure that ended the request; the step running at that moment failed
@@ -19,6 +21,8 @@ import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
+
+import vector
 
 MODEL = "gemini-3.8-flash"
 API = "https://generativelanguage.googleapis.com/v1beta/models/" + MODEL
@@ -42,6 +46,17 @@ QUOTE_RULES = """- After the answer, write <quotes> on its own line, then one li
   text (one sentence or clause, 30 to 200 characters; not the infobox, a table or markup). Write nothing after
   the last quote."""
 QUOTES_TAG = "<quotes>"
+RELATED_RULES = """- Related articles, found by the meaning of the question, follow the article. Use one only for what the
+  article itself does not say, and then name it ("The article on X says ..."). Cite its passages like the article's."""
+THEN_NOW_RULES = """- You are given two versions of the article, THEN and NOW. Say what the THEN version said about the question,
+  what the NOW version says, and what changed between them (or that nothing did), each with its date. Cite
+  passages from both versions."""
+
+RELATED = 3  # related articles given to Gemini
+RELATED_CANDIDATES = 8  # nearest vectors looked at: some articles did not exist yet at the moment being read
+RELATED_CHARS = 12_000  # of each related article: its lead and first sections
+YEAR = re.compile(r"\b(1[89]\d\d|20\d\d)\b")
+OLD_DAYS = 30  # a version this much older than the current one is an old version
 
 FIND_RULES = """You find where one Wikipedia article says something. Read the article wikitext and return:
 - quotes: up to 5 passages that best answer the request, most relevant first. Each "text" is copied
@@ -84,10 +99,12 @@ def serve(handler, database):
         else:
             facts = edit_facts(cur, progress, request["page_id"], version["row_start"])
             facts["passage_first"] = passage_first(cur, progress, request, version)
+            then_now = versions_to_compare(cur, progress, request, version)
+            related = related_articles(cur, progress, request)
         if request["mode"] == "find":
             event(handler, "result", result)
         else:
-            stream_answer(progress, request, version, facts)
+            stream_answer(progress, request, version, facts, then_now, related)
 
 
 class Progress:
@@ -184,6 +201,63 @@ def version_at(cur, page_id, at):
     return version
 
 
+def versions_to_compare(cur, progress, request, version):
+    """(then, now) when the question names an earlier year, or when the reader is on an old version: the last
+    version of that year (or the one being read) and the current one. None otherwise."""
+    now_moment = datetime.now(timezone.utc).replace(tzinfo=None)
+    years = [int(y) for y in YEAR.findall(request["prompt"]) if int(y) < now_moment.year]
+    if years:
+        moment, label = datetime(years[0] + 1, 1, 1), f"the version of {years[0]}"
+    elif (now_moment - version["row_start"]).days > OLD_DAYS:
+        moment, label = None, f"the version of {day(version['row_start'])}"
+    else:
+        return None
+    progress.step(f"Reading {label} and today's version")
+    try:
+        then = version if moment is None else version_at(cur, request["page_id"], moment)
+    except AskError:
+        progress.finish(f"The article did not exist yet in {years[0]}, so there is no earlier version to compare")
+        return None
+    now = version_at(cur, request["page_id"], now_moment)
+    if then["rev_id"] == now["rev_id"]:
+        progress.finish(f"Reading {label}: it is also today's version, so there is nothing to compare")
+        return None
+    progress.finish(f"Reading the version of {day(then['row_start'])} (then) and of {day(now['row_start'])} (now)")
+    return then, now
+
+
+_count = {"n": None, "at": 0.0}  # openable articles with a vector, counted at most once a minute per worker
+
+
+def vector_count(cur):
+    if time.time() - _count["at"] > 60:
+        _count.update(n=vector.count(cur), at=time.time())
+    return _count["n"]
+
+
+def related_articles(cur, progress, request):
+    """The RELATED articles nearest to the question by meaning, each as it was at the moment being read."""
+    label = "Finding related articles by meaning"
+    progress.step(label)
+    try:
+        question = vector.embed(request["prompt"])
+    except vector.Unavailable:
+        progress.finish(f"{label}: skipped, the embedding service is not answering")
+        return []
+    found = []
+    for page_id, distance in vector.nearest(cur, question, RELATED_CANDIDATES, exclude={request["page_id"]}):
+        try:
+            found.append(version_at(cur, page_id, request["at"]))
+        except AskError:  # the article did not exist yet at that moment
+            continue
+        found[-1]["page_id"] = page_id
+        if len(found) == RELATED:
+            break
+    titles = "; ".join(r["title"] for r in found)
+    progress.finish(f"{label}: {len(found)} of {vector_count(cur):,}" + (f" — {titles}" if titles else ""))
+    return found
+
+
 def edit_facts(cur, progress, page_id, until):
     """Edit counts up to and including the version being read. A repeated sha1 is a revert to an earlier text."""
     progress.step("Counting the edit history")
@@ -260,7 +334,30 @@ def article_block(version, context):
             f"{passage}\n\nArticle wikitext of that version:\n<<<\n{text}\n>>>")
 
 
-def stream_answer(progress, request, version, facts):
+def related_block(related):
+    return "\n\n".join(f"Related article: {r['title']} (version of {day(r['row_start'])})\n<<<\n"
+                       f"{r['clean'].text[:RELATED_CHARS]}\n>>>" for r in related)
+
+
+def then_now_block(then, now):
+    half = MAX_TEXT // 2
+    return (f"THEN: the version of {day(then['row_start'])} (revision {then['rev_id']}):\n<<<\n{then['clean'].text[:half]}\n>>>"
+            f"\n\nNOW: the version of {day(now['row_start'])} (revision {now['rev_id']}):\n<<<\n{now['clean'].text[:half]}\n>>>")
+
+
+def quotable(request, version, then_now, related):
+    """The texts Gemini was given, as (title, Cleaned, link): a link opens a text other than the version being read."""
+    def link(page_id, row_start):
+        return f"./?id={page_id}&at={int(row_start.replace(tzinfo=timezone.utc).timestamp())}"
+    texts = [(version["title"], version["clean"], None)]
+    for v in then_now or ():
+        if v["rev_id"] != version["rev_id"]:
+            texts.append((f"{v['title']} ({day(v['row_start'])})", v["clean"], link(request["page_id"], v["row_start"])))
+    texts += [(r["title"], r["clean"], link(r["page_id"], r["row_start"])) for r in related]
+    return texts
+
+
+def stream_answer(progress, request, version, facts, then_now, related):
     facts_text = (f"Edit facts up to this version: first version {day(facts['first'])}; {facts['versions']} versions; "
                   f"{facts['editors']} different editors; {facts['reverts']} versions restored an earlier text exactly "
                   f"(reverts); last edit {day(version['row_start'])} by {version['user'] or 'an anonymous editor'}, "
@@ -269,13 +366,17 @@ def stream_answer(progress, request, version, facts):
     if first:
         facts_text += (f"\nThe selected passage first appears in the version of {day(first['row_start'])} "
                        f"by {first['user'] or 'an anonymous editor'}, comment: \"{first['comment']}\".")
-    contents = [{"role": "user", "parts": [{"text": article_block(version, request["context"]) + "\n\n" + facts_text}]},
+    given = then_now_block(*then_now) if then_now else article_block(version, request["context"])
+    if related:
+        given += "\n\n" + related_block(related)
+    contents = [{"role": "user", "parts": [{"text": given + "\n\n" + facts_text}]},
                 {"role": "model", "parts": [{"text": "I have read that version and its edit facts."}]}]
     contents += [{"role": "user" if h.get("role") == "user" else "model", "parts": [{"text": str(h["text"])}]}
                  for h in request["history"]]
     contents.append({"role": "user", "parts": [{"text": request["prompt"]}]})
     length = "2 or 3 sentences" if request["narrow"] else "3 to 6 sentences"
-    rules = ASK_RULES.format(length=length) + "\n" + QUOTE_RULES
+    rules = "\n".join([ASK_RULES.format(length=length), *([THEN_NOW_RULES] if then_now else []),
+                       *([RELATED_RULES] if related else []), QUOTE_RULES])
     progress.step("Asking Gemini…")
     started = time.perf_counter()
     cited = []
@@ -286,7 +387,7 @@ def stream_answer(progress, request, version, facts):
         progress.finish(f"Asked Gemini: first words after {time.perf_counter() - started:.1f} s")
         event(progress.handler, "message", value)
     event(progress.handler, "sources", {"type": "quotes", "here": {"title": version["title"], "page_id": request["page_id"]},
-                                        "items": article_quotes(version, cited)})
+                                        "items": article_quotes(quotable(request, version, then_now, related), cited)})
 
 
 def until_quotes(pieces):
@@ -317,18 +418,22 @@ def until_quotes(pieces):
 HEADING = re.compile(r"^(={2,6})\s*(.*?)\s*\1\s*$", re.M)
 
 
-def article_quotes(version, cited):
-    """The cited quotes that occur word for word in the version, each with the heading of its section."""
-    clean, items, seen = version["clean"], [], set()
+def article_quotes(texts, cited):
+    """The cited quotes that occur word for word in one of texts [(title, Cleaned, link)], each with the heading
+    of its section there."""
+    items, seen = [], set()
     for n, quote in cited:
         needle = Cleaned(quote).text.strip()
-        at = clean.text.find(needle) if len(needle) >= 12 and n not in seen else -1
-        if at < 0:
+        if len(needle) < 12 or n in seen:
             continue
-        seen.add(n)
-        headings = [m.group(2) for m in HEADING.finditer(clean.text, 0, at)]
-        items.append({"n": n, "title": version["title"], "section": plain(headings[-1]) if headings else "",
-                      "quote": plain(needle)})
+        for title, clean, link in texts:
+            at = clean.text.find(needle)
+            if at >= 0:
+                seen.add(n)
+                headings = [m.group(2) for m in HEADING.finditer(clean.text, 0, at)]
+                items.append({"n": n, "title": title, "section": plain(headings[-1]) if headings else "",
+                              "quote": plain(needle), "link": link})
+                break
     return items
 
 
