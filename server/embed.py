@@ -110,13 +110,19 @@ def serve(port):
 
 # --- The batch job -------------------------------------------------------------------------------------
 
-def connect():
+def connect(autocommit=True):
     import pymysql
     return pymysql.connect(
         host=os.environ.get("DB_HOST", "127.0.0.1"), port=int(os.environ.get("DB_PORT", 3309)),
         user=os.environ.get("DB_USER", "wiki"), password=os.environ.get("DB_PASSWORD", "wiki"),
-        database=os.environ["DB_NAME"], charset="utf8mb4", max_allowed_packet=64 << 20, autocommit=True,
+        database=os.environ["DB_NAME"], charset="utf8mb4", max_allowed_packet=64 << 20, autocommit=autocommit,
     )
+
+
+def save(cur, values):
+    cur.executemany("""INSERT IGNORE INTO article_vector (lang, page_id, model, truncated, embedding)
+                       VALUES (%s, %s, %s, %s, %s)""", values)
+    cur.connection.commit()
 
 
 def packed(vector):
@@ -193,8 +199,9 @@ def embed_job():
     print(f"embed: database {cur.fetchone()[0]}", flush=True)
     encoder = Encoder()
     print(f"embed: {HF_MODEL} on {encoder.device}", flush=True)
-    # The vectors of one chunk are written while the GPU embeds the next, on a connection of their own.
-    writer, writes = ThreadPoolExecutor(1), connect().cursor()
+    # The vectors of one chunk are written while the GPU embeds the next, on a connection of their own, in one
+    # transaction. More writers are slower: they wait for each other in the vector index.
+    writer, writes = ThreadPoolExecutor(1), connect(autocommit=False).cursor()
     saving = None
     started, articles, tokens, gpu_s = time.time(), 0, 0, 0.0
     for rows in itertools.chain(l_dataset(cur), main_table(cur)):
@@ -203,9 +210,7 @@ def embed_job():
         gpu_s += time.time() - t0
         if saving:
             saving.result()  # raises the last write's error
-        saving = writer.submit(writes.executemany, """INSERT IGNORE INTO article_vector (lang, page_id, model, truncated, embedding)
-                                                      VALUES (%s, %s, %s, %s, %s)""",
-                               [("fi", p, MODEL, c, packed(v)) for (p, _), v, c in zip(rows, vectors, cut)])
+        saving = writer.submit(save, writes, [("fi", p, MODEL, c, packed(v)) for (p, _), v, c in zip(rows, vectors, cut)])
         articles += len(rows)
         tokens += n_tokens
         elapsed = time.time() - started

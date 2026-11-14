@@ -46,6 +46,8 @@ def connect():
         ssl={"verify_mode": False} if os.environ.get("DB_SSL") == "1" else None,
     )
     con.cursor().execute("SET time_zone = '+00:00'")
+    # Candidates one vector index search looks at (default 20): with M=16, 80 finds the exact top 10.
+    con.cursor().execute(f"SET mhnsw_ef_search = {vector.EF_SEARCH}")
     return con
 
 
@@ -423,7 +425,6 @@ def search(cur, params):
     keyword_sql, keyword_args = keyword_ranking(q)
     try:
         query_vector = vector.embed(q)
-        cur.execute(f"SET mhnsw_ef_search = {vector.EF_SEARCH}")
         cur.execute(vector.hybrid_sql(keyword_sql), (*keyword_args, query_vector, SEARCH_CANDIDATES, limit))
     except vector.Unavailable as error:
         print(f"search: keywords only: {error}", flush=True)

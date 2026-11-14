@@ -177,6 +177,8 @@ current text as the main table), then whatever else is in `m_article_stats`. It 
 so search improves while it runs, and on a second connection while the GPU embeds the next chunk. Stopped, it
 continues where it stopped. Texts are sorted by length and batched by 160,000 padded tokens, in float16.
 
-Measured on the A100: 68 articles/s, 98,000 tokens/s (the GPU busy 70 s of each 71 s chunk).
+Measured on the A100: 145 articles/s, 100,000 tokens/s, the GPU busy ~90% of the time. Committing each chunk in
+one transaction matters: with a commit per statement the vector index took only 60-70 rows/s, and four parallel
+writers were slower still (45 rows/s), as they wait for each other in the index.
 The NVIDIA driver comes from Ubuntu's prebuilt modules for the running kernel (`bootstrap.sh`), loaded with
 `modprobe`, without a reboot.
