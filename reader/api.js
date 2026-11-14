@@ -75,7 +75,58 @@ export const getChange = (revId) => get(`/api/change?rev=${revId}`);
 // is q's [start, end) in snippet (code points), or null when the snippet is the article's first sentence.
 export const searchArticles = (q) => get(`/api/search?q=${encodeURIComponent(q)}&limit=8`);
 
-// Not an API request: turns a [[File:...]] name from the article text into an image URL.
+// Not an API request: turns a [[File:...]] name from the article text into its upload.wikimedia.org
+// thumbnail, 330 px wide (a standard width). Special:FilePath would cost two redirects. Mirrors
+// thumbnail_url in server/app.py.
 export function fileUrl(name) {
-  return `https://commons.wikimedia.org/wiki/Special:FilePath/${encodeURIComponent(name)}?width=640`;
+  const file = name.trim().replace(/ /g, "_").replace(/^./, (c) => c.toUpperCase());
+  const digest = md5(file);
+  const lower = file.toLowerCase();
+  const suffix = lower.endsWith(".svg") ? ".png" : /\.tiff?$/.test(lower) ? ".jpg" : "";
+  const prefix = suffix === ".jpg" ? "lossy-page1-" : "";
+  const path = encodeURIComponent(file);
+  return `https://upload.wikimedia.org/wikipedia/commons/thumb/${digest[0]}/${digest.slice(0, 2)}/${path}/${prefix}330px-${path}${suffix}`;
+}
+
+// A file renamed on Commons has no thumbnail under its old name, but Special:FilePath follows the rename.
+// Retrying in the capture phase keeps the img's own error handlers from seeing the first failure.
+const THUMB = /^https:\/\/upload\.wikimedia\.org\/wikipedia\/commons\/thumb\/\w\/\w\w\/([^/]+)\/[^/]*?(\d+)px-/;
+addEventListener(
+  "error",
+  (event) => {
+    const match = event.target instanceof HTMLImageElement && event.target.src.match(THUMB);
+    if (!match) return;
+    event.stopImmediatePropagation();
+    event.target.src = `https://commons.wikimedia.org/wiki/Special:FilePath/${match[1]}?width=${match[2]}`;
+  },
+  true,
+);
+
+// The hex MD5 of a string's UTF-8 bytes (RFC 1321): Commons puts files in folders named after it.
+const S = [7, 12, 17, 22, 5, 9, 14, 20, 4, 11, 16, 23, 6, 10, 15, 21];
+const K = Array.from({ length: 64 }, (_, i) => Math.floor(Math.abs(Math.sin(i + 1)) * 2 ** 32) >>> 0);
+
+function md5(text) {
+  const bytes = new TextEncoder().encode(text);
+  const words = new Uint32Array((((bytes.length + 8) >> 6) + 1) * 16);
+  bytes.forEach((b, i) => (words[i >> 2] |= b << ((i % 4) * 8)));
+  words[bytes.length >> 2] |= 0x80 << ((bytes.length % 4) * 8);
+  words[words.length - 2] = bytes.length * 8;
+  let [a0, b0, c0, d0] = [0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476];
+  for (let chunk = 0; chunk < words.length; chunk += 16) {
+    let [a, b, c, d] = [a0, b0, c0, d0];
+    for (let i = 0; i < 64; i++) {
+      const round = i >> 4;
+      const f = [(b & c) | (~b & d), (d & b) | (~d & c), b ^ c ^ d, c ^ (b | ~d)][round];
+      const g = [i, 5 * i + 1, 3 * i + 5, 7 * i][round] % 16;
+      const shift = S[round * 4 + (i % 4)];
+      const sum = (a + f + K[i] + words[chunk + g]) >>> 0;
+      [a, d, c] = [d, c, b];
+      b = (b + ((sum << shift) | (sum >>> (32 - shift)))) >>> 0;
+    }
+    [a0, b0, c0, d0] = [(a0 + a) >>> 0, (b0 + b) >>> 0, (c0 + c) >>> 0, (d0 + d) >>> 0];
+  }
+  return [a0, b0, c0, d0]
+    .map((v) => [0, 8, 16, 24].map((s) => ((v >>> s) & 0xff).toString(16).padStart(2, "0")).join(""))
+    .join("");
 }

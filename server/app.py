@@ -409,7 +409,13 @@ class Handler(BaseHTTPRequestHandler):
             path = path / "index.html"
         if READER not in path.parents or not path.is_file():
             return self.send(404, "application/json", b'{"error": "not found"}')
-        self.send(200, TYPES.get(path.suffix, "application/octet-stream"), path.read_bytes())
+        body = path.read_bytes()
+        # Files change on deploy, so the browser asks every time, and a revisit costs a 304 without a body.
+        etag = f'"{hashlib.sha1(body).hexdigest()}"'
+        headers = (("ETag", etag), ("Cache-Control", "no-cache"))
+        if etag in self.headers.get("If-None-Match", ""):
+            return self.send(304, None, b"", headers)
+        self.send(200, TYPES.get(path.suffix, "application/octet-stream"), body, headers)
 
     def api(self, url):
         route = ROUTES.get(url.path)
@@ -425,10 +431,13 @@ class Handler(BaseHTTPRequestHandler):
             status, result = 400, {"error": str(error)}
         self.send(status, "application/json", json.dumps(result, ensure_ascii=False, default=str).encode())
 
-    def send(self, status, kind, body):
+    def send(self, status, kind, body, headers=()):
         self.send_response(status)
-        self.send_header("Content-Type", f"{kind}; charset=utf-8" if kind.startswith(("text", "application/json")) else kind)
-        self.send_header("Content-Length", str(len(body)))
+        if kind:
+            self.send_header("Content-Type", f"{kind}; charset=utf-8" if kind.startswith(("text", "application/json")) else kind)
+            self.send_header("Content-Length", str(len(body)))
+        for name, value in headers:
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(body)
 
