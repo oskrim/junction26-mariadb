@@ -2,6 +2,14 @@ import { searchArticles } from "./api.js";
 
 const escape = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
+// The snippet with the matched query in bold; match is [start, end) in code points, or null.
+function highlight(snippet, match) {
+  if (!match) return escape(snippet);
+  const chars = Array.from(snippet);
+  const part = (from, to) => escape(chars.slice(from, to).join(""));
+  return `${part(0, match[0])}<b>${part(match[0], match[1])}</b>${part(match[1])}`;
+}
+
 // The top bar's search box: matching articles in a list under it. Choosing one opens it in the current view.
 export function setUpSearch(box) {
   const input = box.querySelector("input");
@@ -22,7 +30,7 @@ export function setUpSearch(box) {
           .map(
             (r, i) => `<li role="option" data-index="${i}" aria-selected="${i === active}">
               <span class="search-title">${escape(r.title)}</span>
-              <span class="search-snippet">${escape(r.snippet)}</span></li>`,
+              <span class="search-snippet">${highlight(r.snippet, r.match)}</span></li>`,
           )
           .join("")
       : `<li class="search-none">No articles found</li>`;

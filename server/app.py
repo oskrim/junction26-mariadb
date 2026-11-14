@@ -181,40 +181,77 @@ def preview(cur, params):
     return {"title": found["title"], "extract": extract(s["text"]) if s else "", "thumbnail": thumbnail}
 
 
-def plain(wikitext):
-    """Wiki markup as plain text, roughly: for search snippets."""
-    text = "\n".join(line for line in wikitext.splitlines() if not line.lstrip().startswith(("|", "{", "}", "!")))
-    text = re.sub(r"<ref[^>]*/>|<ref[^>]*>.*?</ref>|<[^>]+>|\{\{[^{}]*\}\}|'{2,}", "", html.unescape(text), flags=re.S)
+def prose(markdown):
+    """The running text of an S article's Markdown: no headings or table rows, on one line."""
+    lines = (line for line in markdown.splitlines() if not line.lstrip().startswith(("#", "|")))
+    text = re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", " ".join(lines)).replace("**", "")
+    return " ".join(text.split())
+
+
+FILE_LINK = re.compile(r"\[\[\s*(?:File|Image|Tiedosto|Kuva|Luokka|Category)\s*:[^\[\]]*(?:\[\[[^\[\]]*\]\][^\[\]]*)*\]\]", re.I)
+INNERMOST_BLOCK = re.compile(r"\{\{[^{}]*\}\}|\{\|(?:(?!\{\||\|\}).)*\|\}", re.S)
+
+
+def unwiki(wikitext):
+    """Wiki markup as plain text, roughly: the snippet source for M articles that have no S text."""
+    text = re.sub(r"<!--.*?-->|<(timeline|gallery)[^>]*>.*?</\1>|<ref[^>]*/>|<ref[^>]*>.*?</ref>", "", wikitext, flags=re.S | re.I)
+    for _ in range(100):  # templates and tables nest; each pass removes the innermost ones
+        text, removed = INNERMOST_BLOCK.subn("", text)
+        if not removed:
+            break
+    text = FILE_LINK.sub("", text)
     text = re.sub(r"\[\[(?:[^|\]]*\|)?([^\]]*)\]\]", r"\1", text)
-    return " ".join(re.sub(r"[\[\]{}|=*#]", " ", text).split())
+    text = re.sub(r"\[(?:https?:)?//[^\s\]]*\s*([^\]]*)\]", r"\1", text)
+    text = re.sub(r"'{2,}|<[^>]+>|^=+.*?=+\s*$", "", text, flags=re.M)
+    return " ".join(html.unescape(text).split())
+
+
+def lead(text, width):
+    """The first sentence of at least 40 characters, cut to width."""
+    end = next((m.end() for m in re.finditer(r"[.!?](?=\s+[A-ZÅÄÖ0-9]|\s*$)", text) if m.end() >= 40), len(text))
+    sentence = text[:end]
+    return sentence if len(sentence) <= width else sentence[:width].rsplit(" ", 1)[0] + "…"
 
 
 def snippet(text, q, width=160):
-    at = max(0, text.lower().find(q.lower()))
-    start = max(0, at - width // 3)
-    return ("…" if start else "") + text[start:start + width] + ("…" if start + width < len(text) else "")
+    """About width characters around the first q in text, and where q sits in it; the lead if q is absent."""
+    at = text.lower().find(q.lower()) if len(text.lower()) == len(text) else -1
+    if at < 0:
+        return lead(text, width), None
+    start = max(0, at - (width - len(q)) // 3)
+    if start:
+        start = text.find(" ", start, at) + 1 or start
+    end = max(at + len(q), start + width)
+    if end < len(text):
+        space = text.rfind(" ", at + len(q), end)
+        end = space if space > 0 else end
+    prefix = "…" if start else ""
+    shown = prefix + text[start:end] + ("…" if end < len(text) else "")
+    return shown, [len(prefix) + at - start, len(prefix) + at - start + len(q)]
 
 
 def search(cur, params):
-    """The current M articles whose title, then text, contains q (any case). ?in=s searches S instead."""
+    """Current M articles whose title, then clean text, contains q (any case or accent).
+
+    The text searched is the article's S Markdown (Finnish), or its wikitext when it has none."""
     q = params.get("q", [""])[0].strip()
     if not q:
         raise BadRequest("q is required")
     like = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
     limit = number(params, "limit", 20)
-    if params.get("in", ["m"])[0] == "s":
-        cur.execute("""SELECT lang, page_id, title, url,
-                              SUBSTRING(text, GREATEST(1, LOCATE(%s, text) - 80), 200) AS snippet
-                       FROM s_article WHERE title LIKE %s OR text LIKE %s
-                       ORDER BY title LIKE %s DESC, title LIMIT %s""", (q, like, like, like, limit))
-        return cur.fetchall()
     # Current rows are reached by key: a plain WHERE on m_article decompresses the text of every version.
-    cur.execute("""SELECT a.page_id, a.title, SUBSTRING(a.text, GREATEST(1, LOCATE(%s, a.text) - 300), 800) AS around
+    # IF reads the M wikitext only for articles without S text.
+    cur.execute("""SELECT a.page_id, a.title, s.page_id IS NOT NULL AS clean,
+                          IF(s.page_id IS NULL, a.text, s.text) AS text
                    FROM (SELECT page_id FROM m_article) c STRAIGHT_JOIN m_article a USING (page_id)
-                   WHERE a.title LIKE %s OR a.text LIKE %s
-                   ORDER BY a.title LIKE %s DESC, a.title LIMIT %s""", (q, like, like, like, limit))
-    return [{"page_id": r["page_id"], "title": r["title"], "snippet": snippet(plain(r["around"]), q)}
-            for r in cur.fetchall()]
+                   LEFT JOIN s_article s ON s.lang = 'fi' AND s.page_id = a.page_id
+                   WHERE a.title LIKE %s OR IF(s.page_id IS NULL, a.text, s.text) LIKE %s
+                   ORDER BY a.title LIKE %s DESC, a.title LIMIT %s""", (like, like, like, limit))
+    results = []
+    for r in cur.fetchall():
+        text, match = snippet(prose(r["text"]) if r["clean"] else unwiki(r["text"]), q)
+        results.append({"page_id": r["page_id"], "title": r["title"], "snippet": text, "match": match})
+    return results
 
 
 ROUTES = {"/api/articles": articles, "/api/article": article, "/api/history": history, "/api/change": change,
