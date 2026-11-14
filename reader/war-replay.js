@@ -323,13 +323,39 @@ function buildModel(versions, edits, fighters) {
   return { shown, steps, states };
 }
 
-// Prose only: image lines and other markup-only lines are left out.
+// Prose only: templates (the infobox and its fields), tables, headings, image lines and category
+// links are left out, so a fight over the infobox date doesn't show its raw markup.
 function paragraphsOf(text) {
-  return text
+  return stripBlocks(text)
     .split("\n")
-    .filter((line) => !/^\s*\[\[(file|image):/i.test(line))
+    .filter((line) => !/^\s*(\[\[(file|image|tiedosto|kuva|luokka|category):|\[\[[a-z-]{2,12}:[^\]]*\]\]\s*$|=|\||!|\{|\})/i.test(line))
     .map(plainText)
+    .map(decodeEntities)
     .filter((t) => t.length > 1);
+}
+
+// Removes {{templates}} and {| tables |}, nested ones included, keeping the line breaks around them.
+function stripBlocks(text) {
+  let out = "";
+  const open = [];
+  for (let i = 0; i < text.length; i++) {
+    const two = text.slice(i, i + 2);
+    if (two === "{{" || two === "{|") {
+      open.push(two === "{{" ? "}}" : "|}");
+      i++;
+    } else if (open.length && two === open.at(-1)) {
+      open.pop();
+      i++;
+    } else if (!open.length) out += text[i];
+  }
+  return out;
+}
+
+function decodeEntities(s) {
+  if (!s.includes("&")) return s;
+  const el = document.createElement("textarea");
+  el.innerHTML = s;
+  return el.value;
 }
 
 // Changes only a few unchanged words apart become one select-and-retype, instead of the cursor
