@@ -256,6 +256,7 @@ export function learnView({ article }) {
           if (status === "ended") finishTalk(detail);
           else {
             me.status = status;
+            me.step = status === "connecting" ? detail : "";
             renderTalk();
           }
         },
@@ -303,7 +304,7 @@ export function learnView({ article }) {
         ? "Speaking. Talk to interrupt."
         : talk.status === "listening"
           ? "Listening. Just talk."
-          : "";
+          : (talk.step ?? "");
     el.talk.setAttribute("aria-pressed", String(on));
     el.talk.classList.toggle("is-live", on && talk.status !== "connecting");
     el.talk.classList.toggle("is-speaking", on && talk.status === "speaking");

@@ -70,32 +70,66 @@ export function speechUrl(text) {
 }
 
 // Starts a conversation with the Learn agent. context: { title, article, answer, sources: [{ title, text }] }.
-// Callbacks: onStatus("connecting" | "listening" | "speaking" | "ended", detail), onMessage(role, text).
+// Callbacks: onStatus("connecting" | "listening" | "speaking" | "ended", detail), onMessage(role, text); while
+// connecting, detail names the step. Each step has CONNECT_S to finish, and is logged as [voice] in the console.
 // Resolves to { stop(), volume() }.
+const CONNECT_S = 20;
+
 export async function startTalk({ context, onStatus, onMessage }) {
-  onStatus("connecting");
-  const mic = navigator.mediaDevices?.getUserMedia?.({ audio: true });
-  if (!mic) throw new Error("this browser has no microphone access");
-  (await mic).getTracks().forEach((t) => t.stop()); // asks for the microphone right after the click
-  const [{ VoiceConversation }, started] = await Promise.all([
-    import(CLIENT),
-    fetch(BASE + "/api/voice", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(context),
-    }).then(async (r) => (r.ok ? r.json() : Promise.reject(new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`)))),
-  ]);
-  let mode = "listening";
-  const session = await VoiceConversation.startSession({
-    signedUrl: started.signed_url,
-    connectionType: "websocket",
-    dynamicVariables: started.dynamic_variables,
-    onConnect: () => onStatus("listening"),
-    onModeChange: ({ mode: m }) => onStatus((mode = m === "speaking" ? "speaking" : "listening")),
-    onMessage: ({ source, message }) => message && onMessage(source === "user" ? "user" : "ai", message),
-    onError: (message) => onStatus("ended", String(message)),
-    onDisconnect: (details) => onStatus("ended", details?.reason === "error" ? details.message : ""),
+  const step = async (label, work) => {
+    onStatus("connecting", label);
+    console.info(`[voice] ${label}`);
+    let timer;
+    const late = new Promise((_, reject) => (timer = setTimeout(() => reject(new Error(`${label.replace(/…$/, "")} took over ${CONNECT_S} s`)), CONNECT_S * 1000)));
+    try {
+      return await Promise.race([work(), late]);
+    } catch (error) {
+      console.error(`[voice] ${label} failed`, error);
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+  await step("Starting the microphone…", async () => {
+    const mic = await navigator.mediaDevices?.getUserMedia?.({ audio: true });
+    if (!mic) throw new Error("this browser has no microphone access");
+    mic.getTracks().forEach((t) => t.stop());
   });
+  const [{ VoiceConversation }, started] = await step("Loading the voice…", () =>
+    Promise.all([
+      import(CLIENT),
+      fetch(BASE + "/api/voice", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(context),
+      }).then(async (r) => (r.ok ? r.json() : Promise.reject(new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`)))),
+    ]),
+  );
+  let mode = "listening";
+  let connected = false;
+  const session = await step("Connecting to ElevenLabs…", () =>
+    VoiceConversation.startSession({
+      signedUrl: started.signed_url,
+      connectionType: "websocket",
+      dynamicVariables: started.dynamic_variables,
+      onConnect: () => {
+        connected = true;
+        console.info("[voice] connected");
+        onStatus("listening");
+      },
+      onModeChange: ({ mode: m }) => onStatus((mode = m === "speaking" ? "speaking" : "listening")),
+      onMessage: ({ source, message }) => message && onMessage(source === "user" ? "user" : "ai", message),
+      onError: (message, context) => {
+        console.error("[voice] error", message, context);
+        onStatus("ended", String(message));
+      },
+      onDisconnect: (details) => {
+        console.info("[voice] disconnected", details);
+        onStatus("ended", details?.reason === "error" ? details.message : "");
+      },
+    }),
+  );
+  if (!connected) onStatus("listening"); // the session is up even if onConnect came before we listened
   return {
     stop: () => session.endSession().catch(() => {}),
     volume: () => (mode === "speaking" ? session.getOutputVolume() : session.getInputVolume()),
