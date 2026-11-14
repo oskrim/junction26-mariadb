@@ -1,4 +1,4 @@
--- One table per dataset. Search indexes (FULLTEXT, VECTOR) come later.
+-- One table per dataset, and their search indexes.
 
 -- S: the history-of-Finland articles as they are now, in Finnish, Swedish and English (Markdown).
 CREATE TABLE IF NOT EXISTS s_article (
@@ -77,4 +77,18 @@ CREATE TABLE IF NOT EXISTS m_search (
   page_id INT UNSIGNED NOT NULL,
   text    MEDIUMBLOB   NOT NULL,
   PRIMARY KEY (page_id)
+);
+
+-- One BAAI/bge-m3 vector per article and language, from its title and current text: S's ready-made vectors
+-- (fi, sv, en), and embed.py's for the Finnish articles S has none for. The vector index needs NOT NULL, so a
+-- row exists only once its vector does. M=16, not the default 6: with 1024 dimensions M=6 found only 79% of
+-- the true top 10 (MariaDB's RAG starter).
+CREATE TABLE IF NOT EXISTS article_vector (
+  lang      CHAR(2)      NOT NULL,
+  page_id   INT UNSIGNED NOT NULL,
+  model     VARCHAR(50)  NOT NULL,
+  truncated BOOL         NOT NULL,
+  embedding VECTOR(1024) NOT NULL,
+  PRIMARY KEY (lang, page_id),
+  VECTOR INDEX (embedding) M=16 DISTANCE=cosine
 );

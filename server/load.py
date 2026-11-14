@@ -1,6 +1,7 @@
 """Load the MariaDB Finnish Wikipedia datasets into the tables in schema.sql.
 
     uv run --with pymysql --with pyarrow python server/load.py s                  # S: fi, sv, en + categories
+    uv run --with pymysql --with pyarrow python server/load.py s --vectors        # ... and S's bge-m3 vectors
     uv run --with pymysql --with pyarrow python server/load.py m                  # M: Suomen sisällissota + 19 more
     uv run --with pymysql --with pyarrow python server/load.py m --articles all   # M: every article
 
@@ -11,6 +12,7 @@ import argparse
 import csv
 import os
 import re
+import struct
 import sys
 import time
 import unicodedata
@@ -27,6 +29,7 @@ SCHEMA = Path(__file__).with_name("schema.sql")
 DEMO_ARTICLE = 1150  # Suomen sisällissota
 BATCH_BYTES = 16_000_000  # rows sent together; the server allows 64 MB packets
 LINK = re.compile(r"\[\[([^\[\]|#]+)")
+# article_vector is not dropped by --reset: it also holds the vectors embed.py computed on the GPU.
 TABLES = {"s": ["s_article", "s_category"], "m": ["m_article", "m_link", "m_article_stats", "m_search"]}
 
 
@@ -109,6 +112,25 @@ def load_s(con, cur):
     insert_batched(cur, "INSERT IGNORE INTO s_category (page_id, category) VALUES (%s,%s)", rows, lambda r: 300)
     con.commit()
     print(f"s_category: {len(rows)} rows, {time.time() - started:.1f} s")
+
+
+def load_s_vectors(con, cur):
+    """S's ready-made bge-m3 vectors. Each row goes into the vector index as it is inserted."""
+    for lang in ("fi", "sv", "en"):
+        started = time.time()
+        cur.execute("SELECT page_id FROM article_vector WHERE lang = %s", (lang,))
+        loaded = {p for (p,) in cur.fetchall()}
+        path = DATA / f"s-2026-10/vectors-bge-m3-{lang}.parquet"
+        ids = pq.read_table(path, columns=["page_id"])["page_id"].to_pylist()
+        rows = []
+        if set(ids) - loaded:
+            # MariaDB takes a VECTOR as raw bytes: 1024 little-endian float32 numbers.
+            rows = [(r["lang"], r["page_id"], r["model"], r["truncated"], struct.pack(f"<{len(r['embedding'])}f", *r["embedding"]))
+                    for r in pq.read_table(path).to_pylist() if r["page_id"] not in loaded]
+            insert_batched(cur, """INSERT INTO article_vector (lang, page_id, model, truncated, embedding)
+                                   VALUES (%s,%s,%s,%s,%s)""", rows, lambda r: 8_400)
+            con.commit()
+        print(f"article_vector {lang}: {len(rows)} new, {len(loaded)} already loaded, {time.time() - started:.1f} s")
 
 
 def m_files():
@@ -251,6 +273,7 @@ def main():
     parser.add_argument("dataset", choices=["s", "m"])
     parser.add_argument("--articles", default="20", help="how many M articles to load, or 'all'")
     parser.add_argument("--reset", action="store_true", help="drop and recreate the dataset's tables first")
+    parser.add_argument("--vectors", action="store_true", help="s: also load S's ready-made vectors into article_vector")
     args = parser.parse_args()
     count = "all" if args.articles == "all" else int(args.articles)
     con = connect()
@@ -259,7 +282,12 @@ def main():
     cur.execute("SET system_versioning_insert_history = 1")
     create_tables(cur, args.dataset, args.reset)
     started = time.time()
-    load_s(con, cur) if args.dataset == "s" else load_m(con, cur, count)
+    if args.dataset == "s":
+        load_s(con, cur)
+        if args.vectors:
+            load_s_vectors(con, cur)
+    else:
+        load_m(con, cur, count)
     for table in TABLES[args.dataset]:
         versioned = table in ("m_article", "m_link")
         cur.execute(f"SELECT COUNT(*) FROM {table}" + (" FOR SYSTEM_TIME ALL" if versioned else ""))

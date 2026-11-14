@@ -31,6 +31,20 @@ install_packages() {
   fi
 }
 
+# The NVIDIA driver from Ubuntu's prebuilt modules for the running kernel: it loads without a reboot. The query
+# embedding service and embed.py's batch job run bge-m3 on the GPU; without one they run on the CPU.
+install_gpu_driver() {
+  if ! lspci | grep -qi nvidia || nvidia-smi >/dev/null 2>&1; then
+    return 0
+  fi
+  apt-get install -y -q --no-install-recommends "linux-modules-nvidia-580-server-open-$(uname -r)" \
+    nvidia-utils-580-server libnvidia-compute-580-server
+  printf 'nvidia\nnvidia-uvm\n' > /etc/modules-load.d/nvidia.conf
+  modprobe nvidia
+  modprobe nvidia-uvm
+  nvidia-smi -pm 1
+}
+
 # Docker publishes ports through its own iptables chains, so ufw does not gate 3306; the only
 # public Docker port is 3306, which is allowed anyway.
 setup_firewall() {
@@ -110,6 +124,27 @@ EOF
   systemctl enable wiki-app
 }
 
+write_embed_unit() {
+  cat > /etc/systemd/system/wiki-embed.service <<EOF
+[Unit]
+Description=junction26 wiki query embeddings (bge-m3) on 127.0.0.1:8020
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=$REPO_DIR
+Environment=HOME=/root UV_CACHE_DIR=/var/cache/uv HF_HOME=/var/cache/huggingface
+ExecStart=/usr/local/bin/uv run --with torch --with transformers python server/embed.py serve
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  systemctl daemon-reload
+  systemctl enable wiki-embed
+}
+
 write_caddyfile() {
   cat > /etc/caddy/Caddyfile <<EOF
 ${PUBLIC_IP//./-}.sslip.io {
@@ -122,11 +157,13 @@ EOF
 }
 
 install_packages
+install_gpu_driver
 setup_firewall
 tune_tcp
 clone_repo
 download_datasets
 write_app_unit
+write_embed_unit
 write_caddyfile
 if [ -f "$REPO_DIR/deploy/deploy.sh" ]; then
   bash "$REPO_DIR/deploy/deploy.sh"
