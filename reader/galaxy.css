@@ -1,0 +1,302 @@
+/* Galaxy: the whole library as a night sky, with the article's neighborhood lit. The one dark scene in
+   the reader: stars need a night to show. Chrome stays in the reader's own type, as light glass. */
+
+.gx {
+  --sky: #0d0f13;
+  --star: #e6ebf7;
+  --star-2: rgb(214 220 236 / 0.72);
+  --star-3: rgb(214 220 236 / 0.5);
+  --lit: #96baff;
+  --glass: rgb(22 25 31 / 0.72);
+  --glass-rule: rgb(255 255 255 / 0.1);
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: radial-gradient(ellipse at 50% 55%, #171a21 0%, var(--sky) 60%, #08090b 100%);
+  font-family: var(--sans);
+  color: var(--star);
+}
+
+.gx-stage {
+  position: absolute;
+  inset: 0;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.gx-stage:active {
+  cursor: grabbing;
+}
+
+.gx-stage.is-pointing {
+  cursor: pointer;
+}
+
+.gx-canvas,
+.gx-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.gx-layer {
+  overflow: hidden;
+  pointer-events: none;
+}
+
+/* Lit article names: moved each frame from their top left corner */
+
+.gx-label,
+.gx-center {
+  position: absolute;
+  top: 0;
+  left: 0;
+  will-change: transform, opacity;
+  opacity: 0;
+}
+
+.gx-label {
+  padding: 0 4px;
+  border-radius: 4px;
+  font: 400 12.5px/16px var(--sans);
+  white-space: nowrap;
+  color: var(--star-2);
+  text-shadow: 0 0 6px var(--sky), 0 0 2px var(--sky);
+  cursor: pointer;
+}
+
+.gx-label.is-far {
+  color: var(--star-3);
+}
+
+.gx-label.is-hovered {
+  color: #fff;
+}
+
+.gx-center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 200px;
+  text-align: center;
+  white-space: nowrap;
+  text-shadow: 0 0 12px var(--sky), 0 0 4px var(--sky);
+  cursor: default;
+}
+
+.gx-center b {
+  font: 400 26px/1.15 var(--serif);
+  color: #fff;
+}
+
+.gx-center span {
+  font-size: 12.5px;
+  color: var(--star-3);
+}
+
+.gx-center .gx-read {
+  margin-top: 6px;
+  font-weight: 500;
+  color: var(--lit);
+  cursor: pointer;
+}
+
+.gx-center .gx-read:hover {
+  text-decoration: underline;
+}
+
+/* The honest numbers, top left */
+
+.gx-count {
+  position: absolute;
+  top: 24px;
+  left: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-width: calc(50% - 260px);
+  text-shadow: 0 0 8px var(--sky), 0 0 2px var(--sky);
+  pointer-events: none;
+}
+
+.gx-count b {
+  font: 400 19px/1.25 var(--serif);
+  color: #fff;
+}
+
+.gx-count span {
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--lit);
+}
+
+/* Whole library or the neighborhood */
+
+.gx-views {
+  position: absolute;
+  bottom: 104px;
+  left: 28px;
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--glass-rule);
+  border-radius: 999px;
+  background: var(--glass);
+  backdrop-filter: blur(8px);
+}
+
+.gx-views button {
+  height: 28px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  font: 500 12.5px var(--sans);
+  color: var(--star-2);
+  cursor: pointer;
+}
+
+.gx-views button:hover {
+  color: #fff;
+}
+
+.gx-views button[aria-checked="true"] {
+  background: var(--paper);
+  color: var(--ink);
+}
+
+/* Articles visited: click one to go back to it */
+
+.gx-trail {
+  position: absolute;
+  bottom: 28px;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: calc(100% - 520px);
+  padding: 6px 14px;
+  translate: -50% 0;
+  overflow: hidden;
+  border: 1px solid var(--glass-rule);
+  border-radius: 999px;
+  background: var(--glass);
+  backdrop-filter: blur(8px);
+  font: 400 14px var(--serif);
+  white-space: nowrap;
+  color: #fff;
+}
+
+.gx-trail:empty {
+  display: none;
+}
+
+.gx-trail button {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--lit);
+  cursor: pointer;
+}
+
+.gx-trail button:hover {
+  text-decoration: underline;
+}
+
+.gx-trail i {
+  font-style: normal;
+  color: var(--star-3);
+}
+
+.gx-hint {
+  position: absolute;
+  bottom: 34px;
+  left: 28px;
+  max-width: 230px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--star-3);
+  text-shadow: 0 0 6px var(--sky), 0 0 2px var(--sky);
+  pointer-events: none;
+}
+
+/* Hovered star: in the reader's paper, so a preview reads the same as anywhere else */
+
+.gx-tip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 200000;
+  width: 270px;
+  overflow: hidden;
+  border-radius: 12px;
+  background: var(--paper);
+  box-shadow: 0 16px 40px -12px rgb(0 0 0 / 0.6);
+  color: var(--ink);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+
+.gx-tip.is-shown {
+  opacity: 1;
+}
+
+.gx-tip img {
+  display: block;
+  width: 100%;
+  height: 110px;
+  object-fit: cover;
+}
+
+.gx-tip b {
+  display: block;
+  padding: 10px 14px 0;
+  font: 400 17px/1.25 var(--serif);
+}
+
+.gx-tip b.is-pending {
+  color: var(--ink-3);
+}
+
+.gx-tip span {
+  display: block;
+  padding: 2px 14px 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--ink-3);
+}
+
+.gx-tip p {
+  margin: 0;
+  padding: 6px 14px 12px;
+  font: 400 13px/1.45 var(--serif);
+  color: var(--ink-2);
+}
+
+.gx-tip span:last-child {
+  padding-bottom: 12px;
+}
+
+.gx-tip p.gx-tip-lit {
+  padding-top: 0;
+  font: 400 12.5px/1.45 var(--sans);
+  color: var(--link);
+}
+
+.gx-tip span.gx-tip-act {
+  padding-top: 0;
+  color: var(--link);
+}
+
+.gx-count em {
+  margin-top: 4px;
+  font-size: 12px;
+  font-style: normal;
+  color: var(--star-3);
+}

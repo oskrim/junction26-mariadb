@@ -1,0 +1,329 @@
+/* Archipelago: the neighborhood as islands on a sea, seen from above */
+
+.ar-stage {
+  --ar-sea: #eef1f1;
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at 50% 45%, #f6f7f6 0%, var(--ar-sea) 60%, #e7ebec 100%);
+  font-family: var(--sans);
+  color: var(--ink);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.ar-stage:active {
+  cursor: grabbing;
+}
+
+.ar-stage.is-pointing {
+  cursor: pointer;
+}
+
+.ar-canvas,
+.ar-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.ar-layer {
+  overflow: hidden;
+}
+
+/* Hill names and island names: moved and scaled each frame from their top left corner */
+
+.ar-peak,
+.ar-isle {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  white-space: nowrap;
+  opacity: 0;
+  will-change: transform, opacity;
+}
+
+.ar-peak {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font: 400 12.5px/15px var(--sans);
+  color: var(--ink-2);
+  text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 6px #fff;
+  cursor: pointer;
+}
+
+.ar-peak.is-far {
+  font-size: 11.5px;
+  color: var(--ink-3);
+}
+
+.ar-peak img {
+  display: block;
+  width: 46px;
+  height: 46px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  object-fit: cover;
+  object-position: 50% 30%;
+  box-shadow: 0 0 0 1px rgb(32 33 34 / 0.35), 0 6px 14px -6px rgb(32 33 34 / 0.45);
+}
+
+.ar-peak.is-low {
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
+.ar-peak.is-center {
+  gap: 4px;
+  font: 500 20px/1.15 var(--serif);
+  color: var(--ink);
+  cursor: default;
+}
+
+.ar-peak.is-center img {
+  width: 56px;
+  height: 56px;
+  border-width: 2.5px;
+}
+
+.ar-peak.is-hovered {
+  color: var(--link);
+}
+
+.ar-peak.is-hovered img {
+  box-shadow: 0 0 0 2px var(--link), 0 8px 18px -6px rgb(51 102 204 / 0.5);
+}
+
+.ar-isle {
+  padding: 2px 6px;
+  font-family: var(--serif);
+  font-style: italic;
+  font-weight: 400;
+  line-height: 1.1;
+  letter-spacing: 0.02em;
+  color: #4d6375;
+  cursor: pointer;
+}
+
+.ar-isle.is-hovered {
+  color: var(--link);
+}
+
+/* The article, and what the drawing means */
+
+.ar-key {
+  position: absolute;
+  top: 24px;
+  left: 28px;
+  max-width: 300px;
+  pointer-events: none;
+}
+
+.ar-title {
+  margin: 0;
+  font: 400 30px/1.12 var(--serif);
+  color: var(--ink);
+}
+
+.ar-sub {
+  margin: 6px 0 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--ink-3);
+}
+
+.ar-read {
+  margin: 8px 0 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: 500 13px var(--sans);
+  color: var(--link);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.ar-read:hover {
+  text-decoration: underline;
+}
+
+.ar-legend {
+  display: grid;
+  gap: 6px;
+  margin: 18px 0 0;
+  padding: 12px 0 0;
+  border-top: 1px solid var(--rule);
+  list-style: none;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.ar-legend li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ar-legend i {
+  flex: none;
+  width: 22px;
+  height: 14px;
+}
+
+/* Little drawings in the key: nested contours, an arc, and a lone ring */
+.ar-glyph-hill {
+  background: radial-gradient(circle at 50% 70%, transparent 0 2px, var(--ink-2) 2px 3px, transparent 3px 5px, var(--ink-2) 5px 6px, transparent 6px 8px, var(--ink-2) 8px 9px, transparent 9px);
+}
+
+.ar-glyph-bridge {
+  border-top: 1.5px solid var(--ink-2);
+  border-radius: 50% 50% 0 0;
+  margin-top: 6px;
+}
+
+.ar-glyph-islet {
+  background: radial-gradient(circle at 50% 50%, var(--ink-2) 0 1.5px, transparent 1.5px 4px, var(--ink-2) 4px 5px, transparent 5px);
+}
+
+/* Back up from an island, and the articles visited */
+
+.ar-overview {
+  position: absolute;
+  bottom: 74px;
+  left: 28px;
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.92);
+  font: 500 12.5px var(--sans);
+  color: var(--ink);
+  cursor: pointer;
+  box-shadow: 0 4px 14px -8px rgb(32 33 34 / 0.3);
+}
+
+.ar-overview:hover {
+  color: var(--link);
+}
+
+.ar-overview[hidden],
+.ar-trail[hidden] {
+  display: none;
+}
+
+.ar-trail {
+  position: absolute;
+  bottom: 28px;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: calc(100% - 520px);
+  padding: 6px 14px;
+  translate: -50% 0;
+  overflow: hidden;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.92);
+  backdrop-filter: blur(8px);
+  font: 400 14px var(--serif);
+  white-space: nowrap;
+}
+
+.ar-trail button {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--link);
+  cursor: pointer;
+}
+
+.ar-trail button:hover {
+  text-decoration: underline;
+}
+
+.ar-trail i {
+  font-style: normal;
+  color: var(--ink-3);
+}
+
+.ar-hint {
+  position: absolute;
+  bottom: 28px;
+  left: 28px;
+  max-width: 230px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink-3);
+  pointer-events: none;
+}
+
+/* Hovered hill or island */
+
+.ar-tip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 200000;
+  width: 280px;
+  overflow: hidden;
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 12px 32px -12px rgb(32 33 34 / 0.3);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+
+.ar-tip.is-shown {
+  opacity: 1;
+}
+
+.ar-tip img {
+  display: block;
+  width: 100%;
+  height: 120px;
+  object-fit: cover;
+}
+
+.ar-tip b {
+  display: block;
+  padding: 10px 14px 0;
+  font: 400 17px/1.25 var(--serif);
+}
+
+.ar-tip span {
+  display: block;
+  padding: 2px 14px 0;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+.ar-tip p {
+  margin: 0;
+  padding: 6px 14px 0;
+  font: 400 13px/1.45 var(--serif);
+  color: var(--ink-2);
+}
+
+.ar-tip em {
+  display: block;
+  padding: 8px 14px 12px;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 500;
+  color: var(--link);
+}
+
+.ar-tip > :last-child:not(em) {
+  padding-bottom: 12px;
+}

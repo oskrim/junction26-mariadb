@@ -109,10 +109,12 @@ function setUpViews() {
   const views = {
     article: { el: document.querySelector(".layout"), mounted: null },
     explore: { el: document.querySelector(".explore"), mounted: null },
+    depth: { el: document.querySelector(".depth"), mounted: null },
     history: { el: document.querySelector(".history-view"), mounted: null },
   };
   const loaders = {
     explore: (el) => import("./explore.js").then((m) => m.mountExplore(el, { id })),
+    depth: (el) => import("./concepts.js").then((m) => m.mountConcepts(el, { id })),
     history: (el) => import("./history.js").then((m) => m.mountHistory(el, { id })),
   };
   const scrolls = {};
@@ -122,7 +124,7 @@ function setUpViews() {
   const show = (view) => {
     const url = new URL(location.href);
     const shownId = Number(url.searchParams.get("id") ?? DEFAULT_ARTICLE);
-    if (view !== "explore" && shownId !== id) {
+    if (view !== "explore" && view !== "depth" && shownId !== id) {
       url.searchParams.set("view", view);
       location.href = url;
       return;

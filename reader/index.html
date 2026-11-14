@@ -14,6 +14,7 @@
         const at = Math.floor(Date.now() / 60000) * 60; // now() in api.js
         const modules = {
           explore: ["explore.js"],
+          depth: ["concepts.js", "depth.js"],
           history: ["history.js", "article-panel.js", "diff.js", "history-cards.js", "history-model.js", "minimap.js", "timeline3d.js", "war-replay.js"],
         };
         const answers = [`/api/articles?id=${id}`, `/api/article?id=${id}&at=${at}`];
@@ -49,6 +50,7 @@
     <link rel="modulepreload" href="./voice.js" />
     <link rel="stylesheet" href="./styles.css" />
     <link rel="stylesheet" href="./explore.css" />
+    <link rel="stylesheet" href="./depth.css" />
     <link rel="stylesheet" href="./cursor-menu.css" />
     <link rel="stylesheet" href="./learn-view.css" />
     <link rel="stylesheet" href="./history.css" />
@@ -68,6 +70,7 @@
       <nav class="views" aria-label="View">
         <button type="button" data-view="article" aria-pressed="true">Article</button>
         <button type="button" data-view="explore" aria-pressed="false">Explore</button>
+        <button type="button" data-view="depth" aria-pressed="false">Concepts</button>
         <button type="button" data-view="history" aria-pressed="false">History</button>
       </nav>
     </header>
@@ -81,6 +84,7 @@
     </div>
 
     <section class="explore" aria-label="Related articles" hidden></section>
+    <section class="depth" aria-label="Concepts for seeing related articles" hidden></section>
     <section class="history-view" aria-label="Edit history" hidden></section>
 
     <div class="card card-preview" role="tooltip"></div>
