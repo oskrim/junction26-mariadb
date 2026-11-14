@@ -451,9 +451,9 @@ export async function mountExplore(root, { id }) {
     cam.distTo = (FOCAL * (reach + 60)) / freeRadius();
   }
 
-  // The panel covers the left side on wide screens, so the map centers in the space beside it.
+  // The panel covers the right side on wide screens, so the map centers in the space beside it.
   function middleX() {
-    return width > 900 ? (width + 360) / 2 : width / 2;
+    return width > 900 ? (width - 360) / 2 : width / 2;
   }
 
   // Hovering or opening an article lights up the articles it links with and fades the rest.
