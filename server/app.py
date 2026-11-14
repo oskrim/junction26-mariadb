@@ -413,7 +413,7 @@ def keyword_ranking(q):
 
 
 def search(cur, params):
-    """Articles that match q by keyword or by meaning, fused by rank in one statement (vector.hybrid_sql).
+    """Articles that match q by keyword or by meaning, scored in one statement (vector.hybrid_sql).
 
     Without the embedding service, the keyword ranking alone."""
     q = params.get("q", [""])[0].strip()
@@ -422,16 +422,15 @@ def search(cur, params):
     limit = number(params, "limit", 20)
     if not words(q):
         return []
-    keyword_sql, keyword_args = keyword_ranking(q)
     try:
         query_vector = vector.embed(q)
-        cur.execute(vector.hybrid_sql(keyword_sql), (*keyword_args, query_vector, SEARCH_CANDIDATES,
-                                                     vector.vector_weight(len(words(q))), q, limit))
+        cur.execute(vector.hybrid_sql(), {"q": q, "boolean": boolean_query(q), "vector": query_vector, "limit": limit})
+        ranked = [{**r, "by": by(r)} for r in cur.fetchall()]
     except vector.Unavailable as error:
         print(f"search: keywords only: {error}", flush=True)
-        cur.execute(f"SELECT page_id, keyword_rank, NULL AS vector_rank FROM ({keyword_sql}) k "
-                    "ORDER BY keyword_rank LIMIT %s", (*keyword_args, limit))
-    ranked = cur.fetchall()
+        keyword_sql, keyword_args = keyword_ranking(q)
+        cur.execute(f"SELECT page_id FROM ({keyword_sql}) k ORDER BY keyword_rank LIMIT %s", (*keyword_args, limit))
+        ranked = [{**r, "by": "keyword"} for r in cur.fetchall()]
     if not ranked:
         return []
     # Text by primary key; IF reads the m_article text only for articles without S text.
@@ -445,9 +444,15 @@ def search(cur, params):
         article = rows[r["page_id"]]
         text = prose(article["text"]) if article["format"] == "markdown" else unwiki(article["text"])
         shown, match = snippet(text, find(text, q))
-        results.append({"page_id": r["page_id"], "title": article["title"], "snippet": shown, "match": match,
-                        "by": "both" if r["keyword_rank"] and r["vector_rank"] else "keyword" if r["keyword_rank"] else "meaning"})
+        results.append({"page_id": r["page_id"], "title": article["title"], "snippet": shown, "match": match, "by": r["by"]})
     return results
+
+
+def by(scored):
+    """What found a hybrid search result: its words, its meaning, or both."""
+    lexical = scored["exact"] or scored["title_score"] or scored["body_score"]
+    meaning = scored["cosine"] > vector.COSINE_FLOOR
+    return "both" if lexical and meaning else "keyword" if lexical else "meaning"
 
 
 ROUTES = {"/api/articles": articles, "/api/article": article, "/api/history": history, "/api/change": change,

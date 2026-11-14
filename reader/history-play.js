@@ -93,7 +93,9 @@ export function startHistoryPlay({ id, body, onClose }) {
     picked.set(edits.length - 1, { edit: edits.at(-1) });
     frames = [...picked.values()].sort((a, b) => a.edit.index - b.edit.index);
 
-    minimap = createMinimap({ root: $(".hp-map"), edits, wars, onPick: (time) => jump(frameAt(time)) });
+    // Clicks and drags on the strip are handled by scrub(), not the strip's own click.
+    minimap = createMinimap({ root: $(".hp-map"), edits, wars, onPick: () => {} });
+    scrub();
     drawSwords(wars);
     path = createStoryPath({
       canvas: side.querySelector("canvas"),
@@ -194,7 +196,9 @@ export function startHistoryPlay({ id, body, onClose }) {
     const renderMath = await loadMath(version.text);
     if (token !== run || closed) return;
     at = i;
-    moveMarker(frame.edit.time, 0);
+    // During playback the marker is already on its way here; after a jump it glides over.
+    if (animate) moveMarker(frame.edit.time, 0);
+    else if (!$(".hp-map").classList.contains("is-dragging")) moveMarker(frame.edit.time, 350, "ease");
     path.setTime(frame.edit.time, { instant: !animate });
     path.setWar(frame.war ?? null);
     $(".hp-date").textContent = formatDate(parseRowStart(version.row_start));
@@ -204,10 +208,81 @@ export function startHistoryPlay({ id, body, onClose }) {
     if (frame.war && token === run && !closed) announce(frame.war);
   }
 
-  function moveMarker(time, ms) {
+  function moveMarker(time, ms, easing = "linear") {
     const marker = $(".minimap-now");
     marker.style.transitionDuration = `${ms}ms`;
+    marker.style.transitionTimingFunction = easing;
     minimap.setTime(time);
+  }
+
+  // The year strip can be dragged: the marker follows the pointer, the road glides along, and the
+  // article shows the nearest version as it passes. A click glides the marker there instead of jumping.
+  // Letting go carries on from there, playing or paused as before.
+  function scrub() {
+    const map = $(".hp-map");
+    const hover = document.createElement("div");
+    hover.className = "hp-hover";
+    map.append(hover);
+    const start = edits[0].time;
+    const end = edits.at(-1).time;
+    const timeAt = (event) => {
+      const r = map.querySelector(".minimap-svg").getBoundingClientRect();
+      return start + Math.min(1, Math.max(0, (event.clientX - r.left) / r.width)) * (end - start);
+    };
+    let drag = null;
+    let shownAt = -1;
+    // One version loads at a time while dragging; when it is shown, the latest one asked for comes next.
+    let wanted = null;
+    let busy = false;
+    const preview = async (i) => {
+      wanted = i;
+      if (busy) return;
+      busy = true;
+      while (drag && wanted !== null) {
+        const k = wanted;
+        wanted = null;
+        if (k === shownAt) continue;
+        shownAt = k;
+        await show(k, ++run, false);
+      }
+      busy = false;
+    };
+    map.addEventListener("pointermove", (event) => {
+      const time = timeAt(event);
+      hover.textContent = formatDate(time);
+      hover.style.left = `${((time - start) / (end - start)) * 100}%`;
+      if (!drag) return;
+      if (Math.abs(event.clientX - drag.x) > 4) drag.moved = true;
+      if (!drag.moved) return;
+      moveMarker(time, 0);
+      path.setTime(time);
+      $(".hp-date").textContent = formatDate(time);
+      preview(frameAt(time));
+    });
+    map.addEventListener("pointerdown", (event) => {
+      if (event.target.closest(".hp-sword") || event.button !== 0) return;
+      map.setPointerCapture(event.pointerId);
+      closeWar();
+      run++;
+      looping = false;
+      drag = { x: event.clientX, moved: false };
+      map.classList.add("is-dragging");
+    });
+    const finish = (event) => {
+      if (!drag) return;
+      const time = timeAt(event);
+      const moved = drag.moved;
+      drag = null;
+      shownAt = -1;
+      map.classList.remove("is-dragging");
+      if (!moved) {
+        moveMarker(time, 450, "cubic-bezier(0.25, 0.8, 0.25, 1)");
+        path.setTime(time);
+      }
+      jump(frameAt(time));
+    };
+    map.addEventListener("pointerup", finish);
+    map.addEventListener("pointercancel", finish);
   }
 
   function jump(i) {

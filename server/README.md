@@ -119,28 +119,81 @@ articles.
 
 ### Hybrid search
 
-`/api/search` combines the FULLTEXT ranking and the vector ranking with weighted reciprocal rank fusion, in one
-statement (`vector.hybrid_sql`): each article scores 1 / (60 + rank) in the FULLTEXT list plus w / (60 + rank) in
-the vector list. For a query of 1 or 2 words, usually a name, w = 0.25: the title matches lead and the vectors add
-what the keywords miss. For longer queries, and across languages ("battle of Tampere"), w = 1. The article titled
-as the query (in any case or accent) comes first; equal scores go to the article nearer by meaning.
+`/api/search` scores each candidate with a linear sum of saturated scores, in one statement
+(`vector.hybrid_sql`). The candidates are the union of the FULLTEXT title top 50, the FULLTEXT text top 50 and
+the vector index top 50 (`ef_search` 80). Then every candidate gets all its component scores:
+
+```text
+score = 2 · sat(title MATCH, 30) + sat(text MATCH, 80) + 3 · (title = query)
+        + 4 · max(0, cosine(query, article) − 0.4)
+
+sat(x, κ) = x / (κ + x)        0 at x = 0, 0.5 at x = κ, below 1
+```
+
+- Both MATCH scores use the boolean query of the FULLTEXT search (every word required, as itself or by its stem).
+- κ is about the median MATCH score of the top 50 candidates over the example queries below. In boolean mode
+  every title that matches a query gets the same score (14 to 44, depending on how rare the words are), so the
+  title term is a weighted "the title matches". Text scores spread from about 15 to 2,000; their medians are 37
+  to 154.
+- Title weight 2: a word in the title says more than the same word in the text.
+- The exact-title bonus 3 is more than all other terms together, so the article titled as the query (in any
+  case or accent) comes first.
+- Cosine floor 0.4, not the 0.05 of the slides: with bge-m3, unrelated articles still score about 0.4 and the
+  best matches 0.5 to 0.65. Above the floor, w = 4 gives a vector match up to ~1, the size of a good lexical match.
 
 ```sql
-WITH keyword AS (<FULLTEXT ranking: page_id, keyword_rank>),
-     meaning AS (SELECT page_id, ROW_NUMBER() OVER (ORDER BY distance) AS vector_rank
-                 FROM (SELECT page_id, VEC_DISTANCE_COSINE(embedding, VEC_FromText(?)) AS distance
-                       FROM article_vector WHERE lang = 'fi' ORDER BY distance LIMIT 50) v)
-SELECT page_id, MIN(keyword_rank) AS keyword_rank, MIN(vector_rank) AS vector_rank,
-       SUM(IF(keyword_rank IS NULL, :w, 1) / (60 + IFNULL(keyword_rank, vector_rank))) AS score,
-       MAX(title = :q) AS exact
-FROM (SELECT page_id, keyword_rank, NULL AS vector_rank FROM keyword
-      UNION ALL SELECT page_id, NULL, vector_rank FROM meaning) ranks
-JOIN m_article_stats USING (page_id)
-GROUP BY page_id ORDER BY exact DESC, score DESC, vector_rank IS NULL, vector_rank, page_id LIMIT 20
+WITH candidates AS (
+  (SELECT page_id FROM m_article_stats WHERE title = :q)
+  UNION (SELECT page_id FROM m_article_stats WHERE MATCH (title) AGAINST (:boolean IN BOOLEAN MODE)
+         ORDER BY MATCH (title) AGAINST (:boolean IN BOOLEAN MODE) DESC, CHAR_LENGTH(title) LIMIT 50)
+  UNION (SELECT page_id FROM m_search WHERE MATCH (text) AGAINST (:boolean IN BOOLEAN MODE)
+         ORDER BY MATCH (text) AGAINST (:boolean IN BOOLEAN MODE) DESC LIMIT 50)
+  UNION (SELECT page_id FROM (SELECT page_id, VEC_DISTANCE_COSINE(embedding, VEC_FromText(:vector)) AS distance
+                              FROM article_vector WHERE lang = 'fi' ORDER BY distance LIMIT 50) nearest)),
+scored AS (
+  SELECT c.page_id, s.title = :q AS exact,
+         MATCH (s.title) AGAINST (:boolean IN BOOLEAN MODE) AS title_score,
+         IFNULL(MATCH (x.text) AGAINST (:boolean IN BOOLEAN MODE), 0) AS body_score,
+         IFNULL(1 - VEC_DISTANCE_COSINE(v.embedding, VEC_FromText(:vector)), 0) AS cosine
+  FROM candidates c JOIN m_article_stats s USING (page_id)
+  LEFT JOIN m_search x USING (page_id)
+  LEFT JOIN article_vector v ON v.lang = 'fi' AND v.page_id = c.page_id)
+SELECT page_id, 2 * title_score / (30 + title_score) + body_score / (80 + body_score)
+         + 3 * exact + 4 * GREATEST(0, cosine - 0.4) AS score
+FROM scored ORDER BY score DESC, page_id LIMIT 20
 ```
 
 The vector search stands alone in its subquery (`ORDER BY distance LIMIT`): that is the shape in which MariaDB
-uses the vector index. `EXPLAIN` names the index with the `lang = 'fi'` filter too.
+uses the vector index. `EXPLAIN` names the index with the `lang = 'fi'` filter too. Without the embedding
+service, the search uses the FULLTEXT ranking alone.
+
+Top 5 on `wiki_full` (all 568,873 Finnish articles). Before: reciprocal rank fusion of the FULLTEXT and vector
+ranks (1 / (60 + rank) each, the vector rank weighted 0.25 for 1-2 word queries, the exact title first). After:
+the saturated sum above.
+
+| Query | Before (RRF) | After (saturated sum) |
+|---|---|---|
+| sisällissota | Sisällissota; Suomen sisällissota; Venäjän sisällissota; Espanjan sisällissota; Kiinan sisällissota | Sisällissota; Suomen sisällissota; Venäjän sisällissota; Espanjan sisällissota; Suomen sisällissota Etelä-Pohjanmaalla |
+| Mannerheim | Carl Gustaf Emil Mannerheim; Mannerheim (suku); Carl Erik Mannerheim; Carl Gustaf Mannerheim; Johan Mannerheim | Carl Gustaf Emil Mannerheim; Mannerheim (suku); Johan Mannerheim; Carl Mannerheim (pankinjohtaja); Carl Gustaf Mannerheim |
+| Tampereen taistelu | Tampereen taistelu; Tampereen historia; Luettelo punakaartilaisista; Luettelo Suomen sisällissodan taisteluista; Tampere | Tampereen taistelu; Luettelo Suomen sisällissodan taisteluista; Tampereen historia; Tampere; Luettelo punakaartilaisista |
+| punakaarti | Punakaarti; Helsingin punakaarti; Suomen punakaarti; Pietarin suomalainen punakaarti; Sahalahden punakaarti | same |
+| talvisota | Talvisota; Talvisota (elokuva); Talvisota (videopeli); Talvisota (kirja); Kevyt osasto 8 (talvisota) | Talvisota; Talvisota (elokuva); Talvisota (videopeli); 4. divisioona (talvisota); 1. divisioona (talvisota) |
+| 1918 | 1918; Uhrit 1918; Raja 1918; Virrat 1918; Kunnallisvaalit 1918 | 1918; NHL-kausi 1918–1919; Kunnallisvaalit 1918; Uhrit 1918; Beretta 1918 |
+| battle of Tampere | Tampereen taistelu; Luettelo … science fiction -novelleista; Talvisodan pommitukset Tampereella; Five Finger Death Punch; Taipaleenkylän taistelu | Tampereen taistelu; Talvisodan pommitukset Tampereella; Taipaleenkylän taistelu; Tampereen punakaarti; Punainen Tampere |
+| who led the Reds in 1918 | Cincinnati Reds; NHL-kausi 1927–1928; Luettelo Stanley Cupin voittaneista pelaajista; 1918; NHL-kausi 1918–1919 | same |
+| why did Finland lose Karelia | Karjala; Karjalan historia; ProKarelia; Friedrich Karl; 1848 | same |
+| how did Finland become independent | 1821; Suomen itsenäistyminen; Luettelo itsenäisyyspäivistä; 1848; Ruotsin vapaussota | same |
+
+- Short title queries: the exact title is first in both. The saturated sum puts articles with the query in the
+  title ahead of text-only matches, and orders them by text and meaning.
+- "battle of Tampere": RRF mixed in keyword-only noise (every word somewhere in a long list article); the sum
+  keeps the five Tampere battle and Red Guard articles, because two weak text matches add up to less than one
+  good vector match.
+- The three questions have no keyword match (every word is required, and they are in English), so only the
+  vectors rank them, the same in both. They find the topic, not the fact, and with all of Finnish Wikipedia,
+  "Reds" finds sports teams: one vector per article sums up a whole article (MariaDB's RAG starter saw the same).
+- `/api/search` takes 175-400 ms with the sum (73-310 ms with RRF): MATCH runs again for each candidate, so that
+  a candidate found by its vector also gets its exact lexical scores.
 
 ### Ask and Learn
 
@@ -161,8 +214,9 @@ On the cloud box (A100 80 GB, 22 vCPU), `wiki_full`, while the batch job was run
 | Embedding the question (GPU) | 24 ms |
 | Vector top 50 (`article_vector`, index) | 19 ms |
 | FULLTEXT top 50 | 7 ms |
-| Hybrid statement (both, fused) | 29 ms |
-| `/api/search` (embedding, SQL, texts and snippets) | 207 ms |
+| Hybrid statement, reciprocal rank fusion (before) | 29 ms |
+| Hybrid statement, saturated sum (now; 8 queries, all 568,873 articles) | 136 ms (84-299) |
+| `/api/search` (embedding, SQL, texts and snippets), saturated sum | 175-400 ms |
 
 ### The GPU batch job
 

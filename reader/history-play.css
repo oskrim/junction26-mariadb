@@ -200,6 +200,60 @@
   height: 36px;
 }
 
+.hp-map {
+  padding: 4px 0 2px;
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+}
+
+.hp-map.is-dragging {
+  cursor: grabbing;
+}
+
+/* The marker's handle */
+.hp-map .minimap-now::after {
+  content: "";
+  position: absolute;
+  bottom: -5px;
+  left: 50%;
+  width: 12px;
+  height: 12px;
+  translate: -50% 0;
+  border: 2px solid var(--paper);
+  border-radius: 50%;
+  background: var(--ink);
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.25);
+  cursor: grab;
+  transition: scale 0.15s ease;
+}
+
+.hp-map:hover .minimap-now::after,
+.hp-map.is-dragging .minimap-now::after {
+  scale: 1.25;
+}
+
+/* The date under the pointer */
+.hp-hover {
+  position: absolute;
+  top: -22px;
+  padding: 2px 7px;
+  translate: -50% 0;
+  border-radius: 6px;
+  background: var(--ink);
+  font: 500 11px var(--sans);
+  color: var(--paper);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.hp-map:hover .hp-hover,
+.hp-map.is-dragging .hp-hover {
+  opacity: 1;
+}
+
 .hp-map .minimap-now {
   top: 18px;
   height: 42px;
