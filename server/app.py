@@ -279,6 +279,19 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             self.log_message('"%s" %s %.0f ms', self.requestline, self.status, (time.perf_counter() - started) * 1000)
 
+    def end_headers(self):
+        # The designer's static dev server (another origin) reads this API, including the streamed POSTs.
+        if self.path.startswith("/api/"):
+            self.send_header("Access-Control-Allow-Origin", "*")
+        super().end_headers()
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Methods", "GET, POST")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Max-Age", "86400")
+        self.end_headers()
+
     def do_POST(self):
         started = time.perf_counter()
         try:
@@ -321,8 +334,6 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", f"{kind}; charset=utf-8" if kind.startswith(("text", "application/json")) else kind)
         self.send_header("Content-Length", str(len(body)))
-        if self.path.startswith("/api/"):
-            self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(body)
 

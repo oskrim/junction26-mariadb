@@ -2,6 +2,7 @@
 // short explanation that cites the linked articles it read as [1], [2], ... ([0] is the article itself).
 // learn() returns { stream, attachment } like respond(); attachment is a promise of the explored articles.
 
+import { BASE } from "./api.js";
 import { events } from "./assistant.js";
 
 const at = () => Number(new URLSearchParams(location.search).get("at")) || Math.floor(Date.now() / 1000);
@@ -25,7 +26,7 @@ export function learn({ prompt, context, article, history = [], onStep = null })
 async function* read(request, found, history, onStep) {
   let text = "";
   try {
-    for await (const { name, data } of events("/api/learn", request)) {
+    for await (const { name, data } of events(BASE + "/api/learn", request)) {
       if (name === "sources") found(data);
       else if (name === "message" || (name === "error" && !onStep)) {
         // No Markdown emphasis, and each key point is its own paragraph even without a blank line before it.

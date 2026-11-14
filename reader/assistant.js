@@ -5,6 +5,7 @@
 // Without it, an error becomes part of the answer text.
 
 import { respond as cannedRespond } from "./fake/assistant.js";
+import { BASE } from "./api.js";
 
 export const PAST_CHATS = [];
 
@@ -22,7 +23,7 @@ export function respond({ mode, prompt, context, article, turn = 0, history = []
 // Ask streams "message" text; Find sends one "result" with its text and attachment.
 async function* answer(request, onStep, found) {
   try {
-    for await (const { name, data } of events("/api/ask", request)) {
+    for await (const { name, data } of events(BASE + "/api/ask", request)) {
       if (name === "message") yield data;
       else if (name === "result") {
         found(data.attachment && escapeResults(data.attachment));

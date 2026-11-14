@@ -4,7 +4,7 @@ const CLOUD = "https://65-109-75-60.sslip.io";
 
 // Pages served by app.py (the cloud, or locally on 8010/8011) ask their own server; a page served any
 // other way, such as python3 -m http.server, asks the cloud.
-const BASE = location.origin === CLOUD || ["8010", "8011"].includes(location.port) ? "" : CLOUD;
+export const BASE = location.origin === CLOUD || ["8010", "8011"].includes(location.port) ? "" : CLOUD;
 
 // Every answer is kept for the page's lifetime: the views ask for the same URLs many times.
 const answers = new Map();
