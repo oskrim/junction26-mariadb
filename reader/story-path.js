@@ -98,6 +98,7 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
   let fight = null;
   let shownFight = null;
   let focus = 0;
+  let tags = [];
   // The stop whose version is on screen; its block rises as the camera drives up to it.
   let stopNow = 0;
   let frame = 0;
@@ -412,7 +413,12 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
       const lw = Math.max(w, dw);
       // Always on the side toward the lane, so it never flips: left of the disc on right-hand roads.
       const lx = b.side > 0 ? Math.max(extra + 4, foot.x - r - 5 - lw) : Math.min(width - lw - 4, foot.x + r + 5);
-      const box = { x: lx - 3, y: cy - 8, w: lw + 6, h: diff?.length ? 30 : 16 };
+      // Under the diff, small tags: the section edited, a new section, images.
+      const notes = walking ? tags : [];
+      ctx.font = "500 10px Inter, system-ui, sans-serif";
+      const tw = notes.length ? Math.max(...notes.map((t) => ctx.measureText(t).width + 10)) : 0;
+      ctx.font = `${walking ? 600 : 500} 11px Inter, system-ui, sans-serif`;
+      const box = { x: lx - 3, y: cy - 8, w: Math.max(lw, tw) + 6, h: (diff?.length ? 30 : 16) + notes.length * 18 };
       if (!walking && labels.some((o) => box.x < o.x + o.w && o.x < box.x + box.w && box.y < o.y + o.h && o.y < box.y + box.h)) return;
       labels.push(box);
       ctx.fillStyle = `rgba(255,255,255,${0.85 * a})`;
@@ -422,13 +428,29 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
       ctx.fillStyle = `rgba(32,33,34,${(walking ? 0.95 : 0.7) * a})`;
       ctx.textAlign = "left";
       ctx.fillText(name, lx, cy + 4);
-      if (!diff?.length) return;
-      ctx.font = "600 10.5px Inter, system-ui, sans-serif";
-      let dx = lx;
-      for (const part of diff) {
-        ctx.fillStyle = part[0] === "+" ? `rgba(26,127,55,${a})` : `rgba(207,34,46,${a})`;
-        ctx.fillText(part, dx, cy + 18);
-        dx += ctx.measureText(part).width + 6;
+      let ty = cy + 4;
+      if (diff?.length) {
+        ty += 14;
+        ctx.font = "600 10.5px Inter, system-ui, sans-serif";
+        let dx = lx;
+        for (const part of diff) {
+          ctx.fillStyle = part[0] === "+" ? `rgba(26,127,55,${a})` : `rgba(207,34,46,${a})`;
+          ctx.fillText(part, dx, ty);
+          dx += ctx.measureText(part).width + 6;
+        }
+      }
+      ctx.font = "500 10px Inter, system-ui, sans-serif";
+      for (const note of notes) {
+        ty += 18;
+        const nw = ctx.measureText(note).width + 10;
+        // Right-hand roads have their label left of the disc, so their tags line up on the right.
+        const nx = b.side > 0 ? lx + lw - nw : lx;
+        ctx.fillStyle = `rgba(32,33,34,${0.06 * a})`;
+        ctx.beginPath();
+        ctx.roundRect(nx, ty - 11, nw, 15, 4);
+        ctx.fill();
+        ctx.fillStyle = `rgba(84,89,93,${a})`;
+        ctx.fillText(note, nx + 5, ty);
       }
     }
 
@@ -677,6 +699,10 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
     },
     setWar(war) {
       current = war;
+    },
+    // Notes on what the version being walked changed, shown under its editor.
+    setTags(list) {
+      tags = list;
     },
     setStop(k) {
       stopNow = k;

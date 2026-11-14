@@ -537,6 +537,7 @@ export function startHistoryPlay({ id, body, onClose }) {
     });
     while (body.children.length > out.length) body.lastElementChild.remove();
     shown = kept;
+    path.setTags(tagsFor(places));
 
     // In a war, a change in the section fought over is visited first, whatever its size.
     const fought = war ? sectionElements(warHeading(body, war)) : new Set();
@@ -1062,6 +1063,37 @@ function partners(before, after) {
     if (best) used.add(best);
     return best;
   });
+}
+
+// Short notes on what a version changed, for the walker on the road: the sections it touched, a section
+// it started, and images it added or took out. At most three.
+function tagsFor(places) {
+  const tags = [];
+  const sections = new Set();
+  let imagesIn = 0;
+  let imagesOut = 0;
+  const hasImage = (el) => el.matches("figure, .figure, .infobox, img") || !!el.querySelector?.("img");
+  for (const p of places) {
+    if (p.quiet) continue;
+    for (const el of p.adds) {
+      if (/^H[23]$/.test(el.tagName)) tags.push(`New section: ${el.textContent.trim()}`);
+      if (hasImage(el)) imagesIn++;
+    }
+    for (const el of p.removes) if (hasImage(el)) imagesOut++;
+    for (const { old, next } of p.rewrites) {
+      if (hasImage(next) && !hasImage(old)) imagesIn++;
+      if (hasImage(old) && !hasImage(next)) imagesOut++;
+    }
+    for (const el of [...p.rewrites.map((w) => w.old), ...p.adds, ...p.removes]) {
+      if (/^H[23]$/.test(el.tagName)) continue;
+      const title = sectionTitle(el);
+      if (title) sections.add(title);
+    }
+  }
+  if (imagesIn) tags.push(`+${imagesIn} image${imagesIn > 1 ? "s" : ""}`);
+  if (imagesOut) tags.push(`−${imagesOut} image${imagesOut > 1 ? "s" : ""}`);
+  for (const title of sections) tags.push(`§ ${title}`);
+  return tags.slice(0, 3).map((t) => (t.length > 34 ? `${t.slice(0, 33)}…` : t));
 }
 
 // A heading and the elements under it, up to the next heading of the same or a higher level.

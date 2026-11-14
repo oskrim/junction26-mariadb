@@ -235,15 +235,14 @@
 .hp-map .minimap-now::after {
   content: "";
   position: absolute;
-  bottom: -5px;
+  bottom: -4px;
   left: 50%;
-  width: 12px;
-  height: 12px;
+  width: 8px;
+  height: 8px;
   translate: -50% 0;
-  border: 2px solid var(--paper);
+  border: 1.5px solid var(--paper);
   border-radius: 50%;
   background: var(--ink);
-  box-shadow: 0 1px 4px rgb(0 0 0 / 0.25);
   transition: scale 0.15s ease;
 }
 
@@ -271,9 +270,12 @@
   opacity: 1;
 }
 
+/* The playhead: a slim line exactly over the bars, ending in a small dot on the baseline */
 .hp-map .minimap-now {
-  top: 18px;
-  height: 42px;
+  top: auto;
+  bottom: 20px;
+  width: 1.5px;
+  height: 36px;
   transition-property: left;
   transition-timing-function: linear;
 }
