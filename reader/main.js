@@ -11,7 +11,7 @@ const id = Number(new URLSearchParams(location.search).get("id") ?? DEFAULT_ARTI
 setUpViews();
 setUpSearch(document.querySelector(".bar .search"));
 const now = Math.floor(Date.now() / 1000);
-const [articles, { version }] = await Promise.all([getArticles(), getArticle(id, now)]);
+const [articles, { version }] = await Promise.all([getArticles(id), getArticle(id, now)]);
 const summary = articles.find((a) => a.page_id === id);
 
 const head = document.querySelector(".head");

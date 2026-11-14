@@ -68,10 +68,10 @@ def normalize(title):
 
 
 def articles(cur, params):
-    cur.execute("""SELECT a.page_id, a.title, v.versions, v.first FROM m_article a
-                   JOIN (SELECT page_id, COUNT(*) AS versions, UNIX_TIMESTAMP(MIN(row_start)) AS first
-                         FROM m_article FOR SYSTEM_TIME ALL GROUP BY page_id) v USING (page_id)
-                   ORDER BY a.title""")
+    """Every M article, or only the one given as id, with its version count and first edit."""
+    page_id = number(params, "id") if "id" in params else None
+    cur.execute("""SELECT page_id, title, versions, UNIX_TIMESTAMP(first) AS first FROM m_article_stats
+                   WHERE %s IS NULL OR page_id = %s ORDER BY title""", (page_id, page_id))
     return [{**r, "first": int(r["first"])} for r in cur.fetchall()]
 
 
@@ -119,8 +119,15 @@ def change(cur, params):
     return {"added": [line for line in added if line.strip()], "removed": [line for line in removed if line.strip()]}
 
 
+MAX_NODES = 400
+
+
 def graph(cur, params):
+    """The link graph as of at. With id, only that article's neighborhood: the articles it links with and the
+    articles they link with, at most MAX_NODES, with each one's topic, version count and first edit."""
     at = stamp(moment(params))
+    if "id" in params:
+        return neighborhood(cur, number(params, "id"), at)
     cur.execute("SELECT page_id AS id, title, bytes AS chars FROM m_article FOR SYSTEM_TIME AS OF TIMESTAMP %s", (at,))
     nodes = cur.fetchall()
     cur.execute("""SELECT DISTINCT l.src AS source, a.page_id AS target
@@ -130,17 +137,66 @@ def graph(cur, params):
     return {"nodes": nodes, "edges": cur.fetchall()}
 
 
-def topics(cur, params):
-    cur.execute("""SELECT c.page_id, c.category, n.articles FROM s_category c
-                   JOIN m_article a ON a.page_id = c.page_id
+def links_touching(cur, ids, at):
+    """The links as of at from or to the given articles, as (source, target) page ids."""
+    cur.execute("""SELECT l.src, a.page_id FROM m_link FOR SYSTEM_TIME AS OF TIMESTAMP %s AS l
+                   JOIN m_article FOR SYSTEM_TIME AS OF TIMESTAMP %s AS a ON a.title = l.dst
+                   WHERE l.src IN %s
+                   UNION
+                   SELECT l.src, a.page_id FROM m_article FOR SYSTEM_TIME AS OF TIMESTAMP %s AS a
+                   STRAIGHT_JOIN m_link FOR SYSTEM_TIME AS OF TIMESTAMP %s AS l ON l.dst = a.title
+                   WHERE a.page_id IN %s""", (at, at, ids, at, at, ids))
+    return {(r["src"], r["page_id"]) for r in cur.fetchall() if r["src"] != r["page_id"]}
+
+
+def neighborhood(cur, center, at):
+    edges = links_touching(cur, [center], at)
+    near = {n for edge in edges for n in edge} - {center}
+    if near:
+        edges |= links_touching(cur, sorted(near), at)
+    degree, via = {}, {}
+    for source, target in edges:
+        for n, other in ((source, target), (target, source)):
+            degree[n] = degree.get(n, 0) + 1
+            if n not in near and n != center and other in near:
+                via[n] = via.get(n, 0) + 1
+    # The best-connected articles one step away, then the ones two steps away that most of them link with.
+    kept = [center] + sorted(near, key=lambda n: -degree[n])[: MAX_NODES - 1]
+    kept += sorted(via, key=lambda n: -via[n])[: MAX_NODES - len(kept)]
+    cur.execute("""SELECT a.page_id AS id, a.title, a.bytes AS chars, s.versions, UNIX_TIMESTAMP(s.first) AS first
+                   FROM m_article FOR SYSTEM_TIME AS OF TIMESTAMP %s AS a JOIN m_article_stats s USING (page_id)
+                   WHERE a.page_id IN %s""", (at, kept))
+    nodes = cur.fetchall()
+    ids = {n["id"] for n in nodes}
+    topic = topics_of(cur, sorted(ids))
+    for n in nodes:
+        n["first"] = int(n["first"])
+        n["topic"] = topic.get(n["id"])
+    further = sorted(ids - near - {center})
+    if further:  # links between two articles two steps away
+        edges |= links_touching(cur, further, at)
+    return {"nodes": nodes, "edges": [{"source": s, "target": t} for s, t in sorted(edges) if s in ids and t in ids]}
+
+
+def topics_of(cur, ids):
+    """Each article's topic: the category of it that has the most M articles."""
+    if not ids:
+        return {}
+    cur.execute("""SELECT c.page_id, c.category FROM s_category c
                    JOIN (SELECT c2.category, COUNT(*) AS articles FROM s_category c2
-                         JOIN m_article a2 ON a2.page_id = c2.page_id GROUP BY c2.category) n
+                         JOIN m_article_stats s ON s.page_id = c2.page_id GROUP BY c2.category) n
                      ON n.category = c.category
-                   ORDER BY c.page_id, n.articles DESC, c.category""")
+                   WHERE c.page_id IN %s
+                   ORDER BY c.page_id, n.articles DESC, c.category""", (ids,))
     result = {}
     for r in cur.fetchall():
         result.setdefault(r["page_id"], r["category"])
     return result
+
+
+def topics(cur, params):
+    cur.execute("SELECT page_id FROM m_article_stats")
+    return topics_of(cur, [r["page_id"] for r in cur.fetchall()])
 
 
 def extract(markdown):

@@ -59,7 +59,7 @@ const MARKUP = `
 // The History view: a 3D timeline of the article's edits, with the article at that moment and the
 // edit war replays in a sidebar. Returns { hide } so a running replay stops when the view is left.
 export async function mountHistory(root, { id }) {
-  const [articles, rows] = await Promise.all([getArticles(), getHistory(id)]);
+  const [articles, rows] = await Promise.all([getArticles(id), getHistory(id)]);
   const article = articles.find((a) => a.page_id === id);
   if (!rows.length || !article) {
     root.innerHTML = `<p class="history-empty">The prototype only has the edit history of Quantum computing.</p>`;

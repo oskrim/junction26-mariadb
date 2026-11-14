@@ -22,13 +22,15 @@ function get(path) {
   return answers.get(url);
 }
 
-export const getArticles = () => get("/api/articles");
+// One article ([{ page_id, title, versions, first }]) when id is given, else all of them.
+export const getArticles = (id) => get(id == null ? "/api/articles" : `/api/articles?id=${id}`);
 
 export const getArticle = (id, at) => get(`/api/article?id=${id}&at=${at}`);
 
 export const getPreview = (title) => get(`/api/preview?title=${encodeURIComponent(title)}`);
 
-export const getGraph = (at) => get(`/api/graph?at=${at}`);
+// With id, only that article's neighborhood, and each node also has topic, versions and first.
+export const getGraph = (at, id) => get(id == null ? `/api/graph?at=${at}` : `/api/graph?at=${at}&id=${id}`);
 
 export const getTopics = () => get("/api/topics");
 
