@@ -91,3 +91,85 @@ is one SQL statement, and `vector.hybrid_sql` fuses it with the vector ranking.
 - `innodb_ft_min_token_size=2` (default 3), in `compose.yml`, so `YK` and `EU` are words. It is a server
   start option and applies to indexes built after it. InnoDB's default stopword list is English, which
   removes little Finnish.
+
+## Vector search
+
+Every article has one [BAAI/bge-m3](https://huggingface.co/BAAI/bge-m3) vector of its current version (1024
+numbers, from title + text, cut at 8,192 tokens). bge-m3 is multilingual, so an English question finds Finnish
+articles.
+
+| Table | What it holds |
+|---|---|
+| `article_vector` | `(lang, page_id)`, `model`, `truncated`, `embedding VECTOR(1024) NOT NULL`, `VECTOR INDEX (embedding) M=16 DISTANCE=cosine` |
+
+- S's ready-made vectors (fi, sv, en): `load.py s --vectors`, 29,460 rows in 40 s, index included.
+- Every other Finnish article: `embed.py articles`, a GPU batch job (below). The search uses only the `fi` rows.
+- `M=16`, not the default 6: with 1024 dimensions `M=6` found only 79% of the true top 10 (MariaDB's RAG
+  starter). The app sets `mhnsw_ef_search = 80`; `deploy.sh` sets `mhnsw_max_cache_size` to 4 GB, so the
+  index graph stays in memory.
+- `embed.py serve` (systemd `wiki-embed`, `127.0.0.1:8020`) embeds questions with the same model. Its vectors
+  agree with S's at cosine 0.9999. When it does not answer, search uses keywords only.
+
+### Hybrid search
+
+`/api/search` combines the FULLTEXT ranking and the vector ranking with reciprocal rank fusion, in one
+statement (`vector.hybrid_sql`): each article scores 1 / (60 + rank) in each list it is in. Equal scores go to
+the article nearer by meaning.
+
+```sql
+WITH keyword AS (<FULLTEXT ranking: page_id, keyword_rank>),
+     meaning AS (SELECT page_id, ROW_NUMBER() OVER (ORDER BY distance) AS vector_rank
+                 FROM (SELECT page_id, VEC_DISTANCE_COSINE(embedding, VEC_FromText(?)) AS distance
+                       FROM article_vector WHERE lang = 'fi' ORDER BY distance LIMIT 50) v)
+SELECT page_id, MIN(keyword_rank) AS keyword_rank, MIN(vector_rank) AS vector_rank,
+       SUM(1 / (60 + IFNULL(keyword_rank, vector_rank))) AS score
+FROM (SELECT page_id, keyword_rank, NULL AS vector_rank FROM keyword
+      UNION ALL SELECT page_id, NULL, vector_rank FROM meaning) ranks
+JOIN m_article_stats USING (page_id)
+GROUP BY page_id ORDER BY score DESC, vector_rank IS NULL, vector_rank, page_id LIMIT 20
+```
+
+The vector search stands alone in its subquery (`ORDER BY distance LIMIT`): that is the shape in which MariaDB
+uses the vector index. `EXPLAIN` names the index with the `lang = 'fi'` filter too.
+
+### Ask and Learn
+
+- Ask embeds the question and gives Gemini the 3 nearest articles, each as it was at the moment being read
+  (`FOR SYSTEM_TIME AS OF`), next to the article: "Finding related articles by meaning: 3 of N".
+- Then and now: when the question names an earlier year, or the reader is on an old version, Ask reads that
+  year's last version and today's, and says what each said and what changed.
+- Every quote is checked word for word against the text it came from; a quote from a related article or another
+  version links to it.
+- Learn adds the 10 nearest articles to the linked articles it chooses from.
+
+### Measured
+
+On the cloud box (A100 80 GB, 22 vCPU), `wiki_full`, while the batch job was running; medians over 5 queries:
+
+| Step | Time |
+|---|---|
+| Embedding the question (GPU) | 24 ms |
+| Vector top 50 (`article_vector`, index) | 19 ms |
+| FULLTEXT top 50 | 7 ms |
+| Hybrid statement (both, fused) | 29 ms |
+| `/api/search` (embedding, SQL, texts and snippets) | 207 ms |
+
+### The GPU batch job
+
+```bash
+systemd-run --unit=wiki-embed-articles -p Nice=10 -p IOSchedulingClass=idle -p Restart=on-failure \
+  --setenv=HOME=/root --setenv=UV_CACHE_DIR=/var/cache/uv --setenv=HF_HOME=/var/cache/huggingface \
+  --working-directory=/srv/junction26-mariadb \
+  -p StandardOutput=append:/var/log/wiki-embed/articles.log -p StandardError=append:/var/log/wiki-embed/articles.log \
+  /bin/bash -c 'set -a; . /etc/junction-wiki.env; set +a; export DB_NAME=wiki_full;
+  exec uv run --with torch --with transformers --with pymysql --with pyarrow python -u server/embed.py articles'
+```
+
+It embeds every Finnish article that has no `fi` row yet: first from dataset L's file (the same page ids and
+current text as the main table), then whatever else is in `m_article_stats`. It writes 5,000 articles at a time,
+so search improves while it runs, and on a second connection while the GPU embeds the next chunk. Stopped, it
+continues where it stopped. Texts are sorted by length and batched by 160,000 padded tokens, in float16.
+
+Measured on the A100: 68 articles/s, 98,000 tokens/s (the GPU busy 70 s of each 71 s chunk).
+The NVIDIA driver comes from Ubuntu's prebuilt modules for the running kernel (`bootstrap.sh`), loaded with
+`modprobe`, without a reboot.
