@@ -752,6 +752,15 @@ export function startHistoryPlay({ id, body, onClose }) {
     }
   }
 
+  // When the typing cursor gets near the timeline at the bottom, the page eases down to keep it in view,
+  // unless the reader is scrolling on their own.
+  function followCaret(caret) {
+    if (!caret.isConnected || performance.now() < handsOffUntil) return;
+    const y = caret.getBoundingClientRect().bottom;
+    const limit = innerHeight - 160;
+    if (y > limit) scrollBy({ top: Math.min(24, (y - limit) * 0.2 + 2), behavior: "instant" });
+  }
+
   // Plays `ops` into `el` at PER_LETTER ms a letter (at 1×), using up `quota`; once it runs out the rest
   // fades in. A jump or close finishes it at once.
   function typeInto(el, ops, quota, token) {
@@ -839,7 +848,8 @@ export function startHistoryPlay({ id, body, onClose }) {
               if (upTo >= part.op.ins.length) k++;
             }
           }
-          if (k < parts.length) return requestAnimationFrame(step);
+          followCaret(caret);
+        if (k < parts.length) return requestAnimationFrame(step);
           caret.remove();
           return resolve();
         }
@@ -865,6 +875,7 @@ export function startHistoryPlay({ id, body, onClose }) {
             }
           }
         }
+        followCaret(caret);
         if (k < parts.length) return requestAnimationFrame(step);
         caret.remove();
         resolve();
@@ -895,8 +906,9 @@ export function startHistoryPlay({ id, body, onClose }) {
   async function glideTo(el, token) {
     if (performance.now() < handsOffUntil) return;
     const top = el.getBoundingClientRect().top;
-    if (top > 90 && top < innerHeight * 0.62) return;
-    const to = Math.max(0, scrollY + top - innerHeight * 0.3);
+    // Already in the top part of the screen, with room below it for what is typed: stay.
+    if (top > 90 && top < innerHeight * 0.4) return;
+    const to = Math.max(0, scrollY + top - innerHeight * 0.25);
     const distance = Math.abs(to - scrollY);
     if (distance > innerHeight * 2.5) {
       await fadeOver(() => scrollTo({ top: to, behavior: "instant" }));
