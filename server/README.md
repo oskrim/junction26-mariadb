@@ -74,25 +74,88 @@ Explore shows the article with the links M articles make to it. It commits every
 articles appear in the app while it runs, and a second run skips the ones already in. Load M first: `load.py m`
 skips the articles that L already added.
 
-## Search
+## BM25 in MariaDB
 
-`/api/search` ranks with MariaDB FULLTEXT indexes on `m_article_stats.title` and `m_search.text` (one row
-per article: its Finnish S text, else its current `m_article` text). `keyword_ranking()` in `app.py`
-is one SQL statement, and `vector.hybrid_sql` fuses it with the vector ranking.
+`/api/search` ranks words with true BM25, computed inside MariaDB from an impact index: one row per (term,
+article) with the term's BM25 weight already in it, so a query's score is a `SUM` over its terms' rows.
+`server/bm25.py` holds the tokenizer and the queries; `load.py bm25` builds the tables.
 
-- Boolean mode, every word required. Finnish inflects words and changes their stem (talvisota,
-  talvisodan, talvisodassa), so each word of 7 or more letters also matches any word that starts with
-  it minus its last two letters: `+(talvisota talviso*)`. Natural-language mode finds only the exact
-  form, and `talvisota*` misses `talvisodan`.
-- The article titled exactly as the query comes first, then the other title matches, then the text matches.
-  Title matches are ordered by their text score.
-- The `utf8mb4_uca1400_ai_ci` collation makes the index ignore case and accents, so `sisallissota` finds
-  `sisällissota` without a folded copy of the text.
-- MariaDB has no `ngram` parser (`Function 'ngram' is not defined`); it is MySQL only. The stem prefix
-  covers the inflected forms that n-grams would.
-- `innodb_ft_min_token_size=2` (default 3), in `compose.yml`, so `YK` and `EU` are words. It is a server
-  start option and applies to indexes built after it. InnoDB's default stopword list is English, which
-  removes little Finnish.
+| Table | What it holds | wiki_full |
+|---|---|---:|
+| `bm25_term` | `term_id` (PK), `term VARCHAR(48) COLLATE utf8mb4_bin` (UNIQUE), `df`: articles with the term | 2,620,195 rows, 0.17 GB |
+| `bm25_posting` | `(term_id, page_id)` (PK), `wb`, `wt` (FLOAT): the term's BM25 weight in the text and in the title | 85.4M rows, 3.2 GB |
+| `bm25_stats` | `articles`, `avg_body`, `avg_title`: 568,873, 265 and 2.2 terms | 1 row |
+
+- Text: `m_search.text` (the article's Finnish S text, else its current `m_article` text). Title:
+  `m_article_stats.title`.
+- Terms: the words (`[^\W_]+`) lowercased, NFC, with ä, ö and å kept (they are letters of their own in Finnish),
+  then the Finnish Snowball stem (`snowballstemmer`; with `PyStemmer` installed it runs the C stemmer), cut at
+  48 characters.
+- Weights, per field: `idf · tf · (k1 + 1) / (tf + k1 · (1 − b + b · length / average length))`, with
+  `idf = ln(1 + (N − df + 0.5) / (df + 0.5))`, k1 = 1.2, b = 0.75, df counted in that field.
+- The query is stemmed the same way. Its words written together are one more term ("Lapuan liike" also looks
+  for `lapuanliik`), because Finnish compounds are often typed apart.
+
+```sql
+SET SESSION tmp_table_size = 536870912, max_heap_table_size = 536870912;  -- app.connect, every worker
+
+SELECT page_id, SUM(wb) AS body, SUM(wt) AS title FROM bm25_posting
+WHERE term_id IN (:term_ids)
+GROUP BY page_id
+ORDER BY SUM(wb) / (10 + SUM(wb)) + SUM(wt) / (8 + SUM(wt)) DESC, page_id
+LIMIT 200
+```
+
+The primary key `(term_id, page_id)` makes each term's rows one range read. The GROUP BY of a common word holds
+~300,000 articles: with the default 16 MB temporary tables it goes to disk and takes 17 s; with 512 MB, 440 ms
+for `ja` (510,000 articles).
+
+**Build.** `load.py bm25` reads every text in page_id order, counts terms in Python, computes the weights with
+numpy, sorts the rows by term (stable, so primary key order) and loads them with `LOAD DATA LOCAL INFILE` into
+`bm25_*_new`. One `RENAME TABLE` swaps all three in, so a search sees the old index or the new one, never half
+of one. It does nothing when `bm25_stats.articles` equals the number of `m_search` rows (`--reset` builds
+anyway); `deploy.sh` and `local.sh` run it after the other loaders.
+
+On the box (22 vCPU, while the GPU embedding job ran), all 568,873 articles: 386 s, about 5 GB of memory.
+
+| Step | Time |
+|---|---:|
+| Read, tokenize and stem (4.74M distinct words) | 152 s |
+| Weights and sort | 12 s |
+| Write the TSV files | 25 s |
+| `LOAD DATA` `bm25_term` | 8 s |
+| `LOAD DATA` `bm25_posting`, 85.4M rows in primary key order | 188 s |
+
+For the S and M data of `local.sh` it takes seconds; with `L=1`, about 6 minutes once.
+
+**Run on the box:**
+
+```bash
+systemd-run --unit=wiki-bm25 --setenv=HOME=/root --setenv=UV_CACHE_DIR=/var/cache/uv \
+  --working-directory=/srv/junction26-mariadb -p StandardOutput=append:/var/log/wiki-load/bm25.log \
+  -p StandardError=append:/var/log/wiki-load/bm25.log /bin/bash -c 'set -a; . /etc/junction-wiki.env; set +a;
+  export DB_NAME=wiki_full; exec uv run --with pymysql --with pyarrow --with numpy --with snowballstemmer \
+  --with PyStemmer python -u server/load.py bm25'
+```
+
+**Latency** on `wiki_full`, 20 queries (the ones below and jatkosota, suojeluskunta, Viipurin taistelu, Helsinki,
+Lapuan liike, Suomen sisällissota, battle of Tampere, Kekkonen, jääkiekko, Turun linna, why did Finland lose
+Karelia, ja), warm, 40 runs:
+
+| What | p50 | p95 |
+|---|---:|---:|
+| BM25 top 200 (`vector.lexical_ranking`, SQL) | 11 ms | 75 ms |
+| Hybrid scoring (`vector.hybrid`: BM25, vector top 50, cosines, BM25 of the vector hits) | 96 ms | 164 ms |
+| `/api/search`, server time from the request log (with embedding, texts and snippets) | 155 ms | 255 ms |
+
+The slowest are words in most articles: `ja` 410-515 ms end to end.
+
+**Stemming caveats.** Snowball removes endings but does not undo Finnish consonant gradation, so one word can
+get two stems: sota → `sota` but sodan, sodassa → `soda`; talvisota → `talviso` but talvisodan → `talvisod`;
+kaupunki → `kaupunk` but kaupungin → `kaupung`. A search for the base form misses the gradated forms and the other way round (the vector side often
+finds them). Stems also join unrelated words now and then, and English words get Finnish stems.
+
+The old InnoDB FULLTEXT indexes (`title_ft`, `text_ft`, 4.4 GB) are no longer used by search.
 
 ## Vector search
 
@@ -121,81 +184,46 @@ articles.
 
 ### Hybrid search
 
-`/api/search` scores each candidate with a linear sum of saturated scores, in one statement
-(`vector.hybrid_sql`). The candidates are the union of the FULLTEXT title top 50, the FULLTEXT text top 50 and
-the vector index top 50 (`ef_search` 200). Then every candidate gets all its component scores:
+`/api/search` (`vector.hybrid`) scores the union of the BM25 top 200 and the vector index top 50 (`ef_search`
+200). Every candidate gets all its component scores: BM25 by primary key for the vector hits
+(`bm25.scores`), the cosine by primary key for the BM25 hits.
 
 ```text
-score = 2 · sat(title MATCH, 30) + sat(text MATCH, 80) + 3 · (title = query)
-        + 4 · max(0, cosine(query, article) − 0.4)
+score = sat(BM25 text, 10) + sat(BM25 title, 8) + 3 · (title = query)
+        + space.weight · max(0, cosine(query, article) − space.floor)
 
 sat(x, κ) = x / (κ + x)        0 at x = 0, 0.5 at x = κ, below 1
 ```
 
-- Both MATCH scores use the boolean query of the FULLTEXT search (every word required, as itself or by its stem).
-- κ is about the median MATCH score of the top 50 candidates over the example queries below. In boolean mode
-  every title that matches a query gets the same score (14 to 44, depending on how rare the words are), so the
-  title term is a weighted "the title matches". Text scores spread from about 15 to 2,000; their medians are 37
-  to 154.
-- Title weight 2: a word in the title says more than the same word in the text.
+- κ is about the median BM25 score of the BM25 top 50 over the example queries: text 7 to 15, title 6 to 9.
+  The slides' κ = 25 gave the best field scores (7 to 13) only 0.2 to 0.35, so the vectors decided the order.
 - The exact-title bonus 3 is more than all other terms together, so the article titled as the query (in any
-  case or accent) comes first.
-- Cosine floor 0.4, not the 0.05 of the slides: with bge-m3, unrelated articles still score about 0.4 and the
-  best matches 0.5 to 0.65. Above the floor, w = 4 gives a vector match up to ~1, the size of a good lexical match.
+  case or accent, or with the query's words written together) comes first. BM25 alone does not do that: the
+  canonical article is long, so its text score is low (Talvisota 5.2 against 10.6 for Talvisota (kirja)).
+- The vector term, per `VECTOR_MODEL` (`vector.Space`): bge-m3 weight 4, floor 0.4; Voyage weight 3, floor 0.15.
+  With `VECTOR_MODEL=none` or no embedding, the BM25 ranking alone, exact title first.
 
-```sql
-WITH candidates AS (
-  (SELECT page_id FROM m_article_stats WHERE title = :q)
-  UNION (SELECT page_id FROM m_article_stats WHERE MATCH (title) AGAINST (:boolean IN BOOLEAN MODE)
-         ORDER BY MATCH (title) AGAINST (:boolean IN BOOLEAN MODE) DESC, CHAR_LENGTH(title) LIMIT 50)
-  UNION (SELECT page_id FROM m_search WHERE MATCH (text) AGAINST (:boolean IN BOOLEAN MODE)
-         ORDER BY MATCH (text) AGAINST (:boolean IN BOOLEAN MODE) DESC LIMIT 50)
-  UNION (SELECT page_id FROM (SELECT page_id, VEC_DISTANCE_COSINE(embedding, VEC_FromText(:vector)) AS distance
-                              FROM article_vector WHERE lang = 'fi' ORDER BY distance LIMIT 50) nearest)),
-scored AS (
-  SELECT c.page_id, s.title = :q AS exact,
-         MATCH (s.title) AGAINST (:boolean IN BOOLEAN MODE) AS title_score,
-         IFNULL(MATCH (x.text) AGAINST (:boolean IN BOOLEAN MODE), 0) AS body_score,
-         IFNULL(1 - VEC_DISTANCE_COSINE(v.embedding, VEC_FromText(:vector)), 0) AS cosine
-  FROM candidates c JOIN m_article_stats s USING (page_id)
-  LEFT JOIN m_search x USING (page_id)
-  LEFT JOIN article_vector v ON v.lang = 'fi' AND v.page_id = c.page_id)
-SELECT page_id, 2 * title_score / (30 + title_score) + body_score / (80 + body_score)
-         + 3 * exact + 4 * GREATEST(0, cosine - 0.4) AS score
-FROM scored ORDER BY score DESC, page_id LIMIT 20
-```
+Top 5 on `wiki_full` (all 568,873 Finnish articles, bge-m3). BM25 alone is `vector.lexical_ranking`, exact
+title first.
 
-The vector search stands alone in its subquery (`ORDER BY distance LIMIT`): that is the shape in which MariaDB
-uses the vector index. `EXPLAIN` names the index with the `lang = 'fi'` filter too. Without the embedding
-service, the search uses the FULLTEXT ranking alone.
-
-Top 5 on `wiki_full` (all 568,873 Finnish articles). Before: reciprocal rank fusion of the FULLTEXT and vector
-ranks (1 / (60 + rank) each, the vector rank weighted 0.25 for 1-2 word queries, the exact title first). After:
-the saturated sum above.
-
-| Query | Before (RRF) | After (saturated sum) |
+| Query | BM25 alone | Hybrid |
 |---|---|---|
-| sisällissota | Sisällissota; Suomen sisällissota; Venäjän sisällissota; Espanjan sisällissota; Kiinan sisällissota | Sisällissota; Suomen sisällissota; Venäjän sisällissota; Espanjan sisällissota; Suomen sisällissota Etelä-Pohjanmaalla |
-| Mannerheim | Carl Gustaf Emil Mannerheim; Mannerheim (suku); Carl Erik Mannerheim; Carl Gustaf Mannerheim; Johan Mannerheim | Carl Gustaf Emil Mannerheim; Mannerheim (suku); Johan Mannerheim; Carl Mannerheim (pankinjohtaja); Carl Gustaf Mannerheim |
-| Tampereen taistelu | Tampereen taistelu; Tampereen historia; Luettelo punakaartilaisista; Luettelo Suomen sisällissodan taisteluista; Tampere | Tampereen taistelu; Luettelo Suomen sisällissodan taisteluista; Tampereen historia; Tampere; Luettelo punakaartilaisista |
-| punakaarti | Punakaarti; Helsingin punakaarti; Suomen punakaarti; Pietarin suomalainen punakaarti; Sahalahden punakaarti | same |
-| talvisota | Talvisota; Talvisota (elokuva); Talvisota (videopeli); Talvisota (kirja); Kevyt osasto 8 (talvisota) | Talvisota; Talvisota (elokuva); Talvisota (videopeli); 4. divisioona (talvisota); 1. divisioona (talvisota) |
-| 1918 | 1918; Uhrit 1918; Raja 1918; Virrat 1918; Kunnallisvaalit 1918 | 1918; NHL-kausi 1918–1919; Kunnallisvaalit 1918; Uhrit 1918; Beretta 1918 |
-| battle of Tampere | Tampereen taistelu; Luettelo … science fiction -novelleista; Talvisodan pommitukset Tampereella; Five Finger Death Punch; Taipaleenkylän taistelu | Tampereen taistelu; Talvisodan pommitukset Tampereella; Taipaleenkylän taistelu; Tampereen punakaarti; Punainen Tampere |
-| who led the Reds in 1918 | Cincinnati Reds; NHL-kausi 1927–1928; Luettelo Stanley Cupin voittaneista pelaajista; 1918; NHL-kausi 1918–1919 | same |
-| why did Finland lose Karelia | Karjala; Karjalan historia; ProKarelia; Friedrich Karl; 1848 | same |
-| how did Finland become independent | 1821; Suomen itsenäistyminen; Luettelo itsenäisyyspäivistä; 1848; Ruotsin vapaussota | same |
+| sisällissota | Sisällissota; Burundin sisällissota; Pahangin sisällissota; Norsunluurannikon sisällissota; Sudanin sisällissota | Sisällissota; Venäjän sisällissota; Kiinan sisällissota; Rhodesian sisällissota; Yhdysvaltain sisällissota |
+| Mannerheim | Mannerheim (suku); Johan Mannerheim; Mannerheim-säätiö; Lillemor Mannerheim; Anastasia Mannerheim | Johan Mannerheim; Mannerheim-museo; Sophie Mannerheim; Mannerheim (elokuvahanke); Mannerheim (suku) |
+| Tampereen taistelu | Tampereen taistelu; Tampereen naiskaarti; Tampereen teloitukset; Punainen Tampere; Tie Tampereelle | Tampereen taistelu; Länkipohjan taistelu; Tampereen teloitukset; Tampereen punakaarti; Taipaleenkylän taistelu |
+| punakaarti | Punakaarti; Sahalahden punakaarti; Suomen punakaarti; Punakaarti (kulttuurivallankumous); Helsingin punakaarti | Punakaarti; Punakaarti (kulttuurivallankumous); Suomen punakaarti; Helsingin punakaarti; Sahalahden punakaarti |
+| talvisota | Talvisota; Talvisota (kirja); Talvisota (videopeli); Talvisota: Icy Hell; Lohjan miesten talvisota | Talvisota; Talvisota (videopeli); Talvisota (kirja); Talvisota (elokuva); Talvisota: Icy Hell |
+| 1918 | 1918; Keyaki (1918); Kuwa (1918); Tsubaki (1918); Virrat 1918 | 1918; Elokuvavuosi 1918; Kirjallisuusvuosi 1918; Kunnallisvaalit 1918; Beretta 1918 |
+| helsingin kaupunki | Helsingin kaupunginarkisto; Maanalainen kaupunki; Helsingin vaakuna; Helsingin historia; Helsingin käräjäoikeus | Helsingin kulttuuri; Helsingin yleiskaava; Helsingin historia; Helsingin alueellinen laajeneminen; Helsingin kaupunginarkisto |
+| Lapuan liike | Lapuanliike; Lapuanliikkeen valtuuskunta; Lapuanliikkeen johto; Lapuan työväentalo; Lapuan päiväkäsky | Lapuanliike; Lapuanliikkeen valtuuskunta; Lapuanliikkeen johto; Maakuntain liike; Lapuan laki |
+| who led the Reds in 1918 | The Who; Cincinnati Reds; The Guess Who; Led Zeppelin; REDS Helsinki | Cincinnati Reds; Boston Reds (1890–1891); Cincinnati Reds (1876–1880); Major League Baseball -kausi 1918; REDS Helsinki |
 
-- Short title queries: the exact title is first in both. The saturated sum puts articles with the query in the
-  title ahead of text-only matches, and orders them by text and meaning.
-- "battle of Tampere": RRF mixed in keyword-only noise (every word somewhere in a long list article); the sum
-  keeps the five Tampere battle and Red Guard articles, because two weak text matches add up to less than one
-  good vector match.
-- The three questions have no keyword match (every word is required, and they are in English), so only the
-  vectors rank them, the same in both. They find the topic, not the fact, and with all of Finnish Wikipedia,
-  "Reds" finds sports teams: one vector per article sums up a whole article (MariaDB's RAG starter saw the same).
-- `/api/search` takes 175-400 ms with the sum (73-310 ms with RRF): MATCH runs again for each candidate, so that
-  a candidate found by its vector also gets its exact lexical scores.
+- Every short title query has its exact title first, alone and in the hybrid.
+- Mannerheim: no article is titled "Mannerheim", and Carl Gustaf Emil Mannerheim is not in the top 5 (the
+  FULLTEXT ranking had it first). BM25 prefers the short articles that are all about the name; the long
+  biography gets a low text score. A lower b (0.3) helps long articles in general but did not lift it either.
+- English questions: BM25 matches the English words (who, led, Reds) in band and team articles, and the vectors
+  find the topic, not the fact.
 
 ### Ask and Learn
 
@@ -215,10 +243,10 @@ On the cloud box (A100 80 GB, 22 vCPU), `wiki_full`, while the batch job was run
 |---|---|
 | Embedding the question (GPU) | 24 ms |
 | Vector top 50 (`article_vector`, index) | 19 ms |
-| FULLTEXT top 50 | 7 ms |
+| BM25 top 200 | 11 ms (p95 75 ms) |
 | Hybrid statement, reciprocal rank fusion (before) | 29 ms |
-| Hybrid statement, saturated sum (now; 8 queries, all 568,873 articles) | 136 ms (84-299) |
-| `/api/search` (embedding, SQL, texts and snippets), saturated sum | 175-400 ms |
+| Hybrid scoring with BM25 (now; 20 queries) | 96 ms (p95 164 ms) |
+| `/api/search` (embedding, SQL, texts and snippets) with BM25 | 155 ms (p95 255 ms) |
 
 ### Recall of the vector index
 
@@ -388,6 +416,7 @@ Measured on the cloud box (22 vCPU, 117 GB RAM, 32 GB buffer pool), database `wi
 | Search text | 568,873 | | | `m_search`, 2.1 GB |
 | FULLTEXT on `m_search.text` | | | | 4.25 GB |
 | FULLTEXT on `m_article_stats.title` | | | | 0.11 GB |
+| BM25 index (`bm25_posting`, `bm25_term`) | 568,873 | | | 3.4 GB |
 
 `load.py l` took 23 minutes (549,131 articles, FULLTEXT indexes updated as it went).
 
@@ -398,6 +427,8 @@ Search latency, 10 typical queries (sisällissota, Mannerheim, Tampereen taistel
 |---|---:|---:|---:|
 | FULLTEXT keyword ranking (`keyword_ranking`), SQL time | 568,873 | 51 ms | 314 ms |
 | `/api/search` (FULLTEXT + vectors + snippets), server time from the request log | 568,873 | 147 ms | 493 ms |
+| BM25 top 200 (`vector.lexical_ranking`), SQL time, 20 queries | 568,873 | 11 ms | 75 ms |
+| `/api/search` (BM25 + vectors + snippets), server time, 20 queries | 568,873 | 155 ms | 255 ms |
 | The earlier substring search (`LOCATE` in every text) | 19,742 (M only) | 130 ms | 794 ms |
 
 The slowest query is `Helsinki`: 64,074 articles match, 309 ms. The substring search does not scale to L: one
