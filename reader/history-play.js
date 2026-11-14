@@ -93,12 +93,22 @@ export function startHistoryPlay({ id, body, onClose }) {
   // It is pinned to the top of the window over the road, so it stays in view when the road scrolls
   // up with the end of the article.
   const placeNote = () => {
+    // The road takes the contents column's place: a gap and the column's width left of the article.
+    const article = document.querySelector(".layout .column").getBoundingClientRect();
+    const styles = getComputedStyle(document.querySelector(".layout"));
+    const toc = parseFloat(styles.getPropertyValue("--toc")) || 300;
+    const gap = parseFloat(styles.getPropertyValue("--gap")) || 64;
+    side.style.setProperty("--path-left", `${article.left - gap - toc - 40}px`);
     const r = side.getBoundingClientRect();
     side.style.setProperty("--note-left", `${r.left + 48}px`);
     side.style.setProperty("--note-width", `${Math.max(0, r.width - 64)}px`);
   };
   requestAnimationFrame(placeNote);
   addEventListener("resize", placeNote);
+  // Under the top bar until it scrolls away.
+  const onPageScroll = () => side.style.setProperty("--page-y", `${Math.min(60, scrollY)}px`);
+  onPageScroll();
+  addEventListener("scroll", onPageScroll, { passive: true });
   const $ = (selector) => dock.querySelector(selector) ?? side.querySelector(selector);
   const playButton = $(".hp-play");
   const speedButton = $(".hp-speed");
@@ -212,6 +222,11 @@ export function startHistoryPlay({ id, body, onClose }) {
     for (let i = from; i < frames.length; i++) {
       for (let k = i + 1; k <= i + 5 && k < frames.length; k++) load(frames[k]);
       const time = frames[i].edit.time;
+      // A war starts only once the marker and the road have arrived at it.
+      if (frames[i].war && i > from) {
+        if (travel?.time !== time) travelTo(time, MIN_TRIP / rate);
+        if (!(await wait(Math.max(0, travel.end - performance.now()), token))) return;
+      }
       // A war round with nothing to type (its edit touched only the infobox, a table or the sources) passes
       // as quickly as the blow on the road.
       let typing = 0;
@@ -1013,6 +1028,7 @@ export function startHistoryPlay({ id, body, onClose }) {
     body.replaceChildren(...saved.body);
     path?.stop();
     removeEventListener("resize", placeNote);
+    removeEventListener("scroll", onPageScroll);
     side.remove();
     document.body.classList.remove("hp-mode");
     dock.classList.add("is-leaving");
