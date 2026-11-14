@@ -59,7 +59,8 @@ def hybrid_sql(keyword_sql):
     """One statement that fuses a keyword ranking and the vector ranking with reciprocal rank fusion.
 
     keyword_sql selects page_id and a keyword_rank (1 = best) and takes its own parameters; the vector list takes
-    (vector, limit). Each article scores the sum of 1 / (RRF_K + rank) over the lists it is in."""
+    (vector, limit). Each article scores the sum of 1 / (RRF_K + rank) over the lists it is in. Equal scores go
+    to the article nearer by meaning, which also finds it across languages."""
     return f"""WITH keyword AS ({keyword_sql}),
      meaning AS (SELECT page_id, ROW_NUMBER() OVER (ORDER BY distance) AS vector_rank FROM ({NEAREST}) v)
 SELECT page_id, MIN(keyword_rank) AS keyword_rank, MIN(vector_rank) AS vector_rank,
@@ -67,4 +68,4 @@ SELECT page_id, MIN(keyword_rank) AS keyword_rank, MIN(vector_rank) AS vector_ra
 FROM (SELECT page_id, keyword_rank, NULL AS vector_rank FROM keyword
       UNION ALL SELECT page_id, NULL, vector_rank FROM meaning) ranks
 JOIN m_article_stats USING (page_id)
-GROUP BY page_id ORDER BY score DESC, page_id LIMIT %s"""
+GROUP BY page_id ORDER BY score DESC, vector_rank IS NULL, vector_rank, page_id LIMIT %s"""

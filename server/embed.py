@@ -8,6 +8,7 @@ The vectors match S's ready-made ones: BAAI/bge-m3, the [CLS] output normalized 
 articles that have no row in article_vector yet.
 """
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import itertools
 import json
 import os
@@ -192,19 +193,26 @@ def embed_job():
     print(f"embed: database {cur.fetchone()[0]}", flush=True)
     encoder = Encoder()
     print(f"embed: {HF_MODEL} on {encoder.device}", flush=True)
+    # The vectors of one chunk are written while the GPU embeds the next, on a connection of their own.
+    writer, writes = ThreadPoolExecutor(1), connect().cursor()
+    saving = None
     started, articles, tokens, gpu_s = time.time(), 0, 0, 0.0
     for rows in itertools.chain(l_dataset(cur), main_table(cur)):
         t0 = time.time()
         vectors, cut, n_tokens = encoder.encode([text for _, text in rows])
         gpu_s += time.time() - t0
-        cur.executemany("""INSERT IGNORE INTO article_vector (lang, page_id, model, truncated, embedding)
-                           VALUES (%s, %s, %s, %s, %s)""",
-                        [("fi", p, MODEL, c, packed(v)) for (p, _), v, c in zip(rows, vectors, cut)])
+        if saving:
+            saving.result()  # raises the last write's error
+        saving = writer.submit(writes.executemany, """INSERT IGNORE INTO article_vector (lang, page_id, model, truncated, embedding)
+                                                      VALUES (%s, %s, %s, %s, %s)""",
+                               [("fi", p, MODEL, c, packed(v)) for (p, _), v, c in zip(rows, vectors, cut)])
         articles += len(rows)
         tokens += n_tokens
         elapsed = time.time() - started
-        print(f"embed: {articles:,} embedded, {articles / elapsed:.0f} articles/s, {tokens / elapsed:,.0f} tokens/s, "
+        print(f"embed: {time.strftime('%H:%M:%S')} {articles:,} embedded, {articles / elapsed:.0f} articles/s, {tokens / elapsed:,.0f} tokens/s, "
               f"{sum(cut)} cut in this chunk, {elapsed:.0f} s (GPU {gpu_s:.0f} s), last page {rows[-1][0]}", flush=True)
+    if saving:
+        saving.result()
     print(f"embed: done, {articles:,} articles and {tokens:,} tokens in {time.time() - started:.0f} s "
           f"(GPU {gpu_s:.0f} s)", flush=True)
 
