@@ -3,8 +3,8 @@
 Pick a Wikipedia article, drag a date slider, and read the article as it was on that day.
 
 The data is the full edit history of 642 Simple English Wikipedia articles (about 207,000
-versions, 2003 to 2026), plus the links between them at every moment. It lives in one MariaDB table. MariaDB keeps every old version by
-itself, so "the article in 2012" is a single query.
+versions, 2003 to 2026), plus the links between them at every moment.
+MariaDB keeps every old version by itself, so "the article in 2012" is a single query.
 
 ## What you need
 
@@ -37,7 +37,7 @@ Then open <http://127.0.0.1:8010>. Stop it with Ctrl+C.
 
 ## Build your own UI on it
 
-The page talks to two URLs. Both return JSON.
+The API has three URLs. All return JSON.
 
 | URL | Returns |
 |---|---|
