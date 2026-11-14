@@ -19,7 +19,7 @@ const body = document.querySelector(".body");
 const toc = document.querySelector(".toc");
 
 if (!version || !summary) {
-  head.innerHTML = `<h1>Not found</h1><p class="dek">This article isn't part of the prototype yet.</p>`;
+  head.innerHTML = `<h1>Not found</h1><p class="dek">Article not found.</p>`;
 } else {
   const doc = renderWikitext(version.text, {
     fileUrl,
