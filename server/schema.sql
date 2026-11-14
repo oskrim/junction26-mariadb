@@ -1,4 +1,5 @@
--- One table per dataset, and their search indexes.
+-- One table per dataset, and their search indexes. FULLTEXT indexes use the tables' default collation,
+-- utf8mb4_uca1400_ai_ci, so "sisallissota" finds "sisällissota" and case does not matter.
 
 -- S: the history-of-Finland articles as they are now, in Finnish, Swedish and English (Markdown).
 CREATE TABLE IF NOT EXISTS s_article (
@@ -21,9 +22,9 @@ CREATE TABLE IF NOT EXISTS s_category (
   PRIMARY KEY (page_id, category)
 ) CHARACTER SET utf8mb4;
 
--- M: every saved version of an article. The current version is the current row; each earlier one
+-- M: every saved version of an article, and the current text of every other Finnish article (L). The current version is the current row; each earlier one
 -- is a history row stored with Wikipedia's real edit times, so FOR SYSTEM_TIME AS OF '2015-06-01'
--- returns what Wikipedia showed on 1 June 2015.
+-- returns what Wikipedia showed on 1 June 2015. An L article has one version, in Markdown (format).
 CREATE TABLE IF NOT EXISTS m_article (
   page_id   INT UNSIGNED NOT NULL,
   title     VARCHAR(255) NOT NULL,
@@ -35,6 +36,7 @@ CREATE TABLE IF NOT EXISTS m_article (
   sha1      CHAR(31),
   bytes     INT UNSIGNED NOT NULL,
   text      MEDIUMTEXT COMPRESSED NOT NULL,
+  format    ENUM('wikitext', 'markdown') NOT NULL DEFAULT 'wikitext',
   row_start TIMESTAMP(6) GENERATED ALWAYS AS ROW START INVISIBLE,
   row_end   TIMESTAMP(6) GENERATED ALWAYS AS ROW END INVISIBLE,
   PERIOD FOR SYSTEM_TIME (row_start, row_end),
@@ -68,16 +70,17 @@ CREATE TABLE IF NOT EXISTS m_article_stats (
   first    TIMESTAMP(6) NOT NULL,
   topic    VARCHAR(255),
   PRIMARY KEY (page_id),
-  KEY (title)
+  KEY (title),
+  FULLTEXT KEY title_ft (title)
 ) CHARACTER SET utf8mb4;
 
--- M: the text search looks in, one row per article: its current Finnish S text, else its current M text,
--- lowercased and without accents. A byte search in it is many times faster than LIKE in the original.
+-- M: the text search looks in, one row per article: its current Finnish S text, else its current M text.
 CREATE TABLE IF NOT EXISTS m_search (
   page_id INT UNSIGNED NOT NULL,
-  text    MEDIUMBLOB   NOT NULL,
-  PRIMARY KEY (page_id)
-);
+  text    MEDIUMTEXT   NOT NULL,
+  PRIMARY KEY (page_id),
+  FULLTEXT KEY text_ft (text)
+) CHARACTER SET utf8mb4;
 
 -- One BAAI/bge-m3 vector per article and language, from its title and current text: S's ready-made vectors
 -- (fi, sv, en), and embed.py's for the Finnish articles S has none for. The vector index needs NOT NULL, so a

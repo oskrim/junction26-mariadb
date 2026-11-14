@@ -98,7 +98,8 @@ def articles(cur, params):
 def article(cur, params):
     # The ORDER BY makes MariaDB read start_key backwards; without it, it may walk the (page_id, row_end)
     # index and decompress the text of every version that ended later.
-    sql = cur.mogrify("""SELECT title, rev_id, IFNULL(user, '') AS user, IFNULL(comment, '') AS comment, row_start, text
+    sql = cur.mogrify("""SELECT title, rev_id, IFNULL(user, '') AS user, IFNULL(comment, '') AS comment, row_start, text,
+       format
 FROM m_article FOR SYSTEM_TIME AS OF TIMESTAMP %s
 WHERE page_id = %s
 ORDER BY row_start DESC LIMIT 1""", (stamp(moment(params)), number(params, "id")))
@@ -268,15 +269,16 @@ def preview_of(cur, title):
         return None
     cur.execute("SELECT text FROM s_article WHERE lang = 'fi' AND page_id = %s", (found["page_id"],))
     s = cur.fetchone()
-    cur.execute("SELECT text FROM m_article WHERE page_id = %s", (found["page_id"],))
+    cur.execute("SELECT text, format FROM m_article WHERE page_id = %s", (found["page_id"],))
     m = cur.fetchone()
+    lead_text = s["text"] if s else m["text"] if m and m["format"] == "markdown" else None
     image = next(filter(None, (pattern.search(m["text"]) for pattern in IMAGES)), None) if m else None
     thumbnail = None
     if image:
         thumbnail = {"url": thumbnail_url(normalize(image.group(1).strip())), "width": THUMB_WIDTH, "height": None}
     # id is set only for articles the app can open (they have versions in m_article).
     return {"title": found["title"], "id": found["page_id"] if m else None,
-            "extract": extract(s["text"]) if s else "", "thumbnail": thumbnail}
+            "extract": extract(lead_text) if lead_text else "", "thumbnail": thumbnail}
 
 
 def preview(cur, params):
@@ -326,41 +328,81 @@ def lead(text, width):
     return sentence if len(sentence) <= width else sentence[:width].rsplit(" ", 1)[0] + "…"
 
 
-def snippet(text, q, width=160):
-    """About width characters around the first q in text, and where q sits in it; the lead if q is absent."""
-    at = text.lower().find(q.lower()) if len(text.lower()) == len(text) else -1
-    if at < 0:
+def snippet(text, span, width=160):
+    """About width characters around span, a [start, end) in text, and where span sits in what is shown;
+    the lead if span is None."""
+    if span is None:
         return lead(text, width), None
-    start = max(0, at - (width - len(q)) // 3)
+    at, stop = span
+    start = max(0, at - (width - (stop - at)) // 3)
     if start:
         start = text.find(" ", start, at) + 1 or start
-    end = max(at + len(q), start + width)
+    end = max(stop, start + width)
     if end < len(text):
-        space = text.rfind(" ", at + len(q), end)
+        space = text.rfind(" ", stop, end)
         end = space if space > 0 else end
     prefix = "…" if start else ""
     shown = prefix + text[start:end] + ("…" if end < len(text) else "")
-    return shown, [len(prefix) + at - start, len(prefix) + at - start + len(q)]
+    return shown, [len(prefix) + at - start, len(prefix) + stop - start]
+
+
+def words(q):
+    """The words of a search query, at most MAX_WORDS of them."""
+    return re.findall(r"\w+", q)[:MAX_WORDS]
+
+
+def stem(word):
+    """The start that Finnish inflections of word share: "talvisota" -> "talviso", which finds "talvisodan"
+    too. Short words and numbers are kept whole."""
+    return word if len(word) < STEM_FROM or word.isdigit() else word[:-2]
+
+
+def boolean_query(q):
+    """q as a FULLTEXT boolean query: every word is required, as itself or as any word that starts with
+    its stem. The exact word counts more than the inflected forms."""
+    return " ".join(f"+({w} {stem(w)}*)" if stem(w) != w else f"+{w}*" for w in words(q))
+
+
+def find(text, q):
+    """Where q, else the first word that starts with the stem of one of its words, is in text, as
+    [start, end); None if neither is (any case or accent)."""
+    folded = words(fold(q))
+    patterns = [r"\b" + r"\W+".join(map(re.escape, folded)) + r"\w*"] + [r"\b" + re.escape(stem(w)) + r"\w*" for w in folded]
+    for pattern in patterns:
+        found = re.search(pattern, fold(text))
+        if found:
+            return list(found.span())
+    return None
 
 
 def fold(text):
-    """Lowercase without accents, as load.py stores the text in m_search."""
-    return "".join(c for c in unicodedata.normalize("NFKD", text.lower()) if not unicodedata.combining(c))
+    """Lowercase without accents, one character for each one in text, so positions in it are positions in text."""
+    return "".join((unicodedata.normalize("NFKD", c.lower()) or c)[0] for c in text)
 
 
+MAX_WORDS = 8
+STEM_FROM = 7  # words this long or longer are also searched by their stem
 SEARCH_CANDIDATES = 50  # articles each ranking gives to the fusion
 
 
 def keyword_ranking(q):
-    """SQL ranking the articles whose title, then clean text, contains q (any case or accent), and its parameters.
+    """SQL ranking the articles that match q with the FULLTEXT indexes, and its parameters: the article titled q
+    first, then the other title matches, then the text matches. Title matches are ordered by how well their text
+    matches too. MATCH ... AGAINST scores by how often the words occur in a row and how rare they are overall.
 
-    The text searched is the article's S Markdown (Finnish), or its wikitext when it has none."""
-    like = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
-    sql = """SELECT s.page_id, ROW_NUMBER() OVER (ORDER BY s.title LIKE %s DESC, s.title) AS keyword_rank
-             FROM m_article_stats s JOIN m_search x USING (page_id)
-             WHERE s.title LIKE %s OR INSTR(x.text, %s) > 0
-             ORDER BY keyword_rank LIMIT %s"""
-    return sql, (like, like, fold(q).encode(), SEARCH_CANDIDATES)
+    The text is an article's S Markdown (Finnish), else its current m_article text: wikitext for M articles,
+    Markdown for the rest of Finnish Wikipedia (L)."""
+    query = boolean_query(q)
+    sql = """SELECT page_id, ROW_NUMBER() OVER (ORDER BY MAX(exact) DESC, MAX(in_title) DESC, MAX(text_score) DESC,
+                                                       page_id) AS keyword_rank
+             FROM ((SELECT page_id, title = %s AS exact, 1 AS in_title, 0 AS text_score FROM m_article_stats
+                    WHERE MATCH (title) AGAINST (%s IN BOOLEAN MODE)
+                    ORDER BY MATCH (title) AGAINST (%s IN BOOLEAN MODE) DESC LIMIT %s)
+                   UNION ALL
+                   (SELECT page_id, 0, 0, MATCH (text) AGAINST (%s IN BOOLEAN MODE) FROM m_search
+                    WHERE MATCH (text) AGAINST (%s IN BOOLEAN MODE) ORDER BY 4 DESC LIMIT %s)) hits
+             GROUP BY page_id ORDER BY keyword_rank LIMIT %s"""
+    return sql, (q, query, query, SEARCH_CANDIDATES, query, query, SEARCH_CANDIDATES, SEARCH_CANDIDATES)
 
 
 def search(cur, params):
@@ -371,6 +413,8 @@ def search(cur, params):
     if not q:
         raise BadRequest("q is required")
     limit = number(params, "limit", 20)
+    if not words(q):
+        return []
     keyword_sql, keyword_args = keyword_ranking(q)
     try:
         query_vector = vector.embed(q)
@@ -383,19 +427,18 @@ def search(cur, params):
     ranked = cur.fetchall()
     if not ranked:
         return []
-    cur.execute("SELECT page_id, title FROM m_article_stats WHERE page_id IN %s", ([r["page_id"] for r in ranked],))
-    titles = {r["page_id"]: r["title"] for r in cur.fetchall()}
-    found = [{**r, "title": titles[r["page_id"]]} for r in ranked]
-    # Text by primary key; IF reads the M wikitext only for articles without S text.
-    cur.execute("""SELECT a.page_id, s.page_id IS NOT NULL AS clean, IF(s.page_id IS NULL, a.text, s.text) AS text
+    # Text by primary key; IF reads the m_article text only for articles without S text.
+    cur.execute("""SELECT a.page_id, a.title, IF(s.page_id IS NULL, a.format, 'markdown') AS format,
+                          IF(s.page_id IS NULL, a.text, s.text) AS text
                    FROM m_article a LEFT JOIN s_article s ON s.lang = 'fi' AND s.page_id = a.page_id
-                   WHERE a.page_id IN %s""", ([r["page_id"] for r in found],))
-    texts = {r["page_id"]: r for r in cur.fetchall()}
+                   WHERE a.page_id IN %s""", ([r["page_id"] for r in ranked],))
+    rows = {r["page_id"]: r for r in cur.fetchall()}
     results = []
-    for r in found:
-        t = texts[r["page_id"]]
-        text, match = snippet(prose(t["text"]) if t["clean"] else unwiki(t["text"]), q)
-        results.append({"page_id": r["page_id"], "title": r["title"], "snippet": text, "match": match,
+    for r in ranked:
+        article = rows[r["page_id"]]
+        text = prose(article["text"]) if article["format"] == "markdown" else unwiki(article["text"])
+        shown, match = snippet(text, find(text, q))
+        results.append({"page_id": r["page_id"], "title": article["title"], "snippet": shown, "match": match,
                         "by": "both" if r["keyword_rank"] and r["vector_rank"] else "keyword" if r["keyword_rank"] else "meaning"})
     return results
 
