@@ -21,17 +21,6 @@ export async function mountExplore(root, { id }) {
       <canvas class="ex-canvas"></canvas>
       <div class="ex-layer"></div>
     </div>
-    <div class="ex-foot">
-      <div class="ex-controls">
-        <label class="ex-switch">
-          <input type="checkbox" class="ex-keep" checked />
-          <span class="ex-switch-track" aria-hidden="true"></span>
-          <span class="ex-keep-label"></span>
-        </label>
-        <button class="ex-reset" type="button" hidden>Reset map</button>
-      </div>
-      <p class="ex-hint">Drag to turn · Scroll to zoom · Click an article to open it</p>
-    </div>
     <div class="ex-tip" role="tooltip"></div>
     <aside class="ex-panel" aria-live="polite"></aside>
     <div class="ex-time">
@@ -52,15 +41,6 @@ export async function mountExplore(root, { id }) {
   const range = $(".ex-range");
   const yearOut = $(".ex-year");
   const playButton = $(".ex-play");
-  const keep = $(".ex-keep");
-  try {
-    keep.checked = localStorage.getItem("explore-keep-center") !== "off";
-  } catch {}
-  keep.addEventListener("change", () => {
-    try {
-      localStorage.setItem("explore-keep-center", keep.checked ? "on" : "off");
-    } catch {}
-  });
 
   const now = Math.floor(Date.now() / 1000);
   // The part of the link graph loaded so far: each article the map centers on or grows from brings
@@ -393,8 +373,6 @@ export async function mountExplore(root, { id }) {
       : `Not written yet in ${year}`;
     const line = panel.querySelector(".ex-sub");
     if (line) line.textContent = summary;
-    $(".ex-keep-label").textContent = `Keep ${title} in the middle`;
-    $(".ex-reset").hidden = trail.length === 0;
   }
 
   // --- Drawing ------------------------------------------------------------------------------
@@ -724,25 +702,16 @@ export async function mountExplore(root, { id }) {
     tip.classList.remove("is-visible");
   }
 
-  // With the switch on, opening an article grows the map from it; with it off, the article moves
-  // to the middle and the map rebuilds around it.
+  // Opening an article grows the map from it; the middle article stays put.
   async function select(n) {
-    if (!keep.checked && n !== centerId) {
-      await exploreFrom(n);
-      n = centerId;
-    }
     selectedId = n;
-    const count = keep.checked ? await grow(n) : 0;
+    const count = await grow(n);
     if (selectedId !== n) return;
     if (n === centerId) {
       cam.focusTo = { x: 0, y: 0, z: 0 };
       cam.distTo = fitDist;
-    } else if (keep.checked) {
-      focusBranch(n);
     } else {
-      const t = target.get(n);
-      cam.focusTo = { x: t.x * 0.75, y: t.y * 0.75, z: t.z * 0.75 };
-      cam.distTo = Math.min(cam.distTo, fitDist * 0.9);
+      focusBranch(n);
     }
     openPanel(n, count);
   }
@@ -846,13 +815,6 @@ export async function mountExplore(root, { id }) {
     moving = false;
   }
 
-  $(".ex-reset").addEventListener("click", async () => {
-    deselect();
-    trail = [];
-    branchSize = 0;
-    prune();
-    setTitle();
-  });
 
   // --- History ------------------------------------------------------------------------------
 

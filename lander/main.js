@@ -1,6 +1,6 @@
 import { createGlobe } from "./globe-model.js";
 import { createBackdrop } from "./backdrop.js";
-import { suggestPages, searchPages, looksLikeQuestion, pageUrl, stem } from "./fake/api.js";
+import { suggestPages, searchPages, looksLikeQuestion, pageUrl, stem, isLive } from "./api.js";
 
 createBackdrop(document.getElementById("backdrop"));
 const globe = createGlobe(document.getElementById("globe"));
@@ -11,8 +11,10 @@ const langBtn = $("lang"), langCode = $("lang-code"), langMenu = $("lang-menu");
 const suggest = $("suggest"), results = $("results"), examples = $("examples"), toast = $("toast");
 
 const esc = (t) => t.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+// edit counts are only known for the fake fallback pages; real search results leave them out
 const year = (a) => new Date(a.first * 1000).getUTCFullYear();
 const edits = (a) => `${a.versions.toLocaleString("en")} edits`;
+const meta = (a) => (a.versions ? `${edits(a)} · since ${year(a)}` : "");
 // the page's lead picture, or a quiet letter tile when it has none
 const thumb = (a, cls) => a.thumbnail
   ? `<img class="${cls}" src="${a.thumbnail.url}" alt="" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'${cls}',textContent:'${esc(a.title[0])}'}))">`
@@ -78,7 +80,7 @@ function renderSuggest(text, pages) {
       <a class="opt" id="opt-${i}" role="option" href="${pageUrl(a)}" data-i="${i}">
         ${thumb(a, "opt-icon")}
         <span class="opt-body"><span class="opt-title">${highlightTitle(a.title, text)}</span><span class="opt-sub">${esc(a.summary)}</span></span>
-        <span class="opt-meta">${edits(a)}</span>
+        ${a.versions ? `<span class="opt-meta">${edits(a)}</span>` : ""}
       </a>`).join("") + `
       <div class="opt opt-search" id="opt-${pages.length}" role="option" data-i="${pages.length}">
         <span class="opt-icon"><svg viewBox="0 0 24 24" width="15" height="15"><circle cx="10.5" cy="10.5" r="6" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="m15 15 5 5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></span>
@@ -141,12 +143,12 @@ document.addEventListener("click", (e) => {
   if (!e.target.closest(".composer-wrap")) closeSuggest();
 });
 
-// ── opening a page (prototype: there is no reader on this branch, so say where it would go)
+// ── opening a page: real results open in the reader; fake fallback pages only say where they would go
 let toastTimer;
 function openPage(a) {
   closeSuggest();
-  history.replaceState(null, "", pageUrl(a));
-  toast.textContent = `Opening “${a.title}” · ${edits(a)} since ${year(a)}`;
+  if (isLive()) { location.href = pageUrl(a); return; }
+  toast.textContent = `Opening “${a.title}” — the article data can't be reached right now`;
   toast.hidden = false;
   toast.style.animation = "none"; void toast.offsetWidth; toast.style.animation = "";
   clearTimeout(toastTimer);
@@ -164,7 +166,7 @@ function hitHTML(a, terms, i) {
       <span>
         <span class="hit-title">${esc(a.title)}</span>
         <p class="hit-text">${markTerms(a.summary, terms)}</p>
-        <span class="hit-meta">${edits(a)} · since ${year(a)}</span>
+        ${meta(a) ? `<span class="hit-meta">${meta(a)}</span>` : ""}
       </span>
     </a>`;
 }
