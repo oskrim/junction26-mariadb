@@ -42,6 +42,28 @@ setup_firewall() {
   ufw --force enable
 }
 
+# Visitors on slow mobile links wait a round trip (~300 ms) for every doubling of TCP's send window: a
+# larger first window sends a cold page's code and data in fewer of them, and an idle connection keeps its.
+tune_tcp() {
+  echo "net.ipv4.tcp_slow_start_after_idle = 0" > /etc/sysctl.d/60-wiki-tcp.conf
+  sysctl -q -p /etc/sysctl.d/60-wiki-tcp.conf
+  cat > /etc/systemd/system/wiki-initcwnd.service <<'UNIT'
+[Unit]
+Description=Larger initial TCP window on the default route
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'ip route change $(ip route show default | head -1 | sed "s/ init[cr]wnd [0-9]*//g") initcwnd 32 initrwnd 32'
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+  systemctl daemon-reload
+  systemctl enable --now wiki-initcwnd
+}
+
 clone_repo() {
   if [ ! -d "$REPO_DIR/.git" ]; then
     git clone --quiet "$REPO_URL" "$REPO_DIR"
@@ -101,6 +123,7 @@ EOF
 
 install_packages
 setup_firewall
+tune_tcp
 clone_repo
 download_datasets
 write_app_unit
