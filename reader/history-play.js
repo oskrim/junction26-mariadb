@@ -41,7 +41,7 @@ const STREAM_TOTAL = 3000;
 // Places in one version the page glides to; the others change quietly where they are.
 const VISITS = 1;
 const CLOSED = { height: "0px", marginTop: "0px", marginBottom: "0px", overflow: "hidden", opacity: "0" };
-const SPEEDS = [1, 2, 4];
+const SPEEDS = [1, 2, 0.5];
 // After the reader scrolls by hand, the page stops following the changes for this long.
 const HANDS_OFF = 6000;
 
