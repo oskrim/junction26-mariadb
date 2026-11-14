@@ -679,16 +679,19 @@ export async function mountExplore(root, { id }) {
   }
 
   // Hovering a dot shows a small card for it: picture when there is one, title and topic.
+  // Every hover card has the same shape: the picture when there is one, otherwise a soft tile in the
+  // topic's tint with the article's first letter, so the card never jumps when a picture arrives.
   async function showTip(n) {
-    tip.innerHTML = `<span class="ex-tip-title">${nodes.get(n).title}</span><span class="ex-tip-topic">${topics[n]}</span>`;
+    const title = nodes.get(n).title;
+    tip.innerHTML = `<span class="ex-card-media is-placeholder" style="--tint: ${TOPIC_TINTS[topics[n]] ?? "#eceef1"}">${title[0]}</span>
+      <span class="ex-tip-title">${title}</span><span class="ex-tip-topic">${topics[n]}</span>`;
     tip.classList.add("is-visible");
-    const p = await preview(nodes.get(n).title);
+    const p = await preview(title);
     if (hoverId !== n || !p?.thumbnail) return;
-    const diagram = /\.svg\b/i.test(p.thumbnail.url);
-    tip.insertAdjacentHTML(
-      "afterbegin",
-      `<span class="ex-card-media${diagram ? " is-diagram" : ""}"><img src="${p.thumbnail.url}" alt=""></span>`,
-    );
+    const media = tip.querySelector(".ex-card-media");
+    media.classList.remove("is-placeholder");
+    media.classList.toggle("is-diagram", /\.svg\b/i.test(p.thumbnail.url));
+    media.innerHTML = `<img src="${p.thumbnail.url}" alt="">`;
   }
 
   function setHover(n) {
@@ -886,6 +889,18 @@ const PILL_OFFSETS = [[0, 0]].concat(
     Array.from({ length: 8 }, (_, i) => [Math.round(Math.cos((i * Math.PI) / 4) * r * 1.6), Math.round(Math.sin((i * Math.PI) / 4) * r)]),
   ),
 );
+
+// Soft backgrounds for hover cards of articles without a picture, one per topic.
+const TOPIC_TINTS = {
+  "AI & applications": "#efe9f7",
+  "Algorithms & complexity": "#e8eef8",
+  "Cryptography & networks": "#e6f2f0",
+  Hardware: "#f3ece4",
+  Mathematics: "#eef3e6",
+  Organizations: "#ececee",
+  People: "#f6ebe9",
+  Physics: "#e7f0f6",
+};
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 

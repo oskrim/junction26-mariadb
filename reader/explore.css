@@ -682,3 +682,11 @@ body[data-view="explore"] {
 .ex-more[hidden] {
   display: none;
 }
+
+.ex-card-media.is-placeholder {
+  display: grid;
+  place-items: center;
+  background: var(--tint);
+  font: 400 40px/1 var(--serif);
+  color: rgb(32 33 34 / 0.35);
+}
