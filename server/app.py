@@ -18,7 +18,6 @@ from urllib.parse import parse_qs, quote, urlparse
 import pymysql
 
 import ask
-import intent
 import learn
 import vector
 
@@ -459,7 +458,7 @@ def by(scored):
 ROUTES = {"/api/articles": articles, "/api/article": article, "/api/history": history, "/api/change": change,
           "/api/graph": graph, "/api/topics": topics, "/api/preview": preview, "/api/previews": previews, "/api/search": search}
 # POST handlers write their own response, so they can stream.
-POST_ROUTES = {"/api/ask": ask.serve, "/api/learn": learn.serve, "/api/intent": intent.serve}
+POST_ROUTES = {"/api/ask": ask.serve, "/api/learn": learn.serve}
 
 
 # Each API answer's browser cache life in seconds. A change by rev never changes; the rest only when the data

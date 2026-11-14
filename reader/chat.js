@@ -1,4 +1,4 @@
-import { PAST_CHATS, respond, route } from "./assistant.js";
+import { PAST_CHATS, respond } from "./assistant.js";
 import { citeLinks, learn, sourcesHtml } from "./learn.js";
 import { modelHtml, mountModel } from "./model3d.js";
 import { stepsView } from "./steps.js";
@@ -9,7 +9,6 @@ import "./cite-tip.js";
 // beside where the request came from (drag it by the header) or docked to the right as a side panel.
 
 const W = 480;
-const MODE_LABELS = { ask: "Ask", find: "Find", learn: "Learn", visualise: "Visualise" };
 const EDGE = 16;
 const TRAY = 60;
 const SIDE_W = 520;
@@ -26,7 +25,7 @@ function topLine() {
   return (document.querySelector(".bar")?.getBoundingClientRect().bottom ?? 0) + 21;
 }
 
-export function chatPanel({ article, onClose, onLearn }) {
+export function chatPanel({ article, onClose }) {
   const el = build();
   document.body.append(el.panel, el.tray, el.history);
 
@@ -68,7 +67,7 @@ export function chatPanel({ article, onClose, onLearn }) {
     if (!prompt || !active || active.busy) return;
     el.textarea.value = "";
     grow();
-    send(active, { mode: "auto", label: null, prompt, context: null });
+    send(active, { mode: "ask", label: "Ask", prompt, context: null });
   });
   el.textarea.addEventListener("keydown", (e) => {
     if (e.key === "Escape") el.textarea.blur();
@@ -87,7 +86,6 @@ export function chatPanel({ article, onClose, onLearn }) {
   // A request from the menu: a new chat, opened beside where it came from.
   function ask({ mode, label, prompt, context, from }) {
     const chat = create({ title: shorten(prompt, 38) });
-    chat.from = from;
     show(chat, { from });
     send(chat, { mode, label, prompt, context });
   }
@@ -136,14 +134,13 @@ export function chatPanel({ article, onClose, onLearn }) {
 
   async function send(chat, { mode, label, prompt, context }) {
     chat.busy = true;
-    if (label) chat.label ??= label;
+    chat.label ??= label;
     if (chat.turn === 0) {
       chat.title = shorten(prompt, 38);
       if (chat === active) el.title.textContent = chat.title;
     }
     renderTray();
     chat.log.insertAdjacentHTML("beforeend", userMessage({ prompt, context, label: chat.turn === 0 ? label : null }));
-    const bubble = chat.log.lastElementChild.querySelector(".msg-bubble");
     const reply = document.createElement("div");
     reply.className = "msg msg-ai is-thinking";
     reply.innerHTML = `<div class="msg-text"><span class="dots"><i></i><i></i><i></i></span></div>`;
@@ -156,34 +153,7 @@ export function chatPanel({ article, onClose, onLearn }) {
       scrollDown(chat.log);
     };
 
-    // From the query bar: Gemini decides which path the request takes, shown as the first step and as the
-    // label on the request.
-    if (mode === "auto") {
-      onStep("step", { id: "route", text: "Working out what you need…", done: false });
-      const routed = await route({ prompt, context, history: chat.history ?? [] });
-      mode = routed.mode;
-      label = MODE_LABELS[mode];
-      chat.label ??= label;
-      onStep("step", {
-        id: "route",
-        text: routed.failed ? `${label}: could not work out the intent (${routed.failed})` : `${label}${routed.why ? `: ${routed.why}` : ""}`,
-        done: true,
-      });
-      bubble.insertAdjacentHTML("afterbegin", `<span class="msg-mode">${label}</span>`);
-      renderTray();
-      // A new request to learn something opens a lesson in the wide sheet instead of a chat.
-      if (mode === "learn" && chat.turn === 0 && chat.from && onLearn) {
-        chat.busy = false;
-        if (chats.includes(chat)) closeChat(chat);
-        onLearn({ prompt, context, from: chat.from });
-        return;
-      }
-    }
-
     const { stream, attachment } = (mode === "learn" ? learn : respond)({ mode, prompt, context, article, turn: chat.turn, history: (chat.history ??= []), onStep });
-    // The path each request took, so the router can keep a follow-up on the same one.
-    const asked = chat.history.findLast((h) => h.role === "user" && h.text === prompt);
-    if (asked) asked.mode = mode;
     chat.turn++;
     let text = "";
     for await (const piece of stream) {

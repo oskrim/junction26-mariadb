@@ -77,15 +77,13 @@ if (!version || !summary) {
     if (target?.id) location.href = `?id=${target.id}`;
     else window.open(`https://fi.wikipedia.org/wiki/${encodeURIComponent(link.dataset.title.replace(/ /g, "_"))}`, "_blank", "noopener");
   });
-  // Each request opens a chat, where Gemini routes it; one routed to Learn opens a lesson in the wide sheet
-  // at the top instead.
+  const chat = chatPanel({ article: summary, onClose: () => menu.clearPaint() });
+  // Learn opens a lesson in the wide sheet at the top; the other actions open a chat.
   const lessons = import("./learn-view.js").then((m) => m.learnView({ article: summary }));
-  const chat = chatPanel({
-    article: summary,
-    onClose: () => menu.clearPaint(),
-    onLearn: (request) => lessons.then((l) => (menu.clearPaint(), l.open(request))),
+  const menu = cursorMenu({
+    root: body,
+    onSubmit: (request) => (request.mode === "learn" ? lessons.then((l) => (menu.clearPaint(), l.open(request))) : chat.ask(request)),
   });
-  const menu = cursorMenu({ root: body, onSubmit: (request) => chat.ask(request) });
 }
 
 // Article, Explore and History share the page; each keeps its own scroll position. Explore and History

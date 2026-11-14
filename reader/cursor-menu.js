@@ -1,26 +1,57 @@
-// The query bar. Press Q and a bar grows out of a caret at the pointer; type anything and Enter hands it to
-// onSubmit, which works out whether it is a question, a search, something to learn or something to show.
-// Text selected in the article before pressing Q, or painted while the bar is open, goes along with it.
+// A small liquid menu that rides on the pointer. Press Q to open it; the pointer becomes a text
+// cursor you can paint a passage with. Press A, F or L (or click a pill once it settles) and that
+// pill stretches into a prompt bar; Enter hands the request to onSubmit.
 //
-// States: closed → bar (typing) → closing.
+// States: closed → follow (rides the pointer) → pinned (stays put, blobs clickable) → bar (typing).
+// Painting keeps it following; a plain click pins it where the pointer is. Picking an action stops it.
 
 export const OPEN_KEY = "q";
 
 // While the prompt bar is open, the caret becomes the Wikipedia globe.
 const GLOBE = new URL("files/wikipedia-globe.png", import.meta.url).href;
 
+const MODES = [
+  {
+    id: "ask",
+    label: "Ask",
+    key: "a",
+    placeholder: "Ask about this…",
+    fallback: "What changed here over time?",
+    icon: `<path d="M2.5 7.5C2.5 5 5 3 8 3s5.5 2 5.5 4.5S11 12 8 12a6.4 6.4 0 0 1-2-.3L3 13l.8-2.4a4.1 4.1 0 0 1-1.3-3.1Z" />`,
+  },
+  {
+    id: "find",
+    label: "Find",
+    key: "f",
+    placeholder: "Find in this article's history…",
+    fallback: "Where else does this appear?",
+    icon: `<circle cx="7" cy="7" r="4" /><path d="M10 10l3.5 3.5" />`,
+  },
+  {
+    id: "learn",
+    label: "Learn",
+    key: "l",
+    placeholder: "What do you want to understand?",
+    fallback: "Explain the background of this",
+    icon: `<path d="M1.5 6 8 3l6.5 3L8 9Z" /><path d="M4 7.3v3.4c0 1 1.8 2 4 2s4-1 4-2V7.3" />`,
+  },
+];
 
-const PLACEHOLDER = "Ask anything: explain, find, compare, show…";
-const FALLBACK = "What is this about?";
-
-const BAR_W = 460;
+const CARET_GAP = 20;
+const BLOB = 30; // pill height
+const PILL_GAP = 22; // caret to the nearest pill edge
+const PILL_STEP = 42; // pill centre to pill centre: a clear gap, so the liquid never joins two pills
+const ARC = 10; // the middle pills sit a little further out, so the stack curves around the caret
+const BAR_W = 400;
 const BAR_H = 48;
 const EDGE = 16;
-const CARET_GAP = 20;
 
-// Spring settings: stiffness and damping. "open" overshoots a little.
+// Spring settings: stiffness and damping. "open" overshoots a little, like the reference menu.
 const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
-const FEEL = reduceMotion ? { open: [900, 60], close: [900, 60], bar: [900, 60] } : { open: [380, 20], close: [520, 46], bar: [300, 25] };
+const FEEL = reduceMotion
+  ? { open: [900, 60], close: [900, 60], follow: [2000, 90], bar: [900, 60] }
+  : { open: [380, 20], close: [520, 46], follow: [620, 36], bar: [300, 25] };
+const STAGGER = reduceMotion ? 0 : 40;
 
 export function cursorMenu({ root, onSubmit }) {
   const el = build();
@@ -28,15 +59,17 @@ export function cursorMenu({ root, onSubmit }) {
 
   let state = "closed";
   let mouse = null;
-  let pin = null; // page coordinates of the caret
+  let pin = null; // page coordinates while pinned
+  let side = "right";
   let paint = null;
-  let painting = false;
+  let chosen = null;
   let timers = [];
   let frame = 0;
   let last = 0;
+  let widths = MODES.map(() => 100); // each pill's natural width, measured when the menu opens
 
   const presence = new Spring(0); // 0 hidden, 1 shown: scales the caret in and out
-  const blob = { x: new Spring(0), y: new Spring(0), w: new Spring(0), h: new Spring(0), open: false };
+  const blobs = MODES.map(() => ({ x: new Spring(0), y: new Spring(0), w: new Spring(0), h: new Spring(0), phase: "home" }));
 
   addEventListener("pointermove", (e) => (mouse = { x: e.clientX, y: e.clientY }), { passive: true });
 
@@ -48,7 +81,7 @@ export function cursorMenu({ root, onSubmit }) {
       if (e.target === el.input) {
         if (key === "escape") {
           e.preventDefault();
-          close();
+          backToBlobs();
         }
         return;
       }
@@ -58,35 +91,53 @@ export function cursorMenu({ root, onSubmit }) {
           e.preventDefault();
           open();
         }
-      } else if (key === "escape" || key === OPEN_KEY) {
+        return;
+      }
+      if (key === "escape" && state === "bar") {
+        e.preventDefault();
+        backToBlobs();
+        return;
+      }
+      if (key === "escape" || key === OPEN_KEY) {
         e.preventDefault();
         close();
+        return;
+      }
+      const mode = MODES.find((m) => m.key === key);
+      if (mode && (state === "follow" || state === "pinned")) {
+        e.preventDefault();
+        choose(mode);
       }
     },
     true,
   );
 
-  // While the bar is open, a stroke in the article paints the passage the request is about; a click
-  // anywhere else closes the bar.
   addEventListener("mousedown", (e) => {
-    if (state !== "bar" || e.button !== 0 || el.bar.contains(e.target)) return;
-    if (root.contains(e.target)) painting = true;
-    else if (!e.target.closest(".chat, .chat-tray, .chat-history")) close();
+    if (e.button !== 0 || el.root.contains(e.target) || e.target.closest(".chat, .chat-tray, .chat-history")) return;
+    if (state === "pinned" || state === "bar") follow();
+    if (state !== "follow") return;
+    // While the button is held the blobs tuck away, so the passage being painted stays clear.
+    reset();
+    for (const b of blobs) b.phase = "home";
   });
 
   addEventListener("mouseup", (e) => {
-    if (!painting || e.button !== 0) return;
-    painting = false;
-    if (state !== "bar") return;
-    if (takeSelection()) showChip();
-    else if (!el.bar.contains(e.target)) return close();
-    el.input.focus({ preventScroll: true });
+    if (e.button !== 0 || state !== "follow") return;
+    // A painted stroke keeps the menu riding along until an action is picked; a plain click
+    // leaves it where it was clicked so the blobs can be clicked.
+    if (!takeSelection()) pinAt(e.clientX, e.clientY);
+    blobs.forEach((b, i) => later(i * STAGGER, () => (b.phase = "out")));
   });
+
+  for (const button of el.buttons) {
+    button.addEventListener("click", () => choose(MODES.find((m) => m.id === button.dataset.mode)));
+  }
 
   el.bar.addEventListener("submit", (e) => {
     e.preventDefault();
+    const mode = chosen;
     const from = el.bar.getBoundingClientRect();
-    onSubmit({ mode: "auto", label: null, prompt: el.input.value.trim() || FALLBACK, context: paint?.text ?? null, from });
+    onSubmit({ mode: mode.id, label: mode.label, prompt: el.input.value.trim() || mode.fallback, context: paint?.text ?? null, from });
     close({ keepPaint: true });
   });
 
@@ -95,21 +146,20 @@ export function cursorMenu({ root, onSubmit }) {
   function open() {
     reset();
     takeSelection();
-    const at = mouse ?? { x: innerWidth / 2, y: innerHeight / 2 };
-    pin = { x: at.x + scrollX, y: at.y + scrollY };
-    setState("bar");
+    side = mouse && mouse.x > innerWidth - 240 ? "left" : "right";
+    if (mouse) setState("follow");
+    else pinAt(innerWidth / 2, innerHeight / 2);
+    const { x, y } = center();
     presence.snap(0);
     presence.to = 1;
-    for (const [s, v] of [[blob.x, at.x], [blob.y, at.y], [blob.w, 0], [blob.h, 0]]) s.snap(v);
-    blob.open = true;
-    el.input.value = "";
-    el.input.placeholder = PLACEHOLDER;
-    showChip();
-    el.root.hidden = false;
-    later(reduceMotion ? 0 : 150, () => {
-      el.bar.classList.add("is-visible");
-      el.input.focus({ preventScroll: true });
+    blobs.forEach((b, i) => {
+      b.phase = "home";
+      for (const [s, v] of [[b.x, x], [b.y, y], [b.w, 0], [b.h, 0]]) s.snap(v);
+      later(60 + i * STAGGER, () => (b.phase = "out"));
     });
+    el.input.value = "";
+    el.root.hidden = false;
+    widths = el.buttons.map((b) => b.offsetWidth);
     run();
   }
 
@@ -117,19 +167,52 @@ export function cursorMenu({ root, onSubmit }) {
     reset();
     setState("closing");
     if (!keepPaint) clearPaint();
-    blob.open = false;
+    for (const b of blobs) b.phase = "gone";
     later(90, () => (presence.to = 0));
     el.input.blur();
   }
 
-  function showChip() {
+  function follow() {
+    if (state === "bar") backToBlobs();
+    setState("follow");
+  }
+
+  function pinAt(x, y) {
+    pin = { x: x + scrollX, y: y + scrollY };
+    setState("pinned");
+  }
+
+  function choose(mode) {
+    if (!mode) return;
+    if (state === "follow") pinAt(mouse.x, mouse.y);
+    reset();
+    chosen = mode;
+    setState("bar");
+    blobs.forEach((b, i) => (b.phase = MODES[i] === mode ? "bar" : "home"));
+    el.input.placeholder = mode.placeholder;
+    el.input.value = "";
     el.chip.textContent = paint ? `“${shorten(paint.text, 26)}”` : "Whole article";
     el.chip.classList.toggle("is-whole", !paint);
+    el.bar.dataset.mode = mode.id;
+    later(reduceMotion ? 0 : 150, () => {
+      el.bar.classList.add("is-visible");
+      el.input.focus({ preventScroll: true });
+    });
+  }
+
+  function backToBlobs() {
+    reset();
+    setState("pinned");
+    el.bar.classList.remove("is-visible");
+    el.input.blur();
+    blobs.forEach((b, i) => later(i * STAGGER, () => (b.phase = "out")));
   }
 
   function setState(next) {
     state = next;
     el.root.dataset.state = next;
+    el.root.dataset.side = side;
+    document.documentElement.classList.toggle("qm-following", next === "follow");
     if (next !== "bar") el.bar.classList.remove("is-visible");
   }
 
@@ -153,7 +236,25 @@ export function cursorMenu({ root, onSubmit }) {
   }
 
   function center() {
-    return pin ? { x: pin.x - scrollX, y: pin.y - scrollY } : { x: innerWidth / 2, y: innerHeight / 2 };
+    if (state === "follow" && mouse) return mouse;
+    if (pin) return { x: pin.x - scrollX, y: pin.y - scrollY };
+    return mouse ?? { x: innerWidth / 2, y: innerHeight / 2 };
+  }
+
+  // Pills stack beside the caret: to the right, or to the left near the right edge. The stack
+  // slides down or up near the top and bottom edges so every pill stays on screen.
+  function spots({ x, y }) {
+    if (side === "right" && x > innerWidth - 240) side = "left";
+    else if (side === "left" && x < innerWidth - 290) side = "right";
+    el.root.dataset.side = side;
+    const mid = (MODES.length - 1) / 2;
+    const half = mid * PILL_STEP + BLOB / 2;
+    const cy = clamp(y, EDGE + half, innerHeight - EDGE - half);
+    const dir = side === "right" ? 1 : -1;
+    return MODES.map((_, i) => {
+      const out = PILL_GAP + ARC * (1 - Math.abs(i - mid) / Math.max(mid, 1)) + widths[i] / 2;
+      return { x: x + dir * out, y: cy + (i - mid) * PILL_STEP };
+    });
   }
 
   // The bar grows beside the caret, on whichever side has room; on narrow screens it sits below or above.
@@ -176,17 +277,33 @@ export function cursorMenu({ root, onSubmit }) {
     const dt = Math.min((now - last) / 1000, 1 / 30);
     last = now;
     const c = center();
+    const targets = spots(c);
     const bar = barRect(c);
     presence.step(dt, ...(presence.to > 0 ? FEEL.open : FEEL.close));
-    const to = blob.open ? { x: bar.x + bar.w / 2, y: bar.y + bar.h / 2, w: bar.w, h: bar.h } : { ...c, w: 0, h: 0 };
-    blob.x.to = to.x;
-    blob.y.to = to.y;
-    blob.w.to = to.w;
-    blob.h.to = to.h;
-    for (const s of [blob.x, blob.y, blob.w, blob.h]) s.step(dt, ...(blob.open ? FEEL.bar : FEEL.close));
+
+    blobs.forEach((b, i) => {
+      let to;
+      let feel = FEEL.close;
+      if (b.phase === "out") {
+        to = { ...targets[i], w: widths[i], h: BLOB };
+        feel = state === "follow" && b.w.settled ? FEEL.follow : FEEL.open;
+      } else if (b.phase === "bar") {
+        to = { x: bar.x + bar.w / 2, y: bar.y + bar.h / 2, w: bar.w, h: bar.h };
+        feel = FEEL.bar;
+      } else {
+        to = { ...c, w: 0, h: 0 };
+      }
+      b.x.to = to.x;
+      b.y.to = to.y;
+      b.w.to = to.w;
+      b.h.to = to.h;
+      for (const s of [b.x, b.y, b.w, b.h]) s.step(dt, ...feel);
+    });
+
     draw(c, bar);
 
-    if (state === "closing" && presence.v < 0.02 && blob.w.v < 0.5) {
+    const done = state === "closing" && presence.v < 0.02 && blobs.every((b) => b.w.v < 0.5);
+    if (done) {
       setState("closed");
       el.root.hidden = true;
       frame = 0;
@@ -197,13 +314,22 @@ export function cursorMenu({ root, onSubmit }) {
 
   function draw(c, bar) {
     el.caret.style.transform = `translate(${c.x}px, ${c.y}px) scale(${clamp(presence.v, 0, 1.15)})`;
-    const w = Math.max(blob.w.v, 0);
-    const h = Math.max(blob.h.v, 0);
-    el.rect.setAttribute("x", blob.x.v - w / 2);
-    el.rect.setAttribute("y", blob.y.v - h / 2);
-    el.rect.setAttribute("width", w);
-    el.rect.setAttribute("height", h);
-    el.rect.setAttribute("rx", Math.min(w, h) / 2);
+
+    blobs.forEach((b, i) => {
+      // A settled pill is drawn crisp by its button, so its liquid shape steps aside: two edges read as a double border.
+      const crisp = b.phase === "out" && b.w.settled && b.h.settled;
+      const w = crisp ? 0 : Math.max(b.w.v, 0);
+      const h = crisp ? 0 : Math.max(b.h.v, 0);
+      const rect = el.rects[i];
+      rect.setAttribute("x", b.x.v - w / 2);
+      rect.setAttribute("y", b.y.v - h / 2);
+      rect.setAttribute("width", w);
+      rect.setAttribute("height", h);
+      rect.setAttribute("rx", Math.min(w, h) / 2);
+      el.buttons[i].style.transform = `translate(${b.x.v - widths[i] / 2}px, ${b.y.v - BLOB / 2}px)`;
+      el.buttons[i].classList.toggle("is-out", b.phase === "out");
+    });
+
     el.bar.style.transform = `translate(${bar.x}px, ${bar.y}px)`;
     el.bar.style.width = `${bar.w}px`;
   }
@@ -250,7 +376,7 @@ function build() {
         </filter>
       </defs>
       <g filter="url(#qm-goo)">
-        <rect class="qm-blob" />
+        ${MODES.map(() => `<rect class="qm-blob" />`).join("")}
       </g>
     </svg>
     <span class="qm-caret" aria-hidden="true">
@@ -270,15 +396,24 @@ function build() {
       </svg>
       <img class="qm-globe" src="${GLOBE}" alt="" />
     </span>
+    ${MODES.map(
+      (m, i) => `
+      <button type="button" class="qm-btn" data-mode="${m.id}" style="--i: ${i}" tabindex="-1">
+        <svg class="qm-icon" viewBox="0 0 16 16" aria-hidden="true">${m.icon}</svg>
+        <span class="qm-label">${m.label}</span>
+        <kbd>${m.key.toUpperCase()}</kbd>
+      </button>`,
+    ).join("")}
     <form class="qm-bar" autocomplete="off">
       <span class="qm-chip"></span>
-      <input type="text" aria-label="Ask anything" />
+      <input type="text" aria-label="Prompt" />
       <kbd class="qm-enter" aria-hidden="true">↵</kbd>
     </form>`;
   return {
     root,
-    rect: root.querySelector(".qm-blob"),
+    rects: [...root.querySelectorAll(".qm-blob")],
     caret: root.querySelector(".qm-caret"),
+    buttons: [...root.querySelectorAll(".qm-btn")],
     bar: root.querySelector(".qm-bar"),
     chip: root.querySelector(".qm-chip"),
     input: root.querySelector(".qm-bar input"),
@@ -299,6 +434,9 @@ class Spring {
       this.vel += (stiffness * (this.to - this.v) - damping * this.vel) * (dt / 2);
       this.v += this.vel * (dt / 2);
     }
+  }
+  get settled() {
+    return Math.abs(this.to - this.v) < 0.5 && Math.abs(this.vel) < 5;
   }
 }
 
