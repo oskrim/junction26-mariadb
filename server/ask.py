@@ -89,12 +89,16 @@ def parse(handler):
 
 
 def version_at(cur, page_id, at):
-    cur.execute("""SELECT title, rev_id, IFNULL(user, '') AS user, IFNULL(comment, '') AS comment, row_start, text
-                   FROM m_article FOR SYSTEM_TIME AS OF TIMESTAMP %s WHERE page_id = %s""",
+    # Text is read by primary key only: selecting it in the AS OF scan reads every later version's text.
+    cur.execute("SELECT row_start FROM m_article FOR SYSTEM_TIME AS OF TIMESTAMP %s WHERE page_id = %s",
                 (at.strftime("%Y-%m-%d %H:%M:%S.%f"), page_id))
-    version = cur.fetchone()
-    if not version:
+    found = cur.fetchone()
+    if not found:
         raise AskError(404, "the article has no version at that moment")
+    cur.execute("""SELECT title, rev_id, IFNULL(user, '') AS user, IFNULL(comment, '') AS comment, row_start, text
+                   FROM m_article FOR SYSTEM_TIME ALL WHERE page_id = %s AND row_start = %s""",
+                (page_id, found["row_start"]))
+    version = cur.fetchone()
     version["clean"] = Cleaned(version["text"])
     return version
 
@@ -293,8 +297,10 @@ def other_articles(cur, page_id, term):
     if len(term) < 3:
         return []
     like = "%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
-    cur.execute("""SELECT title, (CHAR_LENGTH(text) - CHAR_LENGTH(REPLACE(text, %s, ''))) DIV CHAR_LENGTH(%s) AS hits
-                   FROM m_article WHERE page_id <> %s AND text LIKE %s ORDER BY hits DESC LIMIT 5""",
+    # The current Finnish text in s_article: reading m_article's text would also read every old version.
+    cur.execute("""SELECT s.title, (CHAR_LENGTH(s.text) - CHAR_LENGTH(REPLACE(s.text, %s, ''))) DIV CHAR_LENGTH(%s) AS hits
+                   FROM s_article s JOIN (SELECT page_id FROM m_article) m ON m.page_id = s.page_id
+                   WHERE s.lang = 'fi' AND s.page_id <> %s AND s.text LIKE %s ORDER BY hits DESC LIMIT 5""",
                 (term, term, page_id, like))
     return [{"title": r["title"], "meta": f"{r['hits']} mention{'s' if r['hits'] != 1 else ''} of “{term}”",
              "note": ""} for r in cur.fetchall()]
