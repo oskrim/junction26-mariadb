@@ -6,7 +6,8 @@
 3. The relevant part of each pick: its first 4,000 characters, or its lead plus a window around the focus term.
 4. One streamed Gemini call writes the explanation, citing the picks as [1], [2], ...
 
-Server-Sent Events: `sources` (the explored articles, JSON), `message` (text pieces), `done` (timings), `error`.
+Server-Sent Events as in /api/ask (`step`, `thinking`, `message`, `error`, `done`), plus `sources`: the explored
+articles, JSON, sent before the explanation.
 """
 import html
 import json
@@ -17,12 +18,12 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 
-from ask import AskError, event, send_json, version_at
+from ask import AskError, Progress, answer_texts, day, event, read_version, send_json
 
 # Measured on page 1150 with 150 links: ranking takes ~1.4 s on 3.5 Flash Lite and ~4 s on 3.8 Flash; writing
 # takes ~3 s on 3.5 Flash and ~5.5 s on 3.8 Flash, and 3.5 Flash Lite ignores the language of the question.
 RANK_MODEL, RANK_THINKING = "gemini-3.5-flash-lite", {"thinkingLevel": "minimal"}
-WRITE_MODEL, WRITE_THINKING = "gemini-3.5-flash", {"thinkingLevel": "minimal"}
+WRITE_MODEL, WRITE_THINKING = "gemini-3.5-flash", {"thinkingLevel": "minimal", "includeThoughts": True}
 API = "https://generativelanguage.googleapis.com/v1beta/models/"
 TIMEOUT_S = 30
 LEAD_CHARS = 500
@@ -72,40 +73,35 @@ def serve(handler, connect):
     timings = {}
     try:
         request = parse(handler)
+    except AskError as error:
+        return send_json(handler, error.status, {"error": str(error)})
+    with Progress(handler, [("Access-Control-Allow-Origin", "*")]) as progress:
         con = connect()
         try:
             cur = con.cursor()
-            here = version_at(cur, request["page_id"], request["at"])
-            candidates = linked_articles(cur, request["page_id"], request["at"])
+            here = read_version(cur, progress, request)
+            candidates = linked_articles(cur, progress, request["page_id"], request["at"])
         finally:
             con.close()
         timings["db_ms"] = ms(started)
         if not candidates:
             raise AskError(404, "the article has no linked articles at that moment")
-        picks = rank(request, here, candidates)
+        picks = rank(progress, request, here, candidates)
         timings["rank_ms"] = ms(started)
-    except AskError as error:
-        return send_json(handler, error.status, {"error": str(error)})
-
-    sources = [{**c, "why": why, "section": section(c["text"], focus)} for c, why, focus in picks]
-    handler.send_response(200)
-    handler.send_header("Content-Type", "text/event-stream; charset=utf-8")
-    handler.send_header("Cache-Control", "no-cache")
-    handler.send_header("X-Accel-Buffering", "no")
-    handler.send_header("Access-Control-Allow-Origin", "*")
-    handler.end_headers()
-    event(handler, "sources", {
-        "type": "sources", "explored": len(candidates), "here": {"title": here["title"], "page_id": request["page_id"]},
-        "items": [{"n": i + 1, "title": s["title"], "why": s["why"], "page_id": s["page_id"], "url": s["url"]}
-                  for i, s in enumerate(sources)]})
-    try:
-        for piece in write(request, here, sources):
+        sources = []
+        for c, why, focus in picks:
+            progress.step(f"Reading {c['title']}")
+            sources.append({**c, "why": why, "section": section(c["text"], focus)})
+        event(handler, "sources", {
+            "type": "sources", "explored": len(candidates), "here": {"title": here["title"], "page_id": request["page_id"]},
+            "items": [{"n": i + 1, "title": s["title"], "why": s["why"], "page_id": s["page_id"], "url": s["url"]}
+                      for i, s in enumerate(sources)]})
+        progress.step("Writing the explanation")
+        for piece in write(progress, request, here, sources):
             timings.setdefault("first_token_ms", ms(started))
+            progress.finish()
             event(handler, "message", piece)
         timings["total_ms"] = ms(started)
-        event(handler, "done", timings)
-    except AskError as error:
-        event(handler, "error", str(error))
     handler.log_message("learn %s", json.dumps(timings))
 
 
@@ -125,17 +121,22 @@ def parse(handler):
             "narrow": width < NARROW_W, "history": history}
 
 
-def linked_articles(cur, page_id, at):
+def linked_articles(cur, progress, page_id, at):
     """The articles page_id links to at `at`, each as {title, page_id, url, text, lead}, in link order."""
     stamp = at.strftime("%Y-%m-%d %H:%M:%S.%f")
+    progress.step(f"Reading the articles this one links to (as of {day(at)})")
     cur.execute("SELECT dst FROM m_link FOR SYSTEM_TIME AS OF TIMESTAMP %s WHERE src = %s", (stamp, page_id))
     titles = [r["dst"] for r in cur.fetchall()]
     if not titles:
         return []
+    label = f"Reading the {len(titles):,} articles this one links to (as of {day(at)})"
+    progress.update(label)
     found = {}
     # Titles are not indexed, so both tables are scanned for keys only and text is read by primary key.
     cur.execute("SELECT page_id, title FROM m_article WHERE title IN %s", (titles,))
-    for row in cur.fetchall():
+    for i, row in enumerate(cur.fetchall()):
+        if i and i % 25 == 0:
+            progress.update(f"{label}: {i} read")
         cur.execute("""SELECT title, text FROM m_article FOR SYSTEM_TIME AS OF TIMESTAMP %s
                        WHERE page_id = %s ORDER BY row_start DESC LIMIT 1""", (stamp, row["page_id"]))
         version = cur.fetchone()
@@ -151,13 +152,16 @@ def linked_articles(cur, page_id, at):
         for row in cur.fetchall():
             found[row["title"]] = {"title": row["title"], "page_id": None, "url": row["url"],
                                    "text": markdown_plain(row["text"])[:READ_CHARS]}
-    return [{**found[t], "lead": found[t]["text"][:LEAD_CHARS]} for t in titles if t in found and found[t]["text"]]
+    candidates = [{**found[t], "lead": found[t]["text"][:LEAD_CHARS]} for t in titles if t in found and found[t]["text"]]
+    progress.finish(f"Read {len(candidates):,} of the {len(titles):,} articles this one links to (as of {day(at)})")
+    return candidates
 
 
-def rank(request, here, candidates):
+def rank(progress, request, here, candidates):
     listing = "\n\n".join(f"{i + 1}. {c['title']}: {c['lead']}" for i, c in enumerate(candidates))
     text = (f"{reader_block(request, here, 1_500)}\n\nLinked articles:\n{listing}\n\n"
             f"Question: {request['prompt']}\nWrite each \"why\" in the language of this question.")
+    progress.step("Choosing the relevant ones…")
     reply = generate_json(RANK_RULES, [{"role": "user", "parts": [{"text": text}]}], RANK_SCHEMA)
     picks, seen = [], set()
     for p in reply.get("picks", []):
@@ -167,7 +171,9 @@ def rank(request, here, candidates):
             picks.append((candidates[n - 1], str(p.get("why") or ""), str(p.get("focus") or "")))
     if not picks:
         raise AskError(502, "Gemini picked no linked articles")
-    return picks[:MAX_PICKS]
+    picks = picks[:MAX_PICKS]
+    progress.finish(f"Chose {len(picks)}: " + "; ".join(f"{c['title']} — {why.rstrip('.')}" for c, why, _ in picks))
+    return picks
 
 
 def section(text, focus):
@@ -179,7 +185,7 @@ def section(text, focus):
     return text[:SECTION_LEAD] + " … " + text[start:start + SECTION_CHARS - SECTION_LEAD]
 
 
-def write(request, here, sources):
+def write(progress, request, here, sources):
     listing = "\n\n".join(f"[{i + 1}] {s['title']}\n{s['section']}" for i, s in enumerate(sources))
     when = ("" if (datetime.now(timezone.utc).replace(tzinfo=None) - request["at"]).days < 2 else
             f"\nThe reader is looking at the article as it was on {request['at']:%d %B %Y}.")
@@ -191,9 +197,7 @@ def write(request, here, sources):
                  for h in request["history"]]
     contents.append({"role": "user", "parts": [{"text": f"{request['prompt']}\n\n(Answer in the language of this question.)"}]})
     with gemini(WRITE_MODEL, "streamGenerateContent?alt=sse", WRITE_RULES, contents, {"thinkingConfig": WRITE_THINKING}) as response:
-        for line in response:
-            if line.startswith(b"data: "):
-                yield from texts(json.loads(line[6:]))
+        yield from answer_texts(progress, response)
 
 
 def reader_block(request, here, chars):

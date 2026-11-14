@@ -1,6 +1,8 @@
 // The chat assistant: Ask and Find go to POST /api/ask in server/ask.py, which reads the article as it
 // was at the moment being viewed and answers with Gemini. Visualise is still the canned demo.
 // respond() returns { stream, attachment }: stream yields text chunks; attachment may be a promise.
+// onStep(name, data), when given, receives the server's progress events: "step", "thinking" and "error".
+// Without it, an error becomes part of the answer text.
 
 import { respond as cannedRespond } from "./fake/assistant.js";
 
@@ -8,61 +10,69 @@ export const PAST_CHATS = [];
 
 const at = () => Number(new URLSearchParams(location.search).get("at")) || Math.floor(Date.now() / 1000);
 
-export function respond({ mode, prompt, context, article, turn = 0, history = [] }) {
+export function respond({ mode, prompt, context, article, turn = 0, history = [], onStep = null }) {
   if (mode === "visualise") return cannedRespond({ mode, prompt, context, article, turn });
   const request = { mode, prompt, context, page_id: article.page_id, at: at(), history: history.slice() };
   history.push({ role: "user", text: prompt });
-  if (mode === "find") {
-    const result = post(request).then((r) => r.json());
-    return {
-      stream: record(textOf(result), history),
-      attachment: result.then((r) => r.attachment && escapeResults(r.attachment), () => null),
-    };
-  }
-  return { stream: record(answer(request), history), attachment: null };
+  let found = null;
+  const attachment = mode === "find" ? new Promise((resolve) => (found = resolve)) : null;
+  return { stream: record(answer(request, onStep, found), history), attachment };
 }
 
-async function post(request) {
-  const response = await fetch("/api/ask", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(request),
-  });
-  if (!response.ok) throw new Error((await response.json().catch(() => null))?.error ?? `The server returned ${response.status}.`);
-  return response;
-}
-
-async function* textOf(result) {
+// Ask streams "message" text; Find sends one "result" with its text and attachment.
+async function* answer(request, onStep, found) {
   try {
-    yield (await result).text;
-  } catch (error) {
-    yield `Sorry, I could not search the article. ${error.message}`;
+    for await (const { name, data } of events("/api/ask", request)) {
+      if (name === "message") yield data;
+      else if (name === "result") {
+        found(data.attachment && escapeResults(data.attachment));
+        yield data.text;
+      } else if (name === "error" && !onStep) yield `\n\nSorry, the answer stopped: ${data}`;
+      else onStep?.(name, data);
+    }
+  } finally {
+    found?.(null);
   }
 }
 
-// Reads the Server-Sent Events from /api/ask: "message" carries a text chunk, "error" a failure, "done" the end.
-async function* answer(request) {
+// Posts request to url and yields its Server-Sent Events as { name, data } until "done" or "error". A request
+// that fails before or during the stream ends with one "error" event.
+export async function* events(url, request) {
   let response;
   try {
-    response = await post(request);
+    response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(request) });
   } catch (error) {
-    yield `Sorry, I could not answer. ${error.message}`;
+    yield { name: "error", data: `Could not reach the server: ${error.message}` };
+    return;
+  }
+  if (!response.ok) {
+    yield { name: "error", data: (await response.json().catch(() => null))?.error ?? `The server returned ${response.status}.` };
     return;
   }
   const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
   let buffer = "";
   for (;;) {
-    const { value, done } = await reader.read();
-    if (done) return;
-    buffer += value;
+    let chunk;
+    try {
+      chunk = await reader.read();
+    } catch (error) {
+      yield { name: "error", data: `The connection broke: ${error.message}` };
+      return;
+    }
+    if (chunk.done) {
+      yield { name: "error", data: "The connection closed before the answer was complete." };
+      return;
+    }
+    buffer += chunk.value;
     let end;
     while ((end = buffer.indexOf("\n\n")) >= 0) {
       const block = buffer.slice(0, end);
       buffer = buffer.slice(end + 2);
       const name = block.match(/^event: (.*)$/m)?.[1] ?? "message";
-      const data = JSON.parse(block.match(/^data: (.*)$/m)?.[1] ?? '""');
+      const data = JSON.parse(block.match(/^data: (.*)$/m)?.[1] ?? "null");
       if (name === "done") return;
-      yield name === "error" ? `\n\nSorry, the answer stopped: ${data}` : data;
+      yield { name, data };
+      if (name === "error") return;
     }
   }
 }

@@ -4,6 +4,7 @@
   --liquid: #ffffff;
   --paint: #fde58a;
   --chip: #f3f4f6;
+  --error: #d33;
   --shadow-float: 0 0 0 1px rgba(0, 0, 0, 0.06), 0 2px 6px rgba(0, 0, 0, 0.05), 0 8px 32px rgba(0, 0, 0, 0.09);
 }
 
@@ -430,6 +431,156 @@ html.qm-following ::selection {
   50% {
     opacity: 0.3;
     transform: translateY(-2px);
+  }
+}
+
+/* Progress steps above an answer: a quiet live list that folds into one line once the answer starts. */
+
+.msg-ai.has-steps.is-thinking .msg-text {
+  display: none;
+}
+
+.steps {
+  margin: 0 0 8px;
+  color: var(--ink-3);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.steps[hidden],
+.steps-sum[hidden],
+.steps-thinking[hidden],
+.steps.is-folded:not(.is-open) .steps-list,
+.steps.is-folded:not(.is-open) .steps-thinking {
+  display: none;
+}
+
+.steps-list {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.steps.is-folded .steps-list {
+  margin-top: 4px;
+}
+
+.step {
+  display: grid;
+  grid-template-columns: 14px 1fr;
+  column-gap: 7px;
+  animation: rise 240ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.step-mark {
+  display: grid;
+  place-items: center;
+  height: 18px;
+}
+
+.step.is-running .step-text {
+  color: var(--ink-2);
+}
+
+.step.is-running .step-mark::before {
+  content: "";
+  width: 9px;
+  height: 9px;
+  box-sizing: border-box;
+  border: 1.5px solid var(--rule);
+  border-top-color: var(--ink-2);
+  border-radius: 50%;
+  animation: spin 800ms linear infinite;
+}
+
+.step.is-done .step-mark::before {
+  content: "";
+  width: 8px;
+  height: 4px;
+  border: solid var(--ink-3);
+  border-width: 0 0 1.5px 1.5px;
+  transform: translateY(-1px) rotate(-45deg);
+}
+
+.step.is-failed {
+  color: var(--error);
+}
+
+.step.is-failed .step-mark::before {
+  content: "×";
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.step-error {
+  grid-column: 2;
+  color: var(--error);
+}
+
+.steps-sum,
+.steps-thinking summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink-3);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  list-style: none;
+}
+
+.steps-sum:hover,
+.steps-thinking summary:hover {
+  color: var(--ink-2);
+}
+
+.steps-sum::after,
+.steps-thinking summary::after {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border: solid currentColor;
+  border-width: 0 1.25px 1.25px 0;
+  transform: translateY(-1px) rotate(45deg);
+  transition: transform 160ms ease;
+}
+
+.steps.is-open .steps-sum::after,
+.steps-thinking[open] summary::after {
+  transform: translateY(1px) rotate(-135deg);
+}
+
+.steps-thinking summary::-webkit-details-marker {
+  display: none;
+}
+
+.steps-thinking {
+  margin: 4px 0 0 21px;
+}
+
+.steps-thinking p {
+  max-height: 160px;
+  margin: 4px 0 0;
+  overflow-y: auto;
+  color: var(--ink-2);
+  white-space: pre-wrap;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .step.is-running .step-mark::before {
+    animation-duration: 2400ms;
   }
 }
 

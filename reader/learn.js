@@ -2,9 +2,11 @@
 // short explanation that cites the linked articles it read as [1], [2], ... ([0] is the article itself).
 // learn() returns { stream, attachment } like respond(); attachment is a promise of the explored articles.
 
+import { events } from "./assistant.js";
+
 const at = () => Number(new URLSearchParams(location.search).get("at")) || Math.floor(Date.now() / 1000);
 
-export function learn({ prompt, context, article, history = [] }) {
+export function learn({ prompt, context, article, history = [], onStep = null }) {
   const request = {
     prompt,
     context,
@@ -16,47 +18,22 @@ export function learn({ prompt, context, article, history = [] }) {
   history.push({ role: "user", text: prompt });
   let found;
   const sources = new Promise((resolve) => (found = resolve));
-  return { stream: read(request, found, history), attachment: sources };
+  return { stream: read(request, found, history, onStep), attachment: sources };
 }
 
-// Reads the Server-Sent Events: "sources" (explored articles), "message" (text), "done", "error".
-async function* read(request, found, history) {
+// "sources" is the explored articles, "message" a piece of text; progress events go to onStep.
+async function* read(request, found, history, onStep) {
   let text = "";
   try {
-    const response = await fetch("/api/learn", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(request),
-    });
-    if (!response.ok) {
-      const error = (await response.json().catch(() => null))?.error ?? `The server returned ${response.status}.`;
-      yield `Sorry, I could not explore the links. ${error}`;
-      return;
+    for await (const { name, data } of events("/api/learn", request)) {
+      if (name === "sources") found(data);
+      else if (name === "message" || (name === "error" && !onStep)) {
+        // No Markdown emphasis, and each key point is its own paragraph even without a blank line before it.
+        const piece = name === "error" ? `\n\nSorry, the answer stopped: ${data}` : data.replace(/\*/g, "").replace(/\s*• /g, "\n\n• ");
+        text += piece;
+        yield piece;
+      } else onStep?.(name, data);
     }
-    const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
-    let buffer = "";
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) return;
-      buffer += value;
-      let end;
-      while ((end = buffer.indexOf("\n\n")) >= 0) {
-        const block = buffer.slice(0, end);
-        buffer = buffer.slice(end + 2);
-        const name = block.match(/^event: (.*)$/m)?.[1] ?? "message";
-        const data = JSON.parse(block.match(/^data: (.*)$/m)?.[1] ?? "null");
-        if (name === "sources") found(data);
-        else if (name === "done") return;
-        else {
-          // No Markdown emphasis, and each key point is its own paragraph even without a blank line before it.
-          const piece = name === "error" ? `\n\nSorry, the answer stopped: ${data}` : data.replace(/\*/g, "").replace(/\s*• /g, "\n\n• ");
-          text += piece;
-          yield piece;
-        }
-      }
-    }
-  } catch (error) {
-    yield `Sorry, I could not explore the links. ${error.message}`;
   } finally {
     found(null);
     history.push({ role: "ai", text });
