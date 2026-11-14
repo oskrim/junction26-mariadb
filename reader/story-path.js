@@ -16,6 +16,8 @@ const FAR = 4200; // a short view keeps the road calm; the timeline is stretched
 const NAMED = 2600; // editors are shown on blocks nearer than this
 const ROAD = 30; // half the road's width once the article is at its longest
 const STEP_Z = 520; // road between two stops; a little more inside a war, so the fight has room
+const LANE_H = 10; // how high the lane and its side roads stand off the floor
+const WAR_REACH = 64; // how far an edit war's two branches run from the lane
 const SWORD = 150; // swords sign height above the road
 const GRID = 340; // floor grid spacing
 
@@ -171,112 +173,115 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
       ctx.stroke();
     }
 
-    // The article's own lane: an outline as wide as the article is long at each point, with dashes down
-    // the middle.
-    const lane = [-1, 1].map((side) => {
-      const pts = [];
-      for (let wz = camZ + NEAR; wz < camZ + FAR; wz += 40) {
-        pts.push(project(roadX(wz) + side * roadHalf(Math.min(edits.length - 1, lowerBound(z, wz))), 0, wz));
+    // Raised paths: a slab H high along `centerX(wz)`, `half(wz)` either side, from `from` to `to`, with a
+    // soft shadow on the floor, darker side walls and a light top.
+    const slab = (from, to, centerX, half, H, top, wall, edge = null) => {
+      from = Math.max(from, camZ + NEAR);
+      to = Math.min(to, camZ + FAR);
+      if (to <= from) return;
+      const stepLen = Math.max(8, (to - from) / 60);
+      const l0 = [], l1 = [], r0 = [], r1 = [], sh = [];
+      for (let wz = from; wz <= to + 0.1; wz += stepLen) {
+        const cx = centerX(wz);
+        const hw = half(wz);
+        l0.push(project(cx - hw, 0, wz));
+        l1.push(project(cx - hw, H, wz));
+        r0.push(project(cx + hw, 0, wz));
+        r1.push(project(cx + hw, H, wz));
+        sh.push(project(cx + hw + 14, 0, wz));
       }
-      return pts;
-    });
-    if (lane[0].length > 1) {
-      ctx.beginPath();
-      lane[0].forEach((q, k) => (k ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y)));
-      for (let k = lane[1].length - 1; k >= 0; k--) ctx.lineTo(lane[1][k].x, lane[1][k].y);
-      ctx.closePath();
-      ctx.fillStyle = "rgba(32,33,34,0.025)";
-      ctx.fill();
-      ctx.lineWidth = 1;
-      ctx.strokeStyle = "rgba(32,33,34,0.2)";
-      for (const edge of lane) {
+      if (l0.length < 2) return;
+      const poly = (a, b, fill) => {
         ctx.beginPath();
-        edge.forEach((q, k) => (k ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y)));
+        a.forEach((q, k) => (k ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y)));
+        for (let k = b.length - 1; k >= 0; k--) ctx.lineTo(b[k].x, b[k].y);
+        ctx.closePath();
+        ctx.fillStyle = fill;
+        ctx.fill();
+      };
+      poly(r0, sh, "rgba(32,33,34,0.035)");
+      poly(l1, l0, wall);
+      poly(r1, r0, wall);
+      poly(l1, r1, top);
+      if (!edge) return;
+      ctx.strokeStyle = edge;
+      ctx.lineWidth = 1;
+      for (const line of [l1, r1]) {
+        ctx.beginPath();
+        line.forEach((q, k) => (k ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y)));
         ctx.stroke();
       }
-      ctx.setLineDash([4, 7]);
-      ctx.strokeStyle = "rgba(32,33,34,0.22)";
-      ctx.beginPath();
-      for (let wz = camZ + NEAR, k = 0; wz < camZ + FAR; wz += 60, k++) {
-        const q = project(roadX(wz), 0, wz);
-        if (k) ctx.lineTo(q.x, q.y);
-        else ctx.moveTo(q.x, q.y);
-      }
-      ctx.stroke();
-      ctx.setLineDash([]);
-    }
+    };
 
-    // Each version is a detour: a path that leaves the lane toward its editor's side, swinging out as
-    // far as the change was big, and joins it again at the version's stop. Detours walked are tinted
-    // in the editor's color, the one being walked fills in up to the camera, and those to come are faint.
+    // The floor darkens a little toward the viewer, for depth.
+    const floor = ctx.createLinearGradient(0, horizon, 0, height);
+    floor.addColorStop(0, "rgba(32,33,34,0)");
+    floor.addColorStop(1, "rgba(32,33,34,0.045)");
+    ctx.fillStyle = floor;
+    ctx.fillRect(0, horizon, width, height - horizon);
+
+    // The article's own lane, raised, as wide as the article is long at each point, dashed down the middle.
+    const laneHalf = (wz) => roadHalf(Math.min(edits.length - 1, lowerBound(z, wz)));
+    slab(camZ + NEAR, camZ + FAR, roadX, laneHalf, LANE_H, "rgb(251,251,252)", "rgb(222,225,229)", "rgba(32,33,34,0.16)");
+    ctx.setLineDash([4, 7]);
+    ctx.strokeStyle = "rgba(32,33,34,0.22)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let wz = camZ + NEAR, k = 0; wz < camZ + FAR; wz += 60, k++) {
+      const q = project(roadX(wz), LANE_H, wz);
+      if (k) ctx.lineTo(q.x, q.y);
+      else ctx.moveTo(q.x, q.y);
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Each version is a side road: it turns off the lane toward its editor's side, runs alongside as far
+    // out as the change was big, and turns back in at the version's stop. Roads walked are tinted in the
+    // editor's color, the one being walked fills in up to the camera, and those to come are faint. Rounds of
+    // an edit war have no side road of their own: the war's two branches stand for them.
     for (const b of blocks) {
-      if (!b.k || stopZ[b.k] < camZ + NEAR || stopZ[b.k - 1] > camZ + FAR) continue;
+      if (!b.k || inWar.has(stops[b.k]) || stopZ[b.k] < camZ + NEAR || stopZ[b.k - 1] > camZ + FAR) continue;
       const [h, sat, light] = b.color;
       const a = calm * fog(Math.max(stopZ[b.k - 1], camZ + NEAR) - camZ);
       if (a < 0.01) continue;
       const done = b.k < stopNow;
       const walking = b.k === stopNow;
-      const ribbon = (from, to, alpha) => {
-        const l = [];
-        const r = [];
-        if (to <= from) return;
-        for (let wz = Math.max(from, camZ + NEAR); wz <= to + 0.1; wz += Math.max(1, (to - from) / 24)) {
-          const x = roadX(wz) + branchOffset(b, wz);
-          l.push(project(x - 7, 0, wz));
-          r.push(project(x + 7, 0, wz));
-        }
-        if (l.length < 2) return;
-        ctx.beginPath();
-        l.forEach((q, k) => (k ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y)));
-        for (let k = r.length - 1; k >= 0; k--) ctx.lineTo(r[k].x, r[k].y);
-        ctx.closePath();
-        ctx.fillStyle = `hsla(${h},${sat}%,${light - 10}%,${alpha * a})`;
-        ctx.fill();
-      };
-      ribbon(stopZ[b.k - 1], stopZ[b.k], done ? 0.3 : walking ? 0.18 : 0.08);
-      if (walking) ribbon(stopZ[b.k - 1], Math.min(stopZ[b.k], nowZ), 0.75);
+      const road = (to, alpha) =>
+        slab(stopZ[b.k - 1], to, (wz) => roadX(wz) + branchOffset(b, wz), () => 7, LANE_H,
+          `hsla(${h},${sat}%,${light}%,${alpha * a})`, `hsla(${h},${sat}%,${light - 22}%,${alpha * a})`);
+      road(stopZ[b.k], done ? 0.45 : walking ? 0.25 : 0.1);
+      if (walking) road(Math.min(stopZ[b.k], nowZ), 0.9);
     }
 
-    // War braids: two strands, one per fighter, crossing at every revert.
+    // An edit war splits the lane in two: both fighters' branches leave it at once, one each side, and
+    // run alongside through the war. At the end the winner's branch joins the lane again and the loser's
+    // runs out. Each revert leaps from the reverter's branch across to the other's.
     for (const war of wars) {
-      const z0 = z[war.edits[0].index];
-      const z1 = z[war.edits.at(-1).index];
-      if (z1 < camZ + NEAR || z0 > camZ + FAR) continue;
-      const turns = Math.max(2, war.reverts);
-      const amp = war.kind === "dispute" ? 22 : 14;
-      // While the moment shown is inside the war, its braid is bolder.
-      const inside = nowZ >= z0 - 40 && nowZ <= z1 + 120;
-      for (const [k, color] of FIGHTER_COLORS.entries()) {
-        let prev = null;
-        for (let wz = Math.max(z0, camZ + NEAR); wz <= z1; wz += 6) {
-          const t = (wz - z0) / Math.max(1, z1 - z0);
-          const off = amp * Math.sin(Math.PI * t) * Math.sin(Math.PI * turns * t) * (k ? -1 : 1);
-          const p = project(roadX(wz) + off, 0, wz);
-          if (prev) {
-            ctx.strokeStyle = hexAlpha(color, ink(wz, inside ? 0.95 : war.kind === "dispute" ? 0.8 : 0.45) * fog(p.dz));
-            ctx.lineWidth = Math.min(inside ? 4 : 2.5, Math.max(0.6, (inside ? 4 : 2.4) * p.s));
-            ctx.beginPath();
-            ctx.moveTo(prev.x, prev.y);
-            ctx.lineTo(p.x, p.y);
-            ctx.stroke();
-          }
-          prev = p;
-        }
+      const [z0, z1] = warSpan(war);
+      if (z1 + 300 < camZ + NEAR || z0 - 300 > camZ + FAR) continue;
+      const inside = nowZ >= z0 - 300 && nowZ <= z1 + 300;
+      const winner = winnerOf(war);
+      for (const k of [0, 1]) {
+        const lost = winner !== null && winner !== k;
+        const end = lost ? z1 + 40 : z1 + 300;
+        const alpha = ink(z0, inside ? 0.9 : 0.55);
+        slab(z0 - 300, end, (wz) => roadX(wz) + warOffset(war, k, wz), (wz) => 7 * (lost ? 1 - smoothstep(z1 - 200, z1 + 40, wz) : 1), LANE_H,
+          hexAlpha(FIGHTER_COLORS[k], alpha * 0.45), hexAlpha(FIGHTER_COLORS[k], alpha * 0.8));
       }
-      // Each revert leaps across the road from the reverter's side, in their color.
       for (const e of war.edits) {
         if (e.revertsTo === null) continue;
         const f = war.fighters.indexOf(e.user);
+        if (f !== 0 && f !== 1) continue;
         const wz = z[e.index];
         if (wz < camZ + NEAR || wz > camZ + FAR) continue;
-        const from = f === 1 ? 1 : -1;
-        const color = f === 0 || f === 1 ? FIGHTER_COLORS[f] : "#8a8f94";
         const a = ink(wz, inside ? 0.9 : 0.6) * fog(wz - camZ) * smoothstep(NEAR, NEAR + 900, wz - camZ);
-        ctx.strokeStyle = hexAlpha(color, a);
+        const from = roadX(wz) + warOffset(war, f, wz);
+        const to = roadX(wz) + warOffset(war, 1 - f, wz);
+        ctx.strokeStyle = hexAlpha(FIGHTER_COLORS[f], a);
         ctx.lineWidth = Math.max(0.8, Math.min(2.5, 2.6 * project(0, 0, wz).s));
         ctx.beginPath();
         for (let u = 0; u <= 1.001; u += 0.1) {
-          const q = project(roadX(wz) + from * amp * 1.6 * (1 - 2 * u), Math.sin(Math.PI * u) * (inside ? 60 : 40), wz);
+          const q = project(from + (to - from) * u, LANE_H + Math.sin(Math.PI * u) * (inside ? 50 : 34), wz);
           if (u) ctx.lineTo(q.x, q.y);
           else ctx.moveTo(q.x, q.y);
         }
@@ -288,7 +293,7 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
     // at the far point of their detour, or walks it while their version is being written.
     const standing = [];
     for (const b of blocks) {
-      if (!b.k || b.k > stopNow) continue;
+      if (!b.k || b.k > stopNow || inWar.has(stops[b.k])) continue;
       const walking = b.k === stopNow;
       const wz = walking ? Math.min(stopZ[b.k], Math.max(stopZ[b.k - 1], nowZ)) : (stopZ[b.k - 1] + stopZ[b.k]) / 2;
       if (wz < camZ + NEAR || wz > camZ + NAMED) continue;
@@ -304,7 +309,7 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
     for (const s of standing) s.draw();
 
     // The moment shown: a dot on the road, out on the detour being walked.
-    const p = project(roadX(nowZ) + nowOffset, 0, nowZ);
+    const p = project(roadX(nowZ) + nowOffset, LANE_H, nowZ);
     ctx.fillStyle = "#202122";
     ctx.beginPath();
     ctx.arc(p.x, p.y, 4.5, 0, Math.PI * 2);
@@ -322,10 +327,19 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
       const a = (walking ? 1 : fog(wz - camZ) * (1 - smoothstep(NAMED * 0.75, NAMED, wz - camZ))) * calm;
       if (a < 0.01) return;
       const [h, sat, light] = b.color;
-      const foot = project(roadX(wz) + branchOffset(b, wz), 0, wz);
+      const foot = project(roadX(wz) + branchOffset(b, wz), LANE_H, wz);
       const r = Math.max(3, Math.min(walking ? 14 : 10, 30 * foot.s));
       const cy = foot.y - r - (walking ? 4 : 2);
-      ctx.fillStyle = `hsla(${h},${Math.max(sat, 10)}%,${Math.max(18, light - 30)}%,${a})`;
+      // A small ball, lit from the top left, with its shadow on the road.
+      ctx.fillStyle = `rgba(32,33,34,${0.12 * a})`;
+      ctx.beginPath();
+      ctx.ellipse(foot.x, foot.y, r * 0.9, r * 0.25, 0, 0, Math.PI * 2);
+      ctx.fill();
+      const ball = ctx.createRadialGradient(foot.x - r * 0.35, cy - r * 0.4, r * 0.1, foot.x, cy, r * 1.05);
+      ball.addColorStop(0, `hsla(${h},${Math.max(sat, 10)}%,${Math.min(85, light - 5)}%,${a})`);
+      ball.addColorStop(0.6, `hsla(${h},${Math.max(sat, 10)}%,${Math.max(18, light - 30)}%,${a})`);
+      ball.addColorStop(1, `hsla(${h},${Math.max(sat, 10)}%,${Math.max(10, light - 45)}%,${a})`);
+      ctx.fillStyle = ball;
       ctx.beginPath();
       ctx.arc(foot.x, cy, r, 0, Math.PI * 2);
       ctx.fill();
@@ -398,10 +412,13 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
   // with a punch and the other is knocked back. When the war ends, whoever had the last edit hops with
   // both arms up, and the other slumps.
   function drawFight(f, now, project) {
-    const wz = nowZ + 420;
-    const base = project(roadX(wz), 0, wz);
+    const [z0, z1] = warSpan(f.war);
+    const wz = Math.min(z1, Math.max(z0, nowZ + 420));
+    const base = project(roadX(wz), LANE_H, wz);
     const R = Math.max(16, Math.min(28, width / 14));
-    const gap = R * 2.1;
+    // Each fighter stands on their own branch.
+    const spot = [0, 1].map((k) => project(roadX(wz) + warOffset(f.war, k, wz), LANE_H, wz));
+    const gap = Math.max(R * 1.6, Math.abs(spot[1].x - spot[0].x) / 2);
     const u = Math.min(1, (now - f.t0) / 650);
     const strike = f.by === 0 || f.by === 1 ? f.by : -1;
     const ended = f.winner !== null;
@@ -415,8 +432,8 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
       const won = f.winner === k;
       const lost = ended && !won;
       const t = now / 1000 + k * 0.5;
-      let x = base.x - face * gap;
-      let y = base.y;
+      let x = spot[k].x;
+      let y = spot[k].y;
       let tilt = 0;
       let arm = Math.sin(t * 5) * 0.25;
       let punch = 0;
@@ -450,7 +467,7 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
     // The blow lands: a little burst between them, with "undo" on a revert.
     if (strike >= 0 && hit > 0 && !ended) {
       const face = strike ? -1 : 1;
-      const bx = base.x + face * gap * 0.2;
+      const bx = (spot[0].x + spot[1].x) / 2 + face * gap * 0.2;
       const by = base.y - R * 1.3;
       ctx.globalAlpha = focus * hit;
       ctx.strokeStyle = FIGHTER_COLORS[strike];
@@ -527,6 +544,19 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
     ctx.fillText(letters, x, cy + 1);
     ctx.textBaseline = "alphabetic";
     ctx.restore();
+  }
+
+  // Where an edit war's branches leave the lane and join it again: a little before its first round, and
+  // at its last.
+  function warSpan(war) {
+    return [z[war.edits[0].index] - 120, z[war.edits.at(-1).index]];
+  }
+
+  // How far fighter k's branch is from the lane at `wz`: out through a rounded corner as the war begins,
+  // alongside through it, and back after it ends.
+  function warOffset(war, k, wz) {
+    const [z0, z1] = warSpan(war);
+    return (k ? 1 : -1) * WAR_REACH * smoothstep(z0 - 300, z0, wz) * (1 - smoothstep(z1, z1 + 300, wz));
   }
 
   // How far a version's detour is from the lane at `wz`: like a side road, it turns off through a rounded
