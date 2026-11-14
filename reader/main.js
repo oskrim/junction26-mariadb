@@ -33,7 +33,7 @@ if (!version || !summary) {
     <p class="meta">
       Last edited ${formatDate(version.row_start)}${version.user ? ` by ${version.user}` : ""}
       <span aria-hidden="true">·</span>
-      ${summary.versions.toLocaleString("en-US")} versions since ${new Date(summary.first * 1000).getUTCFullYear()}
+      ${summary.versions === 1 ? "1 version, from" : `${summary.versions.toLocaleString("en-US")} versions since`} ${new Date(summary.first * 1000).getUTCFullYear()}
       <span aria-hidden="true">·</span>
       <a class="meta-link" href="./?id=${id}&view=history" data-view-link="history">View history</a>
     </p>`;
