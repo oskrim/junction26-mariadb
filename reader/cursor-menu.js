@@ -3,7 +3,7 @@
 // blob stretches into a prompt bar; Enter hands the request to onSubmit.
 //
 // States: closed → follow (rides the pointer) → pinned (stays put, blobs clickable) → bar (typing).
-// Painting or clicking while following pins the menu where the pointer is.
+// Painting keeps it following; a plain click pins it where the pointer is. Picking an action stops it.
 
 export const OPEN_KEY = "q";
 
@@ -112,8 +112,9 @@ export function cursorMenu({ root, onSubmit }) {
 
   addEventListener("mouseup", (e) => {
     if (e.button !== 0 || state !== "follow") return;
-    takeSelection();
-    pinAt(e.clientX, e.clientY);
+    // A painted stroke keeps the menu riding along until an action is picked; a plain click
+    // leaves it where it was clicked so the blobs can be clicked.
+    if (!takeSelection()) pinAt(e.clientX, e.clientY);
     blobs.forEach((b, i) => later(i * STAGGER, () => (b.phase = "out")));
   });
 
@@ -207,13 +208,14 @@ export function cursorMenu({ root, onSubmit }) {
   // selection so typing in the bar can't wipe it out.
   function takeSelection() {
     const selection = getSelection();
-    if (!selection.rangeCount || selection.isCollapsed) return;
+    if (!selection.rangeCount || selection.isCollapsed) return false;
     const range = selection.getRangeAt(0);
     const text = range.toString().replace(/\s+/g, " ").trim();
-    if (!text || !root.contains(range.commonAncestorContainer)) return;
+    if (!text || !root.contains(range.commonAncestorContainer)) return false;
     paint = { range: range.cloneRange(), text };
     CSS.highlights?.set("qm-paint", new Highlight(paint.range));
     selection.removeAllRanges();
+    return true;
   }
 
   function clearPaint() {
