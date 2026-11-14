@@ -17,13 +17,15 @@ const AGAIN = `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8a4.5 4
 // Milliseconds at 1×: the pause after each version, longer where a war starts; a paragraph opening or
 // closing; and how long a changed paragraph shows its new words.
 const STEP = 300;
-const ROUND_HOLD = 1400;
+const ROUND_HOLD = 450;
 const QUIET_ROUND = 550;
+const MIN_TRIP = 1600;
 const ERASE = 550;
+const REVEAL = 900;
 // Rounds of a war shown at most, and how fast ordinary versions and war rounds play, at 1×.
 const ROUNDS = 10;
 const FAST = 2;
-const SLOW = 0.75;
+const SLOW = 1;
 const WAR_HOLD = 1800;
 const GROW = 700;
 const SHUT = 420;
@@ -32,7 +34,11 @@ const SHUT = 420;
 const PER_LETTER = 28;
 const QUOTA = 150;
 const SETTLE = 700;
-const LONG_HEAD = 60; // letters typed of a long passage before the rest fades in
+const LONG_HEAD = 60; // letters typed of a long passage before the rest streams in
+// Streaming a long passage takes STREAM_BASE plus STREAM_PER_LETTER a letter, out of STREAM_TOTAL a version.
+const STREAM_BASE = 500;
+const STREAM_PER_LETTER = 0.8;
+const STREAM_TOTAL = 3000;
 // Places in one version the page glides to; the others change quietly where they are.
 const VISITS = 1;
 const CLOSED = { height: "0px", marginTop: "0px", marginBottom: "0px", overflow: "hidden", opacity: "0" };
@@ -78,7 +84,9 @@ export function startHistoryPlay({ id, body, onClose }) {
   dock.innerHTML = DOCK;
   document.body.append(dock);
   document.body.classList.add("hp-mode");
-  const $ = (selector) => dock.querySelector(selector);
+  // The war note sits at the top of the road panel, above the fight.
+  side.append(dock.querySelector(".hp-war"));
+  const $ = (selector) => dock.querySelector(selector) ?? side.querySelector(selector);
   const playButton = $(".hp-play");
   const speedButton = $(".hp-speed");
 
@@ -136,10 +144,7 @@ export function startHistoryPlay({ id, body, onClose }) {
       wars,
       stops: frames.map((f) => f.edit.index),
       onTime: showMoment,
-      onPick: (war) => {
-        setPlaying(false);
-        jump(frames.findIndex((f) => f.war === war));
-      },
+      onPick: (war) => jump(Math.max(0, frames.findIndex((f) => f.war === war) - 1)),
     });
     path.setTime(edits[0].time, { instant: true });
     window.scrollTo({ top: 0, behavior: "instant" });
@@ -175,10 +180,10 @@ export function startHistoryPlay({ id, body, onClose }) {
       button.dataset.war = war.id;
       button.title = `${war.kind === "dispute" ? "Edit war" : "Vandalism fought off"} · ${formatDate(war.start)} · ${a} vs ${b}`;
       button.innerHTML = SWORDS;
+      // Keeps playing, from just before the war breaks out.
       button.addEventListener("click", (event) => {
         event.stopPropagation();
-        setPlaying(false);
-        jump(frames.findIndex((f) => f.war === war));
+        jump(Math.max(0, frames.findIndex((f) => f.war === war) - 1));
       });
       row.append(button);
     });
@@ -205,7 +210,9 @@ export function startHistoryPlay({ id, body, onClose }) {
       });
       if (token !== run) return;
       if (travel?.time !== time) travelTo(time, hold());
-      const waited = await wait(Math.max(0, travel.end - performance.now()), token);
+      // The next version starts after the pause, even if the road is still on its way: an estimate that ran
+      // long must not leave the page waiting.
+      const waited = await wait(Math.min(hold(), Math.max(0, travel.end - performance.now())), token);
       if (!waited) return;
     }
     if (token === run) {
@@ -233,9 +240,11 @@ export function startHistoryPlay({ id, body, onClose }) {
     });
   }
 
+  // Every trip takes at least MIN_TRIP and eases in and out, so the road never stops dead or darts ahead.
   function travelTo(time, ms) {
+    ms = Math.max(MIN_TRIP / rate, ms);
     travel = { time, end: performance.now() + ms, left: 0 };
-    moveMarker(time, ms);
+    moveMarker(time, ms, "cubic-bezier(0.45, 0, 0.55, 1)");
     path.glide(time, ms);
   }
 
@@ -302,6 +311,7 @@ export function startHistoryPlay({ id, body, onClose }) {
     typist = {
       name: `${censor(version.user)}${frame.round && frame.edit.revertsTo !== null ? " · undo" : ""}`,
       color: fighter === 0 || fighter === 1 ? FIGHTER_COLORS[fighter] : editorColor(frame.edit.user, frame.edit.kind),
+      war: !!frame.round,
     };
     await render(version, renderMath, token, animate, onPlan, frame.round);
     if (token !== run || closed) return;
@@ -519,7 +529,9 @@ export function startHistoryPlay({ id, body, onClose }) {
     const ordered = places.filter((p) => visits.has(p));
     // About how long the visit will take, so the road can be timed to it.
     const visitMs = (p) =>
-      500 + (typeable(p) ? Math.min(QUOTA, typingLetters(p)) * PER_LETTER + SETTLE : GROW) + Math.min(3, p.removes.filter(erasable).length) * ERASE;
+      500 +
+      (typeable(p) ? Math.min(QUOTA, typingLetters(p)) * PER_LETTER + SETTLE + streamingMs(p) : GROW) +
+      Math.min(3, p.removes.filter(erasable).length) * ERASE;
     onPlan((animate ? ordered.reduce((sum, p) => sum + visitMs(p), 0) : 0) / rate);
     for (const place of places) if (!visits.has(place)) applyQuietly(place, animate && !place.quiet);
     for (const place of ordered) {
@@ -552,7 +564,7 @@ export function startHistoryPlay({ id, body, onClose }) {
       el.hidden = false;
       for (const k of Object.keys(CLOSED)) el.style[k] = "";
       if (animated && !el.matches("ol.references")) el.classList.add("hp-added");
-      openUp(el, 0, ms(GROW));
+      openUp(el, 0, ms(GROW)).then(() => animated && prose(el) && reveal(el, run));
     }
     for (const { old, next } of place.rewrites) {
       const from = old.offsetHeight;
@@ -572,6 +584,32 @@ export function startHistoryPlay({ id, body, onClose }) {
         .then(() => openUp(el, el.offsetHeight, ms(SHUT), 0))
         .then(() => el.remove());
     }
+  }
+
+  // Writes `el`'s text in a few words at a time, without a cursor, in about REVEAL ms, then puts its own
+  // markup (links and all) back. Pausing holds it; a jump or close finishes it at once.
+  function reveal(el, token) {
+    const html = el.innerHTML;
+    const words = textOf(el).split(/(?<=\s)/);
+    if (words.length < 4) return Promise.resolve();
+    el.textContent = "";
+    const start = performance.now();
+    let paused = 0;
+    let last = start;
+    return new Promise((resolve) => {
+      const step = (now) => {
+        if (!playing) paused += now - last;
+        last = now;
+        const t = token !== run || closed ? 1 : Math.min(1, (now - start - paused) / (REVEAL / rate));
+        if (t < 1) {
+          el.textContent = words.slice(0, Math.ceil(words.length * t)).join("");
+          return requestAnimationFrame(step);
+        }
+        el.innerHTML = html;
+        resolve();
+      };
+      requestAnimationFrame(step);
+    });
   }
 
   // Erases `el`'s text from the end, quickly: about ERASE ms however long it is, with the editor's cursor
@@ -643,16 +681,18 @@ export function startHistoryPlay({ id, body, onClose }) {
     jobs.sort((a, b) => (at(a).compareDocumentPosition(at(b)) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1));
     // Once the version's QUOTA is typed, the rest fades in: new paragraphs open up, and edits left in a
     // paragraph appear at once.
-    const quota = { left: QUOTA };
+    // A war round types only a short stretch, so blows follow each other.
+    const quota = typist?.war ? { left: 50, stream: 600 } : { left: QUOTA, stream: STREAM_TOTAL };
     for (const job of jobs) {
       if (job.from?.isConnected) job.from.replaceWith(job.draft);
-      if (quota.left > 0 || !job.ops[0].whole) {
+      if (quota.left > 0 || quota.stream > 50 || !job.ops[0].whole) {
         await typeInto(job.draft, job.ops, quota, token);
         continue;
       }
       job.draft.replaceWith(job.next);
       job.next.classList.add("hp-added");
       job.draft = null;
+      reveal(job.next, token);
       openUp(job.next, 0, GROW / rate);
     }
     // Paragraphs and sections that are gone are erased quickly, top to bottom, once the new text is in,
@@ -665,7 +705,8 @@ export function startHistoryPlay({ id, body, onClose }) {
       }
       openUp(el, el.offsetHeight, SHUT / rate, 0).then(() => el.remove());
     }
-    if (jobs.length) await wait(SETTLE / rate, token);
+    // In a war the next blow follows straight on.
+    if (jobs.length) await wait((typist?.war ? 250 : SETTLE) / rate, token);
     for (const { draft, next } of jobs) {
       if (!draft?.isConnected) continue;
       const from = draft.offsetHeight;
@@ -708,6 +749,18 @@ export function startHistoryPlay({ id, body, onClose }) {
       }
       caret.remove();
     };
+    // Past the opening of a long passage, or once the version's typing quota is spent, the rest streams
+    // in: a few words a frame with the cursor riding along, faster the longer it is, from the version's
+    // shared streaming time. When that is spent too, what is left appears at once.
+    let streaming = false;
+    let perMs = 0;
+    const startStream = (from) => {
+      streaming = true;
+      const left = parts.slice(from).reduce((n, p) => n + (p.op.del ? p.span.textContent.length : p.op.ins.length - p.span.textContent.length), 0);
+      const ms = Math.min(quota.stream, STREAM_BASE + left * STREAM_PER_LETTER);
+      quota.stream -= ms;
+      perMs = ms > 20 ? left / ms : Infinity;
+    };
     return new Promise((resolve) => {
       let k = 0;
       let budget = 0;
@@ -719,8 +772,38 @@ export function startHistoryPlay({ id, body, onClose }) {
         }
         if (playing) budget += (now - last) * rate;
         last = now;
-        if (quota.left <= 0) {
-          finish(k);
+        if (quota.left <= 0 && !streaming) startStream(k);
+        if (streaming) {
+          if (perMs === Infinity) {
+            finish(k);
+            return resolve();
+          }
+          let n = Math.ceil(budget * perMs);
+          budget = 0;
+          while (n > 0 && k < parts.length) {
+            const part = parts[k];
+            if (caret.previousSibling !== part.span) part.span.after(caret);
+            if (part.op.del) {
+              const text = part.span.textContent;
+              part.span.textContent = text.slice(0, Math.max(0, text.length - n));
+              n -= text.length;
+              if (!part.span.textContent) {
+                part.span.remove();
+                k++;
+              }
+            } else {
+              // Words come whole.
+              const have = part.span.textContent.length;
+              let upTo = Math.min(part.op.ins.length, have + n);
+              const space = part.op.ins.indexOf(" ", upTo);
+              if (space !== -1 && space - upTo < 12) upTo = space + 1;
+              part.span.textContent = part.op.ins.slice(0, upTo);
+              n -= upTo - have;
+              if (upTo >= part.op.ins.length) k++;
+            }
+          }
+          if (k < parts.length) return requestAnimationFrame(step);
+          caret.remove();
           return resolve();
         }
         while (budget >= PER_LETTER && k < parts.length && quota.left > 0) {
@@ -740,13 +823,8 @@ export function startHistoryPlay({ id, body, onClose }) {
             part.span.textContent = part.op.ins.slice(0, ++part.typed);
             if (part.typed >= part.op.ins.length) k++;
             else if (part.typed >= LONG_HEAD && part.op.ins.length > LONG_HEAD * 2) {
-              // The rest of a long passage fades in instead of being typed.
-              const rest = document.createElement("span");
-              rest.className = `${part.span.className} hp-rest`;
-              rest.textContent = part.op.ins.slice(part.typed);
-              part.span.after(rest);
-              part.span = rest;
-              k++;
+              startStream(k);
+              break;
             }
           }
         }
@@ -978,6 +1056,14 @@ function typingLetters(place) {
   for (const el of place.adds) if (prose(el)) letters += count([{ ins: textOf(el) }]);
   for (const { old, next } of place.rewrites) if (prose(old) && prose(next)) letters += count(wordEdits(textOf(old), textOf(next)));
   return letters;
+}
+
+// About how long the long passages in `place` stream for, past what is typed letter by letter.
+function streamingMs(place) {
+  const long = [...place.adds.filter(prose).map((el) => textOf(el).length), ...place.rewrites.map(({ next }) => (prose(next) ? textOf(next).length : 0))]
+    .filter((n) => n > LONG_HEAD * 2)
+    .reduce((sum, n) => sum + STREAM_BASE + n * STREAM_PER_LETTER, 0);
+  return Math.min(STREAM_TOTAL, long);
 }
 
 function typeable(place) {
