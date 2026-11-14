@@ -119,9 +119,11 @@ articles.
 
 ### Hybrid search
 
-`/api/search` combines the FULLTEXT ranking and the vector ranking with reciprocal rank fusion, in one
-statement (`vector.hybrid_sql`): each article scores 1 / (60 + rank) in each list it is in. Equal scores go to
-the article nearer by meaning.
+`/api/search` combines the FULLTEXT ranking and the vector ranking with weighted reciprocal rank fusion, in one
+statement (`vector.hybrid_sql`): each article scores 1 / (60 + rank) in the FULLTEXT list plus w / (60 + rank) in
+the vector list. For a query of 1 or 2 words, usually a name, w = 0.25: the title matches lead and the vectors add
+what the keywords miss. For longer queries, and across languages ("battle of Tampere"), w = 1. The article titled
+as the query (in any case or accent) comes first; equal scores go to the article nearer by meaning.
 
 ```sql
 WITH keyword AS (<FULLTEXT ranking: page_id, keyword_rank>),
@@ -129,11 +131,12 @@ WITH keyword AS (<FULLTEXT ranking: page_id, keyword_rank>),
                  FROM (SELECT page_id, VEC_DISTANCE_COSINE(embedding, VEC_FromText(?)) AS distance
                        FROM article_vector WHERE lang = 'fi' ORDER BY distance LIMIT 50) v)
 SELECT page_id, MIN(keyword_rank) AS keyword_rank, MIN(vector_rank) AS vector_rank,
-       SUM(1 / (60 + IFNULL(keyword_rank, vector_rank))) AS score
+       SUM(IF(keyword_rank IS NULL, :w, 1) / (60 + IFNULL(keyword_rank, vector_rank))) AS score,
+       MAX(title = :q) AS exact
 FROM (SELECT page_id, keyword_rank, NULL AS vector_rank FROM keyword
       UNION ALL SELECT page_id, NULL, vector_rank FROM meaning) ranks
 JOIN m_article_stats USING (page_id)
-GROUP BY page_id ORDER BY score DESC, vector_rank IS NULL, vector_rank, page_id LIMIT 20
+GROUP BY page_id ORDER BY exact DESC, score DESC, vector_rank IS NULL, vector_rank, page_id LIMIT 20
 ```
 
 The vector search stands alone in its subquery (`ORDER BY distance LIMIT`): that is the shape in which MariaDB
