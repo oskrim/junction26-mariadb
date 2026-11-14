@@ -185,9 +185,11 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
       ctx.stroke();
     }
 
-    // Years: a faint line across the floor; the year itself is shown under the road.
+    // Years: a faint line across the floor, with the year set large on the floor left of the lane. Far
+    // years bunch up near the horizon, so a label is skipped when it would overlap the nearer one.
     let lastLabelY = Infinity;
-    for (const { year, z: yz } of years) {
+    for (let k = years.length - 1; k >= 0; k--) {
+      const { year, z: yz } = years[k];
       const dz = yz - camZ;
       if (dz < NEAR || dz > FAR) continue;
       const a = fog(dz) * calm;
@@ -198,6 +200,20 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
       ctx.moveTo(left.x, left.y);
       ctx.lineTo(right.x, right.y);
       ctx.stroke();
+    }
+    for (const { year, z: yz } of years) {
+      const dz = yz - camZ;
+      if (dz < NEAR || dz > FAR) continue;
+      const label = project(roadX(yz) - 70, 0, yz);
+      const size = Math.min(80, 150 * label.s);
+      if (lastLabelY - label.y < size * 0.85) continue;
+      lastLabelY = label.y;
+      ctx.fillStyle = `rgba(32,33,34,${0.16 * fog(dz) * calm})`;
+      ctx.font = `400 ${size}px "Source Serif 4", Georgia, serif`;
+      ctx.textAlign = "right";
+      // Kept inside the panel, clear of its faded left edge.
+      const tw = ctx.measureText(String(year)).width;
+      ctx.fillText(String(year), Math.max(label.x, width * 0.1 + tw), label.y - 4);
     }
 
     // Raised paths: a slab H high along `centerX(wz)`, `half(wz)` either side, from `from` to `to`, with a
