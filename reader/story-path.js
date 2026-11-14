@@ -56,12 +56,30 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
       user: e.user,
       kind: e.kind,
       from: to,
-      // In a war each fighter keeps to their own side of the road.
-      side: [-1, 1][inWar.get(to)?.fighters.indexOf(e.user)] ?? (k % 2 ? 1 : -1),
+      // Versions that mostly added text turn off to the right, ones that mostly cut to the left. In a war
+      // each fighter keeps to their own side of the road.
+      side: [-1, 1][inWar.get(to)?.fighters.indexOf(e.user)] ?? (net >= 0 ? 1 : -1),
       changed,
-      reach: Math.min(110, 36 + 0.9 * Math.sqrt(changed)),
       color: reverts ? [0, 62, 58] : net < -100 ? [0, 45, 78] : userColor(e.user, e.kind),
     };
+  });
+
+  // How big a change was, on a log scale from the smallest to the biggest: how far out its side road runs
+  // and how wide it is.
+  const biggest = Math.log10(1 + Math.max(...blocks.map((b) => b.changed)));
+  for (const b of blocks) {
+    const size = Math.log10(1 + b.changed) / biggest;
+    b.reach = 26 + 96 * size;
+    b.half = 2.5 + 12 * size * size;
+  }
+  // An editor's versions in a row, on the same side, are one road: it stays out between them and only
+  // turns back in after the last.
+  blocks.forEach((b, k) => {
+    const prev = blocks[k - 1];
+    if (k > 1 && prev.user === b.user && prev.side === b.side && !inWar.has(stops[k]) && !inWar.has(stops[k - 1])) {
+      b.joinPrev = prev;
+      prev.joinNext = true;
+    }
   });
 
   let width = 0;
@@ -247,7 +265,7 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
       const done = b.k < stopNow;
       const walking = b.k === stopNow;
       const road = (to, alpha) =>
-        slab(stopZ[b.k - 1], to, (wz) => roadX(wz) + branchOffset(b, wz), () => 7, LANE_H,
+        slab(stopZ[b.k - 1], to, (wz) => roadX(wz) + branchOffset(b, wz), (wz) => branchHalf(b, wz), LANE_H,
           `hsla(${h},${sat}%,${light}%,${alpha * a})`, `hsla(${h},${sat}%,${light - 22}%,${alpha * a})`);
       road(stopZ[b.k], done ? 0.45 : walking ? 0.25 : 0.1);
       if (walking) road(Math.min(stopZ[b.k], nowZ), 0.9);
@@ -292,12 +310,16 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
     // Editors and swords signs stand up from the floor, so they are drawn far to near. An editor stands
     // at the far point of their detour, or walks it while their version is being written.
     const standing = [];
+    // The next two editors already wait, faintly, on the roads ahead. On a road carried on over several
+    // versions the editor is shown once.
     for (const b of blocks) {
-      if (!b.k || b.k > stopNow || inWar.has(stops[b.k])) continue;
+      if (!b.k || b.k > stopNow + 2 || inWar.has(stops[b.k])) continue;
       const walking = b.k === stopNow;
+      const ahead = b.k > stopNow;
+      if (!walking && b.joinPrev && b.joinPrev.k !== stopNow) continue;
       const wz = walking ? Math.min(stopZ[b.k], Math.max(stopZ[b.k - 1], nowZ)) : (stopZ[b.k - 1] + stopZ[b.k]) / 2;
       if (wz < camZ + NEAR || wz > camZ + NAMED) continue;
-      standing.push({ z: wz, draw: () => drawEditor(b, wz, walking) });
+      standing.push({ z: wz, draw: () => drawEditor(b, wz, walking, ahead) });
     }
     for (const sign of signs) {
       sign.hit = null;
@@ -323,8 +345,8 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
     if (focus > 0.02 && shownFight) drawFight(shownFight, now, project);
 
     // An editor: a disc in their color with their initials, and their name when there is room.
-    function drawEditor(b, wz, walking) {
-      const a = (walking ? 1 : fog(wz - camZ) * (1 - smoothstep(NAMED * 0.75, NAMED, wz - camZ))) * calm;
+    function drawEditor(b, wz, walking, ahead = false) {
+      const a = (walking ? 1 : fog(wz - camZ) * (1 - smoothstep(NAMED * 0.75, NAMED, wz - camZ))) * calm * (ahead ? 0.4 : 1);
       if (a < 0.01) return;
       const [h, sat, light] = b.color;
       const foot = project(roadX(wz) + branchOffset(b, wz), LANE_H, wz);
@@ -358,7 +380,7 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
         ctx.fillText(initials(b.user, b.kind), foot.x, cy + 0.5);
         ctx.textBaseline = "alphabetic";
       }
-      if (!walking && (r < 8 || b.changed < 1500)) return;
+      if (!walking && !(ahead && b.k === stopNow + 1) && (r < 8 || b.changed < 1500)) return;
       const name = shorten(censor(b.user));
       ctx.font = `${walking ? 600 : 500} 11px Inter, system-ui, sans-serif`;
       const w = ctx.measureText(name).width;
@@ -564,7 +586,17 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
   function branchOffset(b, wz) {
     if (!b.k) return 0;
     const t = Math.min(1, Math.max(0, (wz - stopZ[b.k - 1]) / (stopZ[b.k] - stopZ[b.k - 1])));
-    return b.side * b.reach * smoothstep(0.04, 0.22, t) * (1 - smoothstep(0.78, 0.96, t));
+    const out = b.joinPrev ? 1 : smoothstep(0.04, 0.22, t);
+    const back = b.joinNext ? 1 : 1 - smoothstep(0.78, 0.96, t);
+    // A road carried on from the editor's version before eases from that version's reach to its own.
+    const reach = b.joinPrev ? b.joinPrev.reach + (b.reach - b.joinPrev.reach) * smoothstep(0.1, 0.5, t) : b.reach;
+    return b.side * reach * out * back;
+  }
+
+  function branchHalf(b, wz) {
+    if (!b.joinPrev) return b.half;
+    const t = Math.min(1, Math.max(0, (wz - stopZ[b.k - 1]) / (stopZ[b.k] - stopZ[b.k - 1])));
+    return b.joinPrev.half + (b.half - b.joinPrev.half) * smoothstep(0.1, 0.5, t);
   }
 
   function drawSwords(r, color) {

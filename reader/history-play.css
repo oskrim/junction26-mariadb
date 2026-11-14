@@ -68,6 +68,21 @@
   mask-composite: intersect;
 }
 
+/* Which way the side roads turn */
+.hp-key {
+  position: absolute;
+  top: 24px;
+  right: 16px;
+  left: 56px;
+  display: flex;
+  justify-content: space-between;
+  margin: 0;
+  font: 500 11px var(--sans);
+  letter-spacing: 0.02em;
+  color: var(--ink-3);
+  pointer-events: none;
+}
+
 /* The year the road is at, large under it, clear of the chat tray in the corner */
 .hp-moment {
   position: absolute;
