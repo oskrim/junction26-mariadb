@@ -388,18 +388,23 @@ SEARCH_CANDIDATES = 50  # articles each ranking gives to the fusion
 def keyword_ranking(q):
     """SQL ranking the articles that match q with the FULLTEXT indexes, and its parameters: the article titled q
     first, then the other title matches, then the text matches. Title matches are ordered by how well their text
-    matches too. MATCH ... AGAINST scores by how often the words occur in a row and how rare they are overall.
+    matches, then shortest title first. MATCH ... AGAINST scores by how often the words occur in a row and how
+    rare they are overall.
 
     The text is an article's S Markdown (Finnish), else its current m_article text: wikitext for M articles,
     Markdown for the rest of Finnish Wikipedia (L)."""
     query = boolean_query(q)
+    # The exact title by its own key: hundreds of titles can match as well as it does ("... (talvisota)").
     sql = """SELECT page_id, ROW_NUMBER() OVER (ORDER BY MAX(exact) DESC, MAX(in_title) DESC, MAX(text_score) DESC,
-                                                       page_id) AS keyword_rank
-             FROM ((SELECT page_id, title = %s AS exact, 1 AS in_title, 0 AS text_score FROM m_article_stats
-                    WHERE MATCH (title) AGAINST (%s IN BOOLEAN MODE)
-                    ORDER BY MATCH (title) AGAINST (%s IN BOOLEAN MODE) DESC LIMIT %s)
+                                                       MIN(title_length), page_id) AS keyword_rank
+             FROM ((SELECT page_id, 1 AS exact, 1 AS in_title, 0 AS text_score, 0 AS title_length
+                    FROM m_article_stats WHERE title = %s)
                    UNION ALL
-                   (SELECT page_id, 0, 0, MATCH (text) AGAINST (%s IN BOOLEAN MODE) FROM m_search
+                   (SELECT page_id, 0, 1, 0, CHAR_LENGTH(title) FROM m_article_stats
+                    WHERE MATCH (title) AGAINST (%s IN BOOLEAN MODE)
+                    ORDER BY MATCH (title) AGAINST (%s IN BOOLEAN MODE) DESC, CHAR_LENGTH(title) LIMIT %s)
+                   UNION ALL
+                   (SELECT page_id, 0, 0, MATCH (text) AGAINST (%s IN BOOLEAN MODE), 255 FROM m_search
                     WHERE MATCH (text) AGAINST (%s IN BOOLEAN MODE) ORDER BY 4 DESC LIMIT %s)) hits
              GROUP BY page_id ORDER BY keyword_rank LIMIT %s"""
     return sql, (q, query, query, SEARCH_CANDIDATES, query, query, SEARCH_CANDIDATES, SEARCH_CANDIDATES)
