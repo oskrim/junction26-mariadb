@@ -1,19 +1,25 @@
+import { censor } from "./censor.js";
 import { FIGHTER_COLORS } from "./timeline3d.js";
 
 // The narrow 3D road beside "Watch it being written": the article's life laid out ahead of you, with the
-// camera moving along it as the article is rewritten. The road widens as the article grows and every edit
-// is a dot on it. Beside the road each edit also stands as a bar, as tall as the change it made: grey when
-// it added, pale red when it cut, red when it reverted. Years lie across the road, and each edit war is a
-// braid with a swords sign at its start that can be clicked. What is still to come is faint until written.
+// camera moving along it as the article is rewritten. Along the road stand blocks, one per sitting (an
+// editor's edits in a row, less than a day apart): as tall as the text they changed, in the editor's own
+// color, with the editor standing on top. Cuts are pale red and reverts red. The road widens as the
+// article grows, years lie across it, and each edit war is a braid with a swords sign that can be clicked.
+// What is still to come is faint glass until it has been written.
 
-const EYE = 340; // camera height
-const BACK = 700; // camera distance behind the moment shown
-const NEAR = 260; // nothing closer than this is drawn
+const EYE = 360; // camera height
+const BACK = 760; // camera distance behind the moment shown
+const NEAR = 280; // nothing closer than this is drawn
 const FAR = 9000;
 const ROAD = 30; // half the road's width once the article is at its longest
-const WALL = 22; // the bars' distance from the road's edge
+const KERB = 26; // gap between the road's edge and the blocks
+const BLOCK_W = 46;
+const MIN_DEPTH = 26;
+const MIN_BLOCK = 120; // characters a sitting must change to get a block; smaller ones are dots on the road
 const WAR_STRETCH = 26; // extra road per edit inside a war, so a fight gets room for its braid
-const SWORD = 110; // swords sign height above the road
+const SWORD = 150; // swords sign height above the road
+const GRID = 340; // floor grid spacing
 
 export function createStoryPath({ canvas, edits, wars, onPick }) {
   const ctx = canvas.getContext("2d");
@@ -34,6 +40,38 @@ export function createStoryPath({ canvas, edits, wars, onPick }) {
   }
   const signs = wars.map((war) => ({ war, z: z[war.edits[0].index], hit: null }));
 
+  // Sittings: an editor's consecutive edits less than a day apart.
+  const sittings = [];
+  for (const e of edits) {
+    const last = sittings.at(-1);
+    if (last && last.user === e.user && e.time - edits[last.to].time < 86_400_000) {
+      last.to = e.index;
+      last.net += e.delta;
+      last.changed += Math.abs(e.delta);
+      last.reverts += e.revertsTo !== null ? 1 : 0;
+    } else {
+      sittings.push({
+        user: e.user,
+        kind: e.kind,
+        from: e.index,
+        to: e.index,
+        net: e.delta,
+        changed: Math.abs(e.delta),
+        reverts: e.revertsTo !== null ? 1 : 0,
+      });
+    }
+  }
+  const blocks = sittings.filter((s) => s.changed >= MIN_BLOCK || s.from === 0);
+  blocks.forEach((b, k) => {
+    b.k = k;
+    b.z0 = z[b.from];
+    b.z1 = Math.max(z[b.to], b.z0 + MIN_DEPTH);
+    b.side = k % 2 ? 1 : -1;
+    b.h = Math.min(260, 14 + 1.5 * Math.sqrt(b.changed));
+    b.color = b.reverts ? [0, 62, 58] : b.net < -100 ? [0, 45, 78] : userColor(b.user, b.kind);
+  });
+  const blockOf = new Int32Array(edits.length).fill(-1);
+  for (const b of blocks) for (let i = b.from; i <= b.to; i++) blockOf[i] = b.k;
 
   let width = 0;
   let height = 0;
@@ -66,7 +104,7 @@ export function createStoryPath({ canvas, edits, wars, onPick }) {
 
   // The road bends gently from side to side, so it reads as a road going away rather than a line.
   const roadX = (wz) => Math.sin(wz / 2400) * 90 + Math.sin(wz / 830) * 22;
-  const roadHalf = (i) => 3 + ROAD * Math.sqrt(edits[i].chars / maxChars);
+  const roadHalf = (i) => 3 + ROAD * Math.sqrt(edits[Math.max(0, Math.min(edits.length - 1, i))].chars / maxChars);
 
   function draw(now) {
     const f = height * 0.95;
@@ -76,30 +114,55 @@ export function createStoryPath({ canvas, edits, wars, onPick }) {
       const dz = wz - camZ;
       return { x: width / 2 + ((x - camX) * f) / dz, y: horizon + ((EYE - y) * f) / dz, s: f / dz, dz };
     };
-    const fog = (dz) => 1 - smoothstep(FAR * 0.4, FAR, dz);
+    const fog = (dz) => (1 - smoothstep(FAR * 0.4, FAR, dz)) * smoothstep(NEAR, NEAR + 380, dz);
     // Written: what lies up to the moment shown. Ahead: faint.
-    const ink = (wz, a) => (wz <= nowZ + 1 ? a : a * 0.28);
+    const written = (wz) => wz <= nowZ + 1;
+    const ink = (wz, a) => (written(wz) ? a : a * 0.3);
 
     ctx.clearRect(0, 0, width, height);
     const first = Math.max(0, lowerBound(z, camZ + NEAR));
     const last = Math.min(edits.length - 1, lowerBound(z, camZ + FAR));
+    const nowIndex = Math.min(edits.length - 1, Math.max(0, lowerBound(z, nowZ + 1) - 1));
 
-    // Years: a line across the road and the year set large on it.
+    // A floor grid that bends with the road, for depth.
+    const zStart = Math.ceil((camZ + NEAR) / GRID) * GRID;
+    ctx.lineWidth = 1;
+    for (let gz = zStart; gz < camZ + FAR; gz += GRID) {
+      const a = 0.06 * fog(gz - camZ);
+      const l = project(roadX(gz) - 900, 0, gz);
+      const r = project(roadX(gz) + 900, 0, gz);
+      ctx.strokeStyle = `rgba(32,33,34,${a})`;
+      ctx.beginPath();
+      ctx.moveTo(l.x, l.y);
+      ctx.lineTo(r.x, r.y);
+      ctx.stroke();
+    }
+    for (const offset of [-600, -300, 300, 600]) {
+      ctx.beginPath();
+      for (let gz = camZ + NEAR, k = 0; gz < camZ + FAR; gz += 120, k++) {
+        const p = project(roadX(gz) + offset, 0, gz);
+        if (k) ctx.lineTo(p.x, p.y);
+        else ctx.moveTo(p.x, p.y);
+      }
+      ctx.strokeStyle = "rgba(32,33,34,0.045)";
+      ctx.stroke();
+    }
+
+    // Years: a line across the floor and the year set large on it.
     let lastLabelY = Infinity;
     for (const { year, z: yz } of years) {
       const dz = yz - camZ;
       if (dz < NEAR || dz > FAR) continue;
-      const a = fog(dz) * smoothstep(NEAR, 700, dz);
-      const left = project(roadX(yz) - 700, 0, yz);
-      const right = project(roadX(yz) + 700, 0, yz);
-      ctx.strokeStyle = `rgba(32,33,34,${0.1 * a})`;
-      ctx.lineWidth = 1;
+      const a = fog(dz);
+      const left = project(roadX(yz) - 900, 0, yz);
+      const right = project(roadX(yz) + 900, 0, yz);
+      ctx.strokeStyle = `rgba(32,33,34,${0.14 * a})`;
       ctx.beginPath();
       ctx.moveTo(left.x, left.y);
       ctx.lineTo(right.x, right.y);
       ctx.stroke();
-      const size = Math.min(64, 120 * project(0, 0, yz).s);
-      const label = project(roadX(yz) - 60, 0, yz);
+      const size = Math.min(64, 130 * project(0, 0, yz).s);
+      const label = project(roadX(yz) - 90, 0, yz);
       if (lastLabelY - label.y < size * 0.8) continue;
       lastLabelY = label.y;
       ctx.fillStyle = `rgba(32,33,34,${ink(yz, 0.4) * a})`;
@@ -108,54 +171,31 @@ export function createStoryPath({ canvas, edits, wars, onPick }) {
       ctx.fillText(String(year), Math.max(size * 2.2, label.x), label.y - 4);
     }
 
-    // The road, as wide as the article is long at each point, with its edges drawn.
+    // The road, as wide as the article is long at each point, darker where it has been written.
     const step = Math.max(1, Math.floor((last - first) / 300));
-    const edge = (sideSign) => {
-      const pts = [];
-      for (let i = first; i <= last; i += step) pts.push(project(roadX(z[i]) + sideSign * roadHalf(i), 0, z[i]));
-      return pts;
-    };
-    const left = edge(-1);
-    const right = edge(1);
-    if (left.length > 1) {
-      ctx.beginPath();
-      left.forEach((p, k) => (k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
-      for (let k = right.length - 1; k >= 0; k--) ctx.lineTo(right[k].x, right[k].y);
-      ctx.closePath();
-      ctx.fillStyle = "rgba(32,33,34,0.05)";
-      ctx.fill();
-      for (const line of [left, right]) {
-        ctx.beginPath();
-        line.forEach((p, k) => (k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
-        ctx.strokeStyle = "rgba(32,33,34,0.16)";
-        ctx.lineWidth = 0.8;
-        ctx.stroke();
+    const strip = (from, to, alpha) => {
+      const l = [];
+      const r = [];
+      for (let i = from; i <= to; i += step) {
+        l.push(project(roadX(z[i]) - roadHalf(i), 0, z[i]));
+        r.push(project(roadX(z[i]) + roadHalf(i), 0, z[i]));
       }
-    }
-
-    // The bars beside the road, drawn far to near so nearer bars stand in front.
-    for (let i = last; i >= first; i--) {
-      const e = edits[i];
-      const wz = z[i];
-      const dz = wz - camZ;
-      const x = roadX(wz) + roadHalf(i) + WALL;
-      const h = 3 + 24 * Math.log10(1 + Math.abs(e.delta));
-      const foot = project(x, 0, wz);
-      const top = project(x, h, wz);
-      const a = fog(dz) * smoothstep(NEAR, 600, dz);
-      ctx.strokeStyle = `rgba(${colorOf(e)},${ink(wz, 0.6) * a})`;
-      ctx.lineWidth = Math.max(0.7, Math.min(4, 5 * foot.s));
+      if (l.length < 2) return;
       ctx.beginPath();
-      ctx.moveTo(foot.x, foot.y);
-      ctx.lineTo(top.x, top.y);
-      ctx.stroke();
-    }
+      l.forEach((p, k) => (k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+      for (let k = r.length - 1; k >= 0; k--) ctx.lineTo(r[k].x, r[k].y);
+      ctx.closePath();
+      ctx.fillStyle = `rgba(32,33,34,${alpha})`;
+      ctx.fill();
+    };
+    strip(first, last, 0.04);
+    if (nowIndex > first) strip(first, nowIndex, 0.07);
 
     // War braids: two strands, one per fighter, crossing at every revert.
     for (const war of wars) {
       const z0 = z[war.edits[0].index];
       const z1 = z[war.edits.at(-1).index];
-      if (z1 < camZ + 40 || z0 > camZ + FAR) continue;
+      if (z1 < camZ + NEAR || z0 > camZ + FAR) continue;
       const turns = Math.max(2, war.reverts);
       const amp = war.kind === "dispute" ? 22 : 14;
       for (const [k, color] of FIGHTER_COLORS.entries()) {
@@ -177,36 +217,134 @@ export function createStoryPath({ canvas, edits, wars, onPick }) {
       }
     }
 
-    // Each edit: a dot on the road.
+    // Small edits are dots on the road.
     for (let i = first; i <= last; i++) {
+      if (blockOf[i] >= 0) continue;
       const wz = z[i];
-      const e = edits[i];
       const p = project(roadX(wz), 0, wz);
-      const a = fog(p.dz) * smoothstep(NEAR, 600, p.dz);
-      const r = Math.max(0.6, Math.min(3.5, 4 * p.s));
-      ctx.fillStyle = `rgba(${colorOf(e)},${ink(wz, 0.7) * a})`;
+      ctx.fillStyle = `rgba(${rgb(edits[i].revertsTo !== null ? [0, 62, 58] : [210, 4, 52])},${ink(wz, 0.7) * fog(p.dz)})`;
       ctx.beginPath();
-      ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+      ctx.arc(p.x, p.y, Math.max(0.6, Math.min(3, 3.5 * p.s)), 0, Math.PI * 2);
       ctx.fill();
     }
 
-    // Swords signs at the start of each war.
+    // Blocks and swords signs stand up from the floor, so they are drawn far to near.
+    const standing = [];
+    const nowBlock = blockOf[nowIndex] >= 0 ? blocks[blockOf[nowIndex]] : null;
+    for (const b of blocks) {
+      if (b.z1 < camZ + NEAR || b.z0 > camZ + FAR) continue;
+      standing.push({ z: b.z0, draw: () => drawBlock(b, b === nowBlock) });
+    }
     for (const sign of signs) {
-      const dz = sign.z - camZ;
       sign.hit = null;
-      if (dz < NEAR || dz > FAR) continue;
+      if (sign.z < camZ + NEAR || sign.z > camZ + FAR) continue;
+      standing.push({ z: sign.z, draw: () => drawSign(sign) });
+    }
+    standing.sort((a, b) => b.z - a.z);
+    const labels = [];
+    for (const s of standing) s.draw();
+
+    // The moment shown: a dot on the road.
+    const p = project(roadX(nowZ), 0, nowZ);
+    ctx.fillStyle = "#202122";
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 4.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = `rgba(32,33,34,${0.25 + 0.15 * Math.sin(now / 300)})`;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 9 + 2 * Math.sin(now / 300), 0, Math.PI * 2);
+    ctx.stroke();
+
+    function drawBlock(b, isNow) {
+      const z0 = Math.max(b.z0, camZ + NEAR);
+      const zm = (b.z0 + b.z1) / 2;
+      const inner = roadX(zm) + b.side * (roadHalf(b.from) + KERB);
+      const x0 = b.side > 0 ? inner : inner - BLOCK_W;
+      const x1 = x0 + BLOCK_W;
+      const a = fog(z0 - camZ);
+      if (a < 0.01) return;
+      const done = written(b.z0);
+      const alpha = (done ? 1 : 0.22) * a;
+      const [h, sat, light] = b.color;
+      const shade = (dl) => `hsla(${h},${sat}%,${Math.max(0, Math.min(100, light + dl))}%,${alpha})`;
+      const P = (x, y, wz) => project(x, y, wz);
+      const quad = (pts, fill) => {
+        ctx.beginPath();
+        pts.forEach((q, k) => (k ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y)));
+        ctx.closePath();
+        ctx.fillStyle = fill;
+        ctx.fill();
+        ctx.strokeStyle = `rgba(32,33,34,${(isNow ? 0.5 : 0.1) * a})`;
+        ctx.lineWidth = isNow ? 1.4 : 0.6;
+        ctx.stroke();
+      };
+      // A soft shadow on the floor, then the faces the camera can see: the side toward the road, the
+      // front, and the top.
+      const sh = [P(x0 + 10 * b.side, 0, z0 + 8), P(x1 + 10 * b.side, 0, z0 + 8), P(x1 + 10 * b.side, 0, b.z1 + 8), P(x0 + 10 * b.side, 0, b.z1 + 8)];
+      quad(sh, `rgba(32,33,34,${0.05 * alpha})`);
+      if (camX < x0) quad([P(x0, 0, z0), P(x0, b.h, z0), P(x0, b.h, b.z1), P(x0, 0, b.z1)], shade(-14));
+      if (camX > x1) quad([P(x1, 0, z0), P(x1, b.h, z0), P(x1, b.h, b.z1), P(x1, 0, b.z1)], shade(-14));
+      quad([P(x0, 0, z0), P(x1, 0, z0), P(x1, b.h, z0), P(x0, b.h, z0)], shade(-4));
+      quad([P(x0, b.h, z0), P(x1, b.h, z0), P(x1, b.h, b.z1), P(x0, b.h, b.z1)], shade(12));
+
+      // The editor standing on top: a disc with their initials, and their name when there is room.
+      const top = P((x0 + x1) / 2, b.h, (z0 + b.z1) / 2);
+      const r = Math.max(2.5, Math.min(isNow ? 14 : 11, 22 * top.s));
+      const stand = P((x0 + x1) / 2, b.h, (z0 + b.z1) / 2);
+      const cy = stand.y - r - 2;
+      ctx.fillStyle = `hsla(${h},${Math.max(sat, 10)}%,${Math.max(18, light - 30)}%,${(done ? 1 : 0.35) * a})`;
+      ctx.beginPath();
+      ctx.arc(stand.x, cy, r, 0, Math.PI * 2);
+      ctx.fill();
+      if (isNow) {
+        ctx.strokeStyle = `rgba(32,33,34,${0.4 + 0.3 * Math.sin(now / 220)})`;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(stand.x, cy, r + 3 + Math.sin(now / 220), 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      if (r >= 7) {
+        ctx.fillStyle = `rgba(255,255,255,${(done ? 0.95 : 0.6) * a})`;
+        ctx.font = `600 ${Math.round(r * 0.85)}px Inter, system-ui, sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(initials(b.user, b.kind), stand.x, cy + 0.5);
+        ctx.textBaseline = "alphabetic";
+      }
+      const named = isNow || (done && r >= 9 && b.changed >= 1500);
+      if (!named) return;
+      const name = shorten(censor(b.user));
+      ctx.font = `${isNow ? 600 : 500} 11px Inter, system-ui, sans-serif`;
+      const w = ctx.measureText(name).width;
+      // Labels sit on the road's far side of the disc, kept inside the canvas.
+      const lx = Math.max(4, Math.min(width - w - 4, b.side > 0 ? stand.x + r + 5 : stand.x - r - 5 - w));
+      const box = { x: lx - 3, y: cy - 8, w: w + 6, h: 16 };
+      if (!isNow && labels.some((o) => box.x < o.x + o.w && o.x < box.x + box.w && box.y < o.y + o.h && o.y < box.y + box.h)) return;
+      labels.push(box);
+      ctx.fillStyle = `rgba(255,255,255,${0.85 * a})`;
+      ctx.beginPath();
+      ctx.roundRect(box.x, box.y, box.w, box.h, 4);
+      ctx.fill();
+      ctx.fillStyle = `rgba(32,33,34,${(isNow ? 0.95 : 0.7) * a})`;
+      ctx.textAlign = "left";
+      ctx.fillText(name, lx, cy + 4);
+    }
+
+    function drawSign(sign) {
+      const dz = sign.z - camZ;
       const foot = project(roadX(sign.z), 0, sign.z);
       const head = project(roadX(sign.z), SWORD, sign.z);
-      const a = fog(dz) * smoothstep(NEAR, 500, dz);
-      const reached = sign.z <= nowZ + 1;
+      const a = fog(dz);
+      const reached = written(sign.z);
       const red = sign.war.kind === "dispute" ? "215,51,51" : "228,143,143";
-      ctx.strokeStyle = `rgba(${red},${0.5 * a})`;
-      ctx.lineWidth = 1;
+      ctx.strokeStyle = `rgba(${red},${0.6 * a})`;
+      ctx.lineWidth = Math.max(1, 2.5 * foot.s);
       ctx.beginPath();
       ctx.moveTo(foot.x, foot.y);
       ctx.lineTo(head.x, head.y);
       ctx.stroke();
-      const r = Math.max(5, Math.min(12, 30 * head.s));
+      const r = Math.max(5, Math.min(13, 34 * head.s));
       const pulse = current === sign.war ? 1 + 0.12 * Math.sin(now / 180) : 1;
       ctx.save();
       ctx.translate(head.x, head.y - r);
@@ -222,23 +360,6 @@ export function createStoryPath({ canvas, edits, wars, onPick }) {
       ctx.restore();
       sign.hit = { x: head.x, y: head.y - r, r: r + 4 };
     }
-
-    // The moment shown: a dot on the road.
-    const i = Math.min(edits.length - 1, Math.max(0, lowerBound(z, nowZ)));
-    const p = project(roadX(nowZ), 0, nowZ);
-    ctx.fillStyle = "#202122";
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, 4.5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = `rgba(32,33,34,${0.25 + 0.15 * Math.sin(now / 300)})`;
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, 9 + 2 * Math.sin(now / 300), 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.fillStyle = "rgba(32,33,34,0.55)";
-    ctx.font = `500 11px Inter, system-ui, sans-serif`;
-    ctx.textAlign = "left";
-    ctx.fillText(`${edits[i].chars.toLocaleString("en-US")} characters`, p.x + 14, p.y + 4);
   }
 
   function drawSwords(r, color) {
@@ -255,6 +376,7 @@ export function createStoryPath({ canvas, edits, wars, onPick }) {
     ctx.moveTo(r * 0.15, r * 0.95);
     ctx.lineTo(-r * 0.95, -r * 0.15);
     ctx.stroke();
+    ctx.lineCap = "butt";
   }
 
   function zAt(time) {
@@ -266,18 +388,17 @@ export function createStoryPath({ canvas, edits, wars, onPick }) {
     return z[i - 1] + ((z[i] - z[i - 1]) * (time - a.time)) / Math.max(1, b.time - a.time);
   }
 
-  canvas.addEventListener("click", (event) => {
+  const signAt = (event) => {
     const r = canvas.getBoundingClientRect();
     const x = event.clientX - r.left;
     const y = event.clientY - r.top;
-    const sign = signs.find((s) => s.hit && Math.hypot(s.hit.x - x, s.hit.y - y) <= s.hit.r);
+    return signs.find((s) => s.hit && Math.hypot(s.hit.x - x, s.hit.y - y) <= s.hit.r);
+  };
+  canvas.addEventListener("click", (event) => {
+    const sign = signAt(event);
     if (sign) onPick(sign.war);
   });
-  canvas.addEventListener("mousemove", (event) => {
-    const r = canvas.getBoundingClientRect();
-    const over = signs.some((s) => s.hit && Math.hypot(s.hit.x - event.clientX + r.left, s.hit.y - event.clientY + r.top) <= s.hit.r);
-    canvas.style.cursor = over ? "pointer" : "";
-  });
+  canvas.addEventListener("mousemove", (event) => (canvas.style.cursor = signAt(event) ? "pointer" : ""));
 
   return {
     // Moves the camera so `time` is just ahead of it; it glides there.
@@ -295,8 +416,33 @@ export function createStoryPath({ canvas, edits, wars, onPick }) {
   };
 }
 
-function colorOf(edit) {
-  return edit.revertsTo !== null ? "215,51,51" : edit.delta < 0 ? "214,140,140" : "120,125,130";
+// Each named editor keeps one soft color; anonymous editors are grey and bots a cool grey.
+function userColor(user, kind) {
+  if (kind === "anonymous") return [210, 4, 70];
+  if (kind === "bot") return [210, 14, 64];
+  let hash = 0;
+  for (const c of user) hash = (hash * 31 + c.charCodeAt(0)) >>> 0;
+  return [(hash % 12) * 30 + 15, 38, 66];
+}
+
+function initials(user, kind) {
+  if (kind === "anonymous") return "IP";
+  const parts = user.replace(/~.*$/, "").split(/[\s_.-]+/).filter(Boolean);
+  return ((parts[0]?.[0] ?? "?") + (parts[1]?.[0] ?? "")).toUpperCase();
+}
+
+function shorten(name) {
+  return name.length > 18 ? `${name.slice(0, 17)}…` : name;
+}
+
+function rgb([h, s, l]) {
+  // HSL to "r,g,b" for the few colors set as HSL above.
+  const a = (s / 100) * Math.min(l / 100, 1 - l / 100);
+  const f = (n) => {
+    const k = (n + h / 30) % 12;
+    return Math.round(255 * (l / 100 - a * Math.max(-1, Math.min(k - 3, 9 - k, 1))));
+  };
+  return `${f(0)},${f(8)},${f(4)}`;
 }
 
 function lowerBound(list, value, key = (v) => v) {
