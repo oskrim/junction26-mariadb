@@ -77,8 +77,7 @@ export function startHistoryPlay({ id, body, onClose }) {
   side.setAttribute("aria-label", "The article's life as a road");
   side.innerHTML = `
     <canvas></canvas>
-    <p class="hp-key"><span>← cuts</span><span>adds →</span></p>
-    <div class="hp-moment"><p class="hp-year"></p><p class="hp-month"></p></div>`;
+    <p class="hp-key"><span>← cuts</span><span>adds →</span></p>`;
   document.querySelector(".layout").append(side);
   const dock = document.createElement("div");
   dock.className = "hp-dock";
@@ -169,7 +168,6 @@ export function startHistoryPlay({ id, body, onClose }) {
       edits,
       wars,
       stops: frames.map((f) => f.edit.index),
-      onTime: showMoment,
       onPick: (war) => jump(Math.max(0, frames.findIndex((f) => f.war === war) - 1)),
     });
     path.setTime(edits[0].time, { instant: true });
@@ -330,20 +328,6 @@ export function startHistoryPlay({ id, body, onClose }) {
 
   function resumeTravel() {
     if (travel?.left > 0) travelTo(travel.time, travel.left);
-  }
-
-  // The year in large type under the road, with the month under it; a new date simply takes its place.
-  let momentYear = null;
-  let momentMonth = null;
-  function showMoment(time) {
-    const d = new Date(time);
-    const year = d.getUTCFullYear();
-    const month = d.toLocaleString("en-GB", { month: "long", timeZone: "UTC" });
-    if (month !== momentMonth) side.querySelector(".hp-month").textContent = momentMonth = month;
-    if (year === momentYear) return;
-    const el = side.querySelector(".hp-year");
-    momentYear = year;
-    el.textContent = year;
   }
 
   async function show(i, token, animate, onPlan = () => {}) {
