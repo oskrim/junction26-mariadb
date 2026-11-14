@@ -309,20 +309,18 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
         road(z0, z1, done ? 1 : 0.1);
         continue;
       }
-      // Around the walker the road fades from solid to faint over a short stretch, in slices that meet
-      // edge to edge, so there is no hard step.
+      // Around the walker the road fades from solid to faint: one slab, coloured with a gradient that runs
+      // along it on screen, so there are no seams.
       const FADE = 160;
-      const fadeFrom = Math.max(z0, Math.min(z1, nowZ - FADE));
-      const fadeTo = Math.max(z0, Math.min(z1, nowZ + FADE / 2));
-      if (fadeFrom > z0) road(z0, fadeFrom, 1);
-      const SLICES = 8;
-      for (let q = 0; q < SLICES && fadeTo > fadeFrom; q++) {
-        const sa = fadeFrom + ((fadeTo - fadeFrom) * q) / SLICES;
-        const sb = fadeFrom + ((fadeTo - fadeFrom) * (q + 1)) / SLICES;
-        const t = ((sa + sb) / 2 - (nowZ - FADE)) / (FADE * 1.5);
-        road(sa, sb, 1 - 0.75 * smoothstep(0, 1, t));
-      }
-      if (fadeTo < z1) road(fadeTo, z1, 0.25);
+      const pa = project(roadX(nowZ - FADE) + branchOffset(b, nowZ - FADE), LANE_H, Math.max(camZ + NEAR, nowZ - FADE));
+      const pb = project(roadX(nowZ + FADE / 2) + branchOffset(b, nowZ + FADE / 2), LANE_H, nowZ + FADE / 2);
+      const shade = (dl) => {
+        const g = ctx.createLinearGradient(pa.x, pa.y, pb.x, pb.y);
+        g.addColorStop(0, `hsla(${h},${sat}%,${light + dl}%,${a})`);
+        g.addColorStop(1, `hsla(${h},${sat}%,${light + dl}%,${0.25 * a})`);
+        return g;
+      };
+      slab(z0, z1, (wz) => roadX(wz) + branchOffset(b, wz), (wz) => branchHalf(b, wz), LANE_H, shade(0), shade(-22));
     }
 
 
