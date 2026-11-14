@@ -1,8 +1,10 @@
+import { createArticlePanel } from "./article-panel.js";
 import { getArticles, getChange, getHistory } from "./fake/api.js";
 import { formatMonth, renderStop } from "./history-cards.js";
 import { analyzeHistory, findEditWars, pickMilestones } from "./history-model.js";
 import { createMinimap } from "./minimap.js";
 import { createTimeline } from "./timeline3d.js";
+import { openWarReplay } from "./war-replay.js";
 
 const DEFAULT_ARTICLE = 4011;
 
@@ -37,6 +39,9 @@ document.querySelector(".hud-stats").innerHTML = [
   .join("");
 
 const month = document.querySelector(".hud-month");
+const panel = createArticlePanel({ root: document.querySelector(".panel"), articleId: id });
+let panelOpen = false;
+let lastTime = edits[0].time;
 const minimap = createMinimap({
   root: document.querySelector(".minimap"),
   edits,
@@ -55,10 +60,32 @@ const timeline = createTimeline({
     const label = formatMonth(time);
     if (month.textContent !== label) month.textContent = label;
     minimap.setTime(time);
+    lastTime = time;
+    if (panelOpen) panel.show(time);
   },
 });
 
+const toggle = document.querySelector(".panel-toggle");
+function setPanel(open) {
+  panelOpen = open;
+  document.body.classList.toggle("has-panel", open);
+  toggle.setAttribute("aria-pressed", String(open));
+  timeline.setInset(open ? document.querySelector(".panel").offsetWidth : 0);
+  if (open) panel.show(lastTime);
+}
+toggle.addEventListener("click", () => setPanel(!panelOpen));
+document.querySelector(".panel-close").addEventListener("click", () => setPanel(false));
+addEventListener("resize", () => panelOpen && timeline.setInset(document.querySelector(".panel").offsetWidth));
+
+document.querySelector(".stage-cards").addEventListener("click", (event) => {
+  const button = event.target.closest('[data-action="replay"]');
+  if (!button) return;
+  const war = wars.find((w) => w.id === button.dataset.war);
+  openWarReplay({ articleId: id, war, before: edits[war.edits[0].index - 1] });
+});
+
 addEventListener("keydown", (event) => {
+  if (document.body.classList.contains("has-replay")) return;
   if (event.key === "ArrowRight") timeline.next(1);
   else if (event.key === "ArrowLeft") timeline.next(-1);
   else return;

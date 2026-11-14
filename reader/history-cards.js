@@ -46,6 +46,9 @@ function warCard(war, change) {
         <span aria-hidden="true">·</span> ${war.edits.length} edits
       </p>
       ${foughtOver(contested, change)}
+      <button type="button" class="tl-watch" data-action="replay" data-war="${war.id}">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3.5v9l7-4.5z"/></svg>Watch the fight
+      </button>
     </article>`;
 }
 
@@ -116,7 +119,7 @@ function kindOf(war, user) {
 }
 
 // Edit summaries are wiki markup too; keep only the words.
-function cleanComment(comment) {
+export function cleanComment(comment) {
   return comment
     .replace(/\/\*.*?\*\//, "")
     .replace(/\[\[(?:[^[\]|]*\|)?([^[\]]*)\]\]/g, "$1")

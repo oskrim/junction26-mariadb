@@ -42,7 +42,9 @@ export function createTimeline({ stage, canvas, layer, spacer, edits, stops, ren
     stop.el = document.createElement("div");
     stop.el.className = "tl-slot";
     stop.el.innerHTML = renderCard(stop);
-    stop.el.addEventListener("click", () => goToZ(stop.z));
+    stop.el.addEventListener("click", (event) => {
+      if (!event.target.closest("[data-action]")) goToZ(stop.z);
+    });
     layer.append(stop.el);
   }
 
@@ -52,6 +54,8 @@ export function createTimeline({ stage, canvas, layer, spacer, edits, stops, ren
   }
 
   let width = 0;
+  let inset = 0;
+  let targetInset = 0;
   let height = 0;
   let camZ = 0;
   let camX = 0;
@@ -76,16 +80,19 @@ export function createTimeline({ stage, canvas, layer, spacer, edits, stops, ren
   requestAnimationFrame(function frame(now) {
     camZ += (targetZ - camZ) * 0.1;
     camX += (pathX(camZ + 900) * 0.8 - camX) * 0.08;
+    inset += (targetInset - inset) * 0.14;
     draw(now);
     requestAnimationFrame(frame);
   });
 
   function draw(now) {
     const f = height * 1.05;
+    const center = inset + (width - inset) / 2;
+    const fit = Math.min(1, Math.max(0.62, (width - inset) / 1300));
     const horizon = height * 0.3;
     const project = (x, y, wz) => {
       const dz = wz - camZ;
-      return { x: width / 2 + ((x - camX) * f) / dz, y: horizon + ((EYE - y) * f) / dz, s: f / dz, dz };
+      return { x: center + ((x - camX) * f) / dz, y: horizon + ((EYE - y) * f) / dz, s: f / dz, dz };
     };
     const fog = (dz) => 1 - smoothstep(FAR * 0.45, FAR, dz);
 
@@ -137,7 +144,7 @@ export function createTimeline({ stage, canvas, layer, spacer, edits, stops, ren
       const e = edits[i];
       const p = project(pathX(editZ[i]) + braidOffset(editZ[i], e), 0, editZ[i]);
       const r = Math.max(0.7, Math.min(4.5, (1.5 + Math.log10(1 + Math.abs(e.delta))) * 1.6 * p.s));
-      ctx.fillStyle = dotColor(e, editZ[i], fog(p.dz));
+      ctx.fillStyle = dotColor(e, editZ[i], fog(p.dz) * nearFade(p.dz));
       ctx.beginPath();
       ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
       ctx.fill();
@@ -150,11 +157,11 @@ export function createTimeline({ stage, canvas, layer, spacer, edits, stops, ren
         stop.el.style.visibility = "hidden";
         continue;
       }
-      const cardX = pathX(stop.z) + stop.side * SIDE;
+      const cardX = pathX(stop.z) + stop.side * SIDE * fit;
       const p = project(cardX, CARD_HEIGHT, stop.z);
       const foot = project(pathX(stop.z), 0, stop.z);
       const opacity = (1 - smoothstep(CARD_FAR * 0.55, CARD_FAR, dz)) * smoothstep(250, 650, dz);
-      const scale = VIEW / dz;
+      const scale = (VIEW / dz) * fit;
       stop.el.style.visibility = opacity > 0.01 ? "visible" : "hidden";
       stop.el.style.opacity = opacity.toFixed(3);
       stop.el.style.zIndex = String(Math.round(FAR - dz));
@@ -188,13 +195,13 @@ export function createTimeline({ stage, canvas, layer, spacer, edits, stops, ren
     const wobble = stop === focused ? Math.sin(now / 260) * 0.25 : 0;
     for (const [k, color] of FIGHTER_COLORS.entries()) {
       let prev = null;
-      for (let wz = Math.max(stop.z, start); wz <= Math.min(stop.zEnd, end); wz += 14) {
+      for (let wz = Math.max(stop.z, start + 90); wz <= Math.min(stop.zEnd, end); wz += 14) {
         const t = (wz - stop.z) / WAR_LENGTH;
         const envelope = Math.sin(Math.PI * t);
         const offset = amp * envelope * Math.sin(Math.PI * turns * t + wobble) * (k ? -1 : 1);
         const p = project(pathX(wz) + offset, 0, wz);
         if (prev) {
-          ctx.strokeStyle = hexAlpha(color, (war.kind === "dispute" ? 0.85 : 0.5) * fog(p.dz));
+          ctx.strokeStyle = hexAlpha(color, (war.kind === "dispute" ? 0.85 : 0.5) * fog(p.dz) * nearFade(p.dz));
           ctx.lineWidth = Math.min(4, Math.max(0.8, 3.6 * p.s));
           ctx.beginPath();
           ctx.moveTo(prev.x, prev.y);
@@ -266,6 +273,8 @@ export function createTimeline({ stage, canvas, layer, spacer, edits, stops, ren
 
   return {
     goToTime: (time) => goToZ(timeToZ(time)),
+    // Room taken on the left by the article panel; the scene re-centers on what is left.
+    setInset: (px) => (targetInset = px),
     next: (dir) => {
       const here = camZ + VIEW;
       const target = dir > 0 ? stops.find((s) => s.z > here + 40) : stops.findLast((s) => s.z < here - 40);
@@ -284,6 +293,9 @@ function lowerBound(list, value, key = (v) => v) {
   }
   return lo;
 }
+
+// Strands and dots right in front of the camera would sweep across the whole screen, so they fade out.
+const nearFade = (dz) => smoothstep(160, 520, dz);
 
 function smoothstep(a, b, x) {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)));

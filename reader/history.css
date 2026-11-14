@@ -487,3 +487,606 @@ body.history {
   top: 3px;
   translate: -50% 0;
 }
+
+/* Article panel: the article at the moment you are at, with the latest changes marked */
+
+body.history {
+  --panel-w: min(44vw, 620px);
+}
+
+.panel {
+  position: fixed;
+  inset: 60px auto 0 0;
+  z-index: 5;
+  width: var(--panel-w);
+  background: var(--paper);
+  border-right: 1px solid var(--rule);
+  box-shadow: 12px 0 40px -28px rgb(32 33 34 / 0.3);
+  transform: translateX(-102%);
+  transition: transform 0.45s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.has-panel .panel {
+  transform: none;
+}
+
+.panel-scroll {
+  height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.panel-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 20px 32px 16px;
+  background: rgb(255 255 255 / 0.92);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid #eaecf0;
+}
+
+.panel-meta {
+  order: -1;
+  flex: 1;
+  font-family: var(--sans);
+}
+
+.panel-meta p {
+  margin: 0;
+}
+
+.panel-when {
+  font-family: var(--serif);
+  font-size: 22px;
+}
+
+.panel-when span {
+  font-family: var(--sans);
+  font-size: 13px;
+  color: var(--ink-3);
+}
+
+.panel-diff {
+  margin-top: 4px !important;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.panel-diff span {
+  color: var(--ink-3);
+}
+
+.panel-close {
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--rule);
+  border-radius: 50%;
+  background: #fff;
+  font-size: 18px;
+  line-height: 1;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.panel-doc {
+  padding: 8px 32px 120px;
+  font-size: 15px;
+  line-height: 1.65;
+}
+
+.panel-doc p,
+.panel-doc ul,
+.panel-doc ol {
+  margin: 0 0 1em;
+}
+
+.panel-doc h2 {
+  margin: 1.8em 0 0.5em;
+  font-size: 22px;
+  font-weight: 500;
+}
+
+.panel-doc h3 {
+  margin: 1.4em 0 0.4em;
+  font-size: 18px;
+  font-weight: 500;
+}
+
+.panel-doc a {
+  color: var(--link);
+  text-decoration: none;
+}
+
+.panel-doc .figure {
+  float: right;
+  width: 38%;
+  margin: 0.3em 0 16px 20px;
+}
+
+.panel-doc .figure img {
+  width: 100%;
+  height: auto;
+}
+
+.panel-doc .figure figcaption {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--ink-3);
+}
+
+.panel-doc .math-block {
+  overflow-x: auto;
+}
+
+.panel-doc .hatnote {
+  font-family: var(--sans);
+  font-size: 12.5px;
+  color: var(--ink-3);
+}
+
+.panel-doc sup.ref {
+  font-size: 0.6em;
+}
+
+.panel-doc ins {
+  background: #d8f0e8;
+  text-decoration: none;
+  border-radius: 2px;
+  animation: settle 6s ease forwards;
+}
+
+.panel-doc del {
+  background: #fbe0e0;
+  color: #a12b2b;
+  text-decoration-color: rgb(161 43 43 / 0.6);
+  border-radius: 2px;
+}
+
+.panel-doc .is-added {
+  margin-left: -14px;
+  padding-left: 12px;
+  border-left: 2px solid var(--plus);
+  background: linear-gradient(to right, #eef8f4, transparent 70%);
+}
+
+.panel-doc .is-removed {
+  margin-left: -14px;
+  padding-left: 12px;
+  border-left: 2px solid var(--minus);
+  color: #a12b2b;
+  text-decoration: line-through;
+  text-decoration-color: rgb(161 43 43 / 0.4);
+  opacity: 0.75;
+}
+
+.panel-doc .is-changed {
+  margin-left: -14px;
+  padding-left: 12px;
+  border-left: 2px solid #c8ccd1;
+}
+
+@keyframes settle {
+  0%,
+  40% {
+    background: #b6e3d3;
+  }
+  100% {
+    background: #e3f4ee;
+  }
+}
+
+.panel-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  padding: 7px 14px 7px 12px;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  background: #fff;
+  font: 500 13px var(--sans);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.panel-toggle svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.3;
+}
+
+.panel-toggle:hover {
+  border-color: #a2a9b1;
+}
+
+.has-panel .hud-date,
+.has-panel .minimap {
+  left: calc(var(--panel-w) + 32px);
+}
+
+.hud-date,
+.minimap {
+  transition: left 0.45s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* Watch the fight */
+
+.tl-watch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 14px;
+  padding: 7px 14px 7px 10px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--war);
+  font: 500 12.5px var(--sans);
+  color: #fff;
+  cursor: pointer;
+}
+
+.is-vandalism .tl-watch {
+  background: var(--ink);
+}
+
+.tl-watch svg {
+  width: 13px;
+  height: 13px;
+  fill: currentColor;
+}
+
+/* War replay */
+
+.replay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.replay-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgb(248 249 250 / 0.7);
+  backdrop-filter: blur(6px);
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+
+.replay-window {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(880px, 100%);
+  max-height: calc(100vh - 48px);
+  background: #fff;
+  border: 1px solid var(--rule);
+  border-radius: 16px;
+  box-shadow: 0 40px 80px -30px rgb(32 33 34 / 0.35);
+  opacity: 0;
+  transform: translateY(12px) scale(0.98);
+  transition: opacity 0.25s ease, transform 0.35s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.replay.is-open .replay-backdrop,
+.replay.is-open .replay-window {
+  opacity: 1;
+  transform: none;
+}
+
+.replay.is-closing .replay-backdrop,
+.replay.is-closing .replay-window {
+  opacity: 0;
+}
+
+.replay-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 24px;
+  padding: 24px 28px 18px;
+  border-bottom: 1px solid #eaecf0;
+}
+
+.replay-head > div:first-child {
+  flex: 1;
+}
+
+.replay-kicker {
+  margin: 0;
+  font: 600 11px var(--sans);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--war);
+}
+
+.replay-head h2 {
+  margin: 4px 0 0;
+  font-size: 26px;
+  font-weight: 500;
+}
+
+.replay-fighters {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 18px;
+  font: 500 13px var(--sans);
+}
+
+.replay-fighters span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.replay-fighters i {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--c);
+}
+
+.replay-fighters em {
+  font-family: var(--serif);
+  color: var(--ink-3);
+}
+
+.replay-close {
+  width: 32px;
+  height: 32px;
+  margin-top: 12px;
+  border: 1px solid var(--rule);
+  border-radius: 50%;
+  background: #fff;
+  font-size: 20px;
+  line-height: 1;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+/* The page being fought over, with a date tab like a file folder */
+.replay-page {
+  position: relative;
+  margin: 32px 56px 8px;
+  padding: 28px 40px 32px;
+  overflow-y: auto;
+  border: 1px solid var(--rule);
+  border-radius: 4px 12px 12px 12px;
+  background: #fff;
+  min-height: 260px;
+}
+
+.replay-tab {
+  position: sticky;
+  top: -28px;
+  display: inline-block;
+  margin: -28px 0 20px -40px;
+  padding: 6px 14px;
+  border: 1px solid var(--rule);
+  border-top: 0;
+  border-left: 0;
+  border-radius: 0 0 10px 0;
+  background: #f8f9fa;
+  font: 500 12px var(--sans);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-2);
+}
+
+.replay-doc {
+  position: relative;
+  font-size: 17px;
+  line-height: 1.7;
+}
+
+.replay-p {
+  min-height: 1.7em;
+  margin: 0 0 0.6em;
+  border-radius: 4px;
+  transition: opacity 0.4s ease;
+}
+
+.replay-p.is-gone {
+  opacity: 0.25;
+}
+
+.replay-p .is-selected {
+  background: color-mix(in srgb, var(--c, #3366cc) 22%, transparent);
+}
+
+.replay-p .is-new {
+  background: color-mix(in srgb, var(--c, #3366cc) 10%, transparent);
+}
+
+.replay-p.is-hit {
+  animation: hit 0.9s ease;
+}
+
+@keyframes hit {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--flash) 50%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 14px transparent;
+  }
+}
+
+.replay-gap {
+  margin: 0 0 0.6em;
+  text-align: center;
+  color: var(--ink-3);
+}
+
+.replay-cursor {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 2;
+  pointer-events: none;
+  transition: transform 0.5s cubic-bezier(0.3, 0.7, 0.2, 1), opacity 0.3s ease;
+}
+
+.replay-cursor.is-typing {
+  transition: transform 0.08s linear;
+}
+
+.replay-cursor.is-gone {
+  opacity: 0;
+}
+
+.replay-cursor svg {
+  display: block;
+  width: 20px;
+  height: 20px;
+  margin: -3px 0 0 -3px;
+  fill: var(--c);
+  stroke: #fff;
+  stroke-width: 1.2;
+  filter: drop-shadow(0 1px 2px rgb(0 0 0 / 0.25));
+}
+
+.replay-cursor span {
+  position: absolute;
+  top: 16px;
+  left: 12px;
+  padding: 3px 8px;
+  border-radius: 4px 10px 10px 10px;
+  background: var(--c);
+  font: 500 11.5px var(--sans);
+  white-space: nowrap;
+  color: #fff;
+}
+
+.replay-cursor.is-undo span::after {
+  content: " · undo";
+  font-weight: 600;
+}
+
+.replay-foot {
+  padding: 16px 28px 22px;
+}
+
+.replay-caption {
+  min-height: 52px;
+  font-family: var(--sans);
+  font-size: 13px;
+}
+
+.replay-caption p {
+  margin: 0;
+}
+
+.replay-caption b {
+  font-weight: 600;
+  color: var(--c);
+}
+
+.replay-undo {
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 4px;
+  background: #fbe0e0;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--war);
+}
+
+.replay-round {
+  margin-left: 8px;
+  color: var(--ink-3);
+}
+
+.replay-comment {
+  margin-top: 4px !important;
+  font-family: var(--serif);
+  font-size: 15px;
+  color: var(--ink-2);
+}
+
+.replay-comment span,
+.replay-more {
+  font-family: var(--sans);
+  font-size: 12.5px;
+  color: var(--ink-3);
+}
+
+.replay-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.replay-controls > button {
+  min-width: 34px;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  background: #fff;
+  font: 500 14px var(--sans);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.replay-controls .replay-play {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: #fff;
+  font-size: 11px;
+}
+
+.replay-steps {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 4px;
+  margin: 0 6px;
+}
+
+.replay-steps button {
+  flex: 1;
+  height: 8px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--c) 25%, #fff);
+  cursor: pointer;
+  transition: background 0.2s, transform 0.2s;
+}
+
+.replay-steps button.is-done {
+  background: color-mix(in srgb, var(--c) 70%, #fff);
+}
+
+.replay-steps button.is-current {
+  background: var(--c);
+  transform: scaleY(1.6);
+}
+
+.replay-steps button.is-undo {
+  border-radius: 2px;
+}
+
+.panel-doc del + ins {
+  margin-left: 2px;
+}
+
+.replay-cursor span {
+  transition: opacity 0.2s ease;
+}
+
+.replay-cursor.is-idle span {
+  opacity: 0;
+}
+
+.replay-p.is-empty {
+  display: none;
+}

@@ -5,22 +5,12 @@ const ARTICLES = [
   { page_id: 1187, title: "Alan Turing", versions: 1342, first: 1056931200 },
   { page_id: 2214, title: "Albert Einstein", versions: 2871, first: 1047427200 },
   { page_id: 3905, title: "Atom", versions: 1108, first: 1049673600 },
-  { page_id: 4011, title: "Quantum computing", versions: 1906, first: 1033689600 },
+  { page_id: 4011, title: "Quantum computing", versions: 5047, first: 1003680653 },
   { page_id: 4012, title: "Qubit", versions: 388, first: 1104537600 },
   { page_id: 4377, title: "Quantum mechanics", versions: 2240, first: 1041379200 },
   { page_id: 5120, title: "Richard Feynman", versions: 964, first: 1070236800 },
   { page_id: 6034, title: "Superconductivity", versions: 517, first: 1093996800 },
 ];
-
-const TEXTS = {
-  4011: {
-    file: "./fake/quantum-computing.wiki",
-    rev_id: 9184412,
-    user: "Quantumavenger",
-    comment: "/* State of affairs: 2020s */ copyedit, update error-correction milestones",
-    row_start: "2026-11-03 14:22:09.512000",
-  },
-};
 
 // Local copies of the images the article uses; anything else comes straight from Wikimedia Commons.
 const LOCAL_FILES = {
@@ -34,7 +24,8 @@ const LOCAL_FILES = {
   "BQP complexity class diagram.svg": "bqp-complexity-class-diagram.png",
 };
 
-const HISTORIES = { 4011: "./history.json" };
+// Which files hold each article's history. Only Quantum computing has one in the prototype.
+const ARTICLE_FILES = { 4011: { history: "./history.json", versions: "./versions/", wars: "./wars/" } };
 
 // Opening lines and lead image of each article this page links to, keyed by link target.
 const PREVIEWS = await fetch(new URL("./previews.json", import.meta.url)).then((r) => r.json());
@@ -48,25 +39,21 @@ export async function getArticles() {
 }
 
 // fetch(`/api/article?id=${id}&at=${at}`).then((r) => r.json())
+// The real API returns the exact version at that moment. The prototype stores the text of about 400 of the
+// 5,047 versions (each card's edit and every edit inside a war), so it returns the latest stored one.
 export async function getArticle(id, at) {
-  await delay(260);
-  const meta = TEXTS[id];
+  await delay(120);
   const article = ARTICLES.find((a) => a.page_id === id);
   const stamp = new Date(at * 1000).toISOString().slice(0, 19).replace("T", " ");
   const sql = `SELECT title, rev_id, user, comment, row_start, text\nFROM article FOR SYSTEM_TIME AS OF TIMESTAMP '${stamp}'\nWHERE page_id = ${id}`;
-  if (!meta || !article || at < article.first) return { sql, version: null };
-  const text = await fetch(meta.file).then((r) => r.text());
-  return {
-    sql,
-    version: {
-      title: article.title,
-      rev_id: meta.rev_id,
-      user: meta.user,
-      comment: meta.comment,
-      row_start: meta.row_start,
-      text,
-    },
-  };
+  const files = ARTICLE_FILES[id];
+  if (!article || !files) return { sql, version: null };
+  const [rows, texts] = await Promise.all([historyRows(files), storedTexts(files)]);
+  const atMs = at * 1000;
+  const row = rows.findLast((r) => texts.has(r.rev_id) && Date.parse(`${r.row_start.slice(0, 19).replace(" ", "T")}Z`) <= atMs);
+  if (!row) return { sql, version: null };
+  const { rev_id, user, comment, row_start } = row;
+  return { sql, version: { title: article.title, rev_id, user, comment, row_start, text: await texts.get(rev_id)() } };
 }
 
 // Not in app.py yet. A real version could look the title up in /api/articles, then take the
@@ -81,9 +68,8 @@ export async function getPreview(title) {
 // FROM article FOR SYSTEM_TIME ALL WHERE page_id = %s ORDER BY row_start
 export async function getHistory(id) {
   await delay(200);
-  const file = HISTORIES[id];
-  if (!file) return [];
-  return fetch(new URL(file, import.meta.url)).then((r) => r.json());
+  const files = ARTICLE_FILES[id];
+  return files ? historyRows(files) : [];
 }
 
 let changes = null;
@@ -100,4 +86,40 @@ export function fileUrl(name) {
   const local = LOCAL_FILES[name];
   if (local) return `./files/${local}`;
   return `https://commons.wikimedia.org/wiki/Special:FilePath/${encodeURIComponent(name)}?width=640`;
+}
+
+const cache = new Map();
+const once = (key, load) => {
+  if (!cache.has(key)) cache.set(key, load());
+  return cache.get(key);
+};
+const json = (path) => fetch(new URL(path, import.meta.url)).then((r) => r.json());
+const gunzip = async (path) =>
+  new Response((await fetch(new URL(path, import.meta.url))).body.pipeThrough(new DecompressionStream("gzip"))).text();
+
+const historyRows = (files) => once(files.history, () => json(files.history));
+
+// Maps rev_id to a loader for that version's text, from single files and from war packs.
+function storedTexts(files) {
+  return once(`texts:${files.versions}`, async () => {
+    const [versions, wars] = await Promise.all([json(`${files.versions}index.json`), json(`${files.wars}index.json`)]);
+    const texts = new Map(versions.map((rev) => [rev, () => once(`v:${rev}`, () => gunzip(`${files.versions}${rev}.wiki.gz`))]));
+    for (const war of wars) {
+      const pack = () => once(`w:${war.id}`, async () => unpack(JSON.parse(await gunzip(`${files.wars}${war.id}.json.gz`))));
+      war.revs.forEach((rev, i) => texts.set(rev, async () => (await pack())[i]));
+    }
+    return texts;
+  });
+}
+
+// A war pack holds its first version in full and each later one as line patches against the one before.
+function unpack({ base, patches }) {
+  const versions = [base];
+  let lines = base.split("\n");
+  for (const ops of patches) {
+    lines = [...lines];
+    for (const [from, to, replacement] of [...ops].reverse()) lines.splice(from, to - from, ...replacement);
+    versions.push(lines.join("\n"));
+  }
+  return versions;
 }

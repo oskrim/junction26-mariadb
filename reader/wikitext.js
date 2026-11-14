@@ -5,6 +5,9 @@
 const inlineMark = (i) => `\u0001${i}\u0002`;
 const blockMark = (i) => `\n\u0003${i}\u0004\n`;
 
+// Stands where the article asks for its footnote list ({{Reflist}}); replaced once the list is built.
+const REFLIST = "<!--reflist-->";
+
 const HATNOTES = { main: "Main article", further: "Further information", "see also": "See also" };
 const CITATIONS = /^(cite\b.*|citation)$/;
 const FILE_OPTION =
@@ -96,6 +99,8 @@ export function renderWikitext(source, { fileUrl, renderMath }) {
         return "—";
       case "hyphen":
         return "-";
+      case "reflist":
+        return keepBlock(REFLIST);
       case "!":
         return "|";
       default:
@@ -202,10 +207,11 @@ export function renderWikitext(source, { fileUrl, renderMath }) {
     const ref = numbered[i];
     items.push(`<li id="cite-${ref.n}">${number(restore(inline(expandTemplates(ref.body ?? ""))))}</li>`);
   }
-  if (!items.length) return { html: bodyHtml, toc, description };
+  const footnotes = items.length ? `<ol class="references">${items.join("")}</ol>` : "";
+  if (bodyHtml.includes(REFLIST)) return { html: bodyHtml.replace(REFLIST, footnotes).replaceAll(REFLIST, ""), toc, description };
+  if (!footnotes) return { html: bodyHtml, toc, description };
   toc.push({ level: 2, text: "References", id: "references" });
-  const references = `<section class="references"><h2 id="references">References</h2><ol>${items.join("")}</ol></section>`;
-  return { html: `${bodyHtml}\n${references}`, toc, description };
+  return { html: `${bodyHtml}\n<h2 id="references">References</h2>${footnotes}`, toc, description };
 
   function renderList(lines) {
     let out = "";

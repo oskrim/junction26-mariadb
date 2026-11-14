@@ -244,6 +244,7 @@ a {
 }
 
 .meta-link {
+  white-space: nowrap;
   color: var(--link);
   text-decoration: none;
 }
@@ -543,12 +544,8 @@ sup.ref a:hover {
 
 /* References */
 
-.references {
+.body .references {
   clear: both;
-  padding-top: 8px;
-}
-
-.references ol {
   padding-left: 1.8em;
   font-size: 14px;
   line-height: 1.55;
