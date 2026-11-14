@@ -354,10 +354,9 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
       const walking = b.k === stopNow;
       const ahead = b.k > stopNow;
       if (!walking && b.joinPrev && b.joinPrev.k !== stopNow) continue;
-      // A walker who has reached the end of their road waits at its far point, out on the road, not on
-      // the lane where it joins.
-      const far = (stopZ[b.k - 1] + stopZ[b.k]) / 2;
-      const wz = walking ? Math.max(stopZ[b.k - 1], nowZ > far && nowZ >= stopZ[b.k] - 80 ? far : Math.min(nowZ, stopZ[b.k] - 80)) : far;
+      // A walker walks their whole road, back to where it joins the lane, and the next editor sets off
+      // from there; editors done stand at their road's far point.
+      const wz = walking ? Math.min(stopZ[b.k], Math.max(stopZ[b.k - 1], nowZ)) : (stopZ[b.k - 1] + stopZ[b.k]) / 2;
       if (wz < camZ + NEAR || wz > camZ + NAMED) continue;
       standing.push({ z: wz, draw: () => drawEditor(b, wz, walking, ahead) });
     }
