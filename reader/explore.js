@@ -447,6 +447,8 @@ export async function mountExplore(root, { id }) {
     // The path you took is one strong blue line; the newest article's links are thin blue ones.
     const pathKeys = new Set(trail.map((m, i) => linkKey(i ? trail[i - 1] : centerId, m)));
     const tip = trail.at(-1);
+    // Lines from the middle article are clear when it has a few links and faint when it has hundreds.
+    const spokeAlpha = clamp(4 / links.get(centerId).size ** 0.75, 0.05, 0.42);
     for (const { source, target: to } of edges) {
       const a = pos.get(source);
       const b = pos.get(to);
@@ -460,7 +462,7 @@ export async function mountExplore(root, { id }) {
       const fromCenter = source === centerId || to === centerId;
       const onPath = pathKeys.has(linkKey(source, to));
       const onBranch = (source === tip && hop.get(to) === 3) || (to === tip && hop.get(source) === 3);
-      ctx.lineWidth = onPath ? 2.2 : 1;
+      ctx.lineWidth = onPath ? 2.2 : fromCenter && spokeAlpha > 0.2 ? 1.4 : 1;
       if (onPath) {
         ctx.strokeStyle = "rgb(51 102 204)";
         ctx.globalAlpha = 0.85 * alpha;
@@ -472,7 +474,7 @@ export async function mountExplore(root, { id }) {
         ctx.globalAlpha = 0.3 * alpha;
       } else {
         ctx.strokeStyle = "rgb(32 33 34)";
-        ctx.globalAlpha = alpha * (fromCenter ? 0.05 : 0.09) * (0.5 + 0.5 * (pa.near + pb.near) / 2) * (focusSet ? 0.4 : 1);
+        ctx.globalAlpha = alpha * (fromCenter ? spokeAlpha : 0.09) * (0.5 + 0.5 * (pa.near + pb.near) / 2) * (focusSet ? 0.4 : 1);
       }
       ctx.beginPath();
       ctx.moveTo(pa.x, pa.y);
