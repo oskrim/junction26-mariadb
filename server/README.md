@@ -182,3 +182,31 @@ one transaction matters: with a commit per statement the vector index took only 
 writers were slower still (45 rows/s), as they wait for each other in the index.
 The NVIDIA driver comes from Ubuntu's prebuilt modules for the running kernel (`bootstrap.sh`), loaded with
 `modprobe`, without a reboot.
+
+## Scale
+
+Measured on the cloud box (22 vCPU, 117 GB RAM, 32 GB buffer pool), database `wiki_full`, 14 November 2026.
+
+| Dataset | Articles | Versions | Text | Where, on disk |
+|---|---:|---:|---:|---|
+| S | 29,460 (fi 19,285, sv 4,921, en 5,254) | 1 each | 114 MB | `s_article`, 0.16 GB |
+| M | 19,742 | 862,076 | 11.8 GB | `m_article`, 6.0 GB (compressed) |
+| L | 549,131 added (568,416 in L; the rest are in M) | 1 each | 1.41 GB | `m_article`, +0.9 GB |
+| Search text | 568,873 | | | `m_search`, 2.1 GB |
+| FULLTEXT on `m_search.text` | | | | 4.25 GB |
+| FULLTEXT on `m_article_stats.title` | | | | 0.11 GB |
+
+`load.py l` took 23 minutes (549,131 articles, FULLTEXT indexes updated as it went).
+
+Search latency, 10 typical queries (sisällissota, Mannerheim, Tampereen taistelu, punakaarti, talvisota,
+1918, jatkosota, suojeluskunta, Viipurin taistelu, Helsinki), 5 rounds each:
+
+| What | Articles searched | p50 | p95 |
+|---|---:|---:|---:|
+| FULLTEXT keyword ranking (`keyword_ranking`), SQL time | 568,873 | 51 ms | 314 ms |
+| `/api/search` (FULLTEXT + vectors + snippets), server time from the request log | 568,873 | 147 ms | 493 ms |
+| The earlier substring search (`LOCATE` in every text) | 19,742 (M only) | 130 ms | 794 ms |
+
+The slowest query is `Helsinki`: 64,074 articles match, 309 ms. The substring search does not scale to L: one
+`LOCATE('talvisota', text)` over all 568,873 texts takes 17.9 s and finds 1,941 articles; FULLTEXT takes
+28 ms and finds 5,135, with the inflected forms.
