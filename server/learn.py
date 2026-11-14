@@ -90,9 +90,11 @@ def serve(handler, connect):
         finally:
             con.close()
         timings["db_ms"] = ms(started)
-        if not candidates:
-            raise AskError(404, "the article has no linked articles at that moment")
-        picks = rank(progress, request, here, candidates)
+        if candidates:
+            picks = rank(progress, request, here, candidates)
+        else:  # nothing to follow: explain from this article alone
+            progress.finish("No linked articles at that moment, so the explanation uses this article alone")
+            picks = []
         timings["rank_ms"] = ms(started)
         sources = []
         for c, why, focus in picks:
@@ -182,7 +184,8 @@ def rank(progress, request, here, candidates):
             seen.add(n)
             picks.append((candidates[n - 1], str(p.get("why") or ""), str(p.get("focus") or "")))
     if not picks:
-        raise AskError(502, "Gemini picked no linked articles")
+        progress.finish("None of the linked articles helps with this question, so the explanation uses this article alone")
+        return []
     picks = picks[:MAX_PICKS]
     progress.finish(f"Chose {len(picks)}: " + "; ".join(f"{c['title']} — {why.rstrip('.')}" for c, why, _ in picks))
     return picks
