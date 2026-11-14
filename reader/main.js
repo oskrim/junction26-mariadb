@@ -36,12 +36,23 @@ if (!version || !summary) {
       ${summary.versions === 1 ? "1 version, from" : `${summary.versions.toLocaleString("en-US")} versions since`} ${new Date(summary.first * 1000).getUTCFullYear()}
       <span aria-hidden="true">·</span>
       <a class="meta-link" href="./?id=${id}&view=history" data-view-link="history">View history</a>
-    </p>`;
+    </p>
+    <button type="button" class="hp-start">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3.2v9.6L12.6 8z"/></svg>
+      Watch it being written
+    </button>`;
   body.innerHTML = doc.html;
   toc.innerHTML = renderToc(doc.toc);
   document.body.classList.add("is-ready");
   trackActiveSection(doc.toc);
   import("./war-inline.js").then((m) => m.addWarMarkers({ body, id }));
+  // The article rewrites itself from its first version, with a timeline of its edits and wars at the bottom.
+  const start = head.querySelector(".hp-start");
+  start.addEventListener("click", async () => {
+    const { startHistoryPlay } = await import("./history-play.js");
+    start.disabled = true;
+    startHistoryPlay({ id, body, toc, renderToc, onClose: () => (start.disabled = false) });
+  });
   hoverCard({
     root: body,
     selector: "a.wl",
