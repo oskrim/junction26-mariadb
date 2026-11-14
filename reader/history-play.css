@@ -93,9 +93,10 @@
 /* Bottom left, where the years on the floor arrive, so the one coming takes its place */
 .hp-moment {
   position: absolute;
-  left: calc(var(--extra-left, 0px) + 40px);
+  /* Ending just left of the lane, which runs down the middle of the road's part of the panel */
+  right: calc((var(--toc) + 40px) / 2 + 56px);
   bottom: 18px;
-  text-align: left;
+  text-align: right;
   pointer-events: none;
 }
 
