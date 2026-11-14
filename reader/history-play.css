@@ -54,11 +54,11 @@
   position: fixed;
   top: max(0px, calc(60px - var(--page-y, 0px)));
   bottom: 92px;
-  left: var(--path-left, 0px);
+  left: 0;
   z-index: 2;
   display: flex;
   flex-direction: column;
-  width: calc(var(--toc) + 40px);
+  width: calc(var(--toc) + 40px + var(--extra-left, 0px));
   animation: hp-path-in 0.8s ease 0.2s both;
 }
 
@@ -69,7 +69,7 @@
   width: 100%;
   /* Soft edges: the road fades out at the sides and the top instead of being cut off */
   mask-image:
-    linear-gradient(to right, transparent, #000 4%, #000 86%, transparent),
+    linear-gradient(to right, #000 86%, transparent),
     linear-gradient(to bottom, transparent 12%, #000 30%, #000 92%, transparent);
   mask-composite: intersect;
 }
@@ -79,7 +79,7 @@
   position: absolute;
   top: 24px;
   right: 16px;
-  left: 56px;
+  left: calc(var(--extra-left, 0px) + 56px);
   display: flex;
   justify-content: space-between;
   margin: 0;
@@ -93,7 +93,7 @@
 /* Bottom left, where the years on the floor arrive, so the one coming takes its place */
 .hp-moment {
   position: absolute;
-  left: 40px;
+  left: calc(var(--extra-left, 0px) + 40px);
   bottom: 18px;
   text-align: left;
   pointer-events: none;
@@ -316,7 +316,7 @@
 
 .hp-sword {
   position: absolute;
-  bottom: 2px;
+  bottom: calc(2px + var(--row, 0) * 15px);
   display: grid;
   place-items: center;
   width: 18px;
@@ -636,4 +636,16 @@
 /* The key makes way for the war title */
 .hp-path.is-fight .hp-key {
   visibility: hidden;
+}
+
+/* A sword raised a row has a hairline down to its bar */
+.hp-sword::before {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  width: 1px;
+  height: calc(var(--row, 0) * 15px + 2px);
+  background: currentColor;
+  opacity: 0.45;
 }

@@ -103,9 +103,18 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
   let frame = 0;
   let stopped = false;
 
+  // The canvas reaches to the window's left edge; the road keeps to its own part, the right `roadWidth`
+  // pixels, centred on `mid`.
+  let extra = 0;
+  let roadWidth = 0;
+  let mid = 0;
+
   function resize() {
     const dpr = devicePixelRatio || 1;
     width = canvas.clientWidth;
+    extra = Math.min(width, parseFloat(getComputedStyle(canvas).getPropertyValue("--extra-left")) || 0);
+    roadWidth = width - extra;
+    mid = extra + roadWidth / 2;
     height = canvas.clientHeight;
     canvas.width = width * dpr;
     canvas.height = height * dpr;
@@ -116,7 +125,7 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
     if (stopped) return;
     frame = requestAnimationFrame(tick);
     if (!canvas.getClientRects().length) return;
-    if (canvas.clientWidth !== width || canvas.clientHeight !== height) resize();
+    if (canvas.clientWidth !== width || canvas.clientHeight !== height || canvas.dataset.extra !== String(extra)) resize();
     if (trip) {
       const t = Math.min(1, (now - trip.t0) / trip.ms);
       targetZ = trip.from + (trip.to - trip.from) * (trip.eased ? t * t * (3 - 2 * t) : t);
@@ -151,7 +160,7 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
     const camX = roadX(camZ + BACK) * 0.9;
     const project = (x, y, wz) => {
       const dz = wz - camZ;
-      return { x: width / 2 + ((x - camX) * f) / dz, y: horizon + ((EYE - y) * f) / dz, s: f / dz, dz };
+      return { x: mid + ((x - camX) * f) / dz, y: horizon + ((EYE - y) * f) / dz, s: f / dz, dz };
     };
     const calm = 1 - 0.94 * focus;
     const fog = (dz) => (1 - smoothstep(FAR * 0.45, FAR, dz)) * smoothstep(NEAR, NEAR + 380, dz);
@@ -385,7 +394,7 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
       ctx.font = `${walking ? 600 : 500} 11px Inter, system-ui, sans-serif`;
       const lw = Math.max(w, dw);
       // Always on the side toward the lane, so it never flips: left of the disc on right-hand roads.
-      const lx = b.side > 0 ? Math.max(4, foot.x - r - 5 - lw) : Math.min(width - lw - 4, foot.x + r + 5);
+      const lx = b.side > 0 ? Math.max(extra + 4, foot.x - r - 5 - lw) : Math.min(width - lw - 4, foot.x + r + 5);
       const box = { x: lx - 3, y: cy - 8, w: lw + 6, h: diff?.length ? 30 : 16 };
       if (!walking && labels.some((o) => box.x < o.x + o.w && o.x < box.x + box.w && box.y < o.y + o.h && o.y < box.y + box.h)) return;
       labels.push(box);
@@ -445,9 +454,9 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
     ctx.globalAlpha = focus;
     ctx.fillStyle = "#fff";
     ctx.fillRect(0, 0, width, height);
-    const cx = width / 2;
+    const cx = mid;
     const cy = height * 0.42;
-    const R = Math.min(width * 0.09, 32);
+    const R = Math.min(roadWidth * 0.09, 32);
     const u = Math.min(1, (now - f.t0) / 700);
     const ended = f.winner !== null;
     const people = f.war.fighters.slice(0, 8);
@@ -488,7 +497,7 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
       const dy = (y - cy) / len;
       const out = 40 + Math.abs(dx) * (tw / 2) + Math.abs(dy) * 7;
       const ly = y + dy * out;
-      const lx = Math.max(tw / 2 + 4, Math.min(width - tw / 2 - 4, x + dx * out));
+      const lx = Math.max(extra + tw / 2 + 4, Math.min(width - tw / 2 - 4, x + dx * out));
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.fillStyle = colorFor(k);

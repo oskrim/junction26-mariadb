@@ -95,10 +95,12 @@ export function startHistoryPlay({ id, body, onClose }) {
     const styles = getComputedStyle(document.querySelector(".layout"));
     const toc = parseFloat(styles.getPropertyValue("--toc")) || 300;
     const gap = parseFloat(styles.getPropertyValue("--gap")) || 64;
-    side.style.setProperty("--path-left", `${article.left - gap - toc - 40}px`);
-    const r = side.getBoundingClientRect();
-    side.style.setProperty("--note-left", `${r.left + 48}px`);
-    side.style.setProperty("--note-width", `${Math.max(0, r.width - 64)}px`);
+    // The panel starts at the window's left edge; the road keeps to the column's place within it.
+    const extra = Math.max(0, Math.round(article.left - gap - toc - 40));
+    side.style.setProperty("--extra-left", `${extra}px`);
+    side.querySelector("canvas").dataset.extra = String(extra);
+    side.style.setProperty("--note-left", `${extra + 48}px`);
+    side.style.setProperty("--note-width", `${toc - 24}px`);
   };
   requestAnimationFrame(placeNote);
   addEventListener("resize", placeNote);
@@ -215,21 +217,18 @@ export function startHistoryPlay({ id, body, onClose }) {
     const span = edits.at(-1).time - start;
     const row = $(".hp-swords");
     const width = row.clientWidth || 800;
-    // Wars a few months apart would overlap, so each run of close ones spreads out around its middle.
-    const GAP = 17;
-    // Each sword stands over its month's bar.
-    const want = wars.map((w) => monthCentre(w.start) * width);
-    const runs = [];
-    want.forEach((x, k) => {
-      const last = runs.at(-1);
-      if (last && x - want[last.at(-1)] < GAP) last.push(k);
-      else runs.push([k]);
+    // Each sword stands right over its month's bar. Wars a month or two apart would overlap, so a sword
+    // that would goes up a row, with a hairline down to its bar.
+    const GAP = 16;
+    const xs = wars.map((w) => monthCentre(w.start) * width);
+    const lastInRow = [];
+    const rows = xs.map((x) => {
+      let r = lastInRow.findIndex((last) => x - last >= GAP);
+      if (r < 0) r = lastInRow.length;
+      lastInRow[r] = x;
+      return r;
     });
-    const xs = [];
-    for (const r of runs) {
-      const middle = r.reduce((sum, k) => sum + want[k], 0) / r.length;
-      r.forEach((k, j) => (xs[k] = middle + (j - (r.length - 1) / 2) * GAP));
-    }
+    row.style.height = `${20 + Math.max(0, ...rows) * 15}px`;
     wars.forEach((war, k) => {
       const x = xs[k];
       const [a, b] = war.fighters.map(censor);
@@ -237,6 +236,7 @@ export function startHistoryPlay({ id, body, onClose }) {
       button.type = "button";
       button.className = `hp-sword${war.kind === "dispute" ? "" : " is-vandalism"}`;
       button.style.left = `${(x / width) * 100}%`;
+      button.style.setProperty("--row", rows[k]);
       button.dataset.war = war.id;
       button.title = `${war.kind === "dispute" ? "Edit war" : "Vandalism fought off"} · ${formatDate(war.start)} · ${a} vs ${b}`;
       button.innerHTML = SWORDS;
