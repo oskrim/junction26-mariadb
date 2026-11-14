@@ -43,6 +43,6 @@ The JSON API is under `/api/`. See the functions in `app.py` and `reader/api.js`
 uv run --with pymysql --with pyarrow python server/load.py m --articles all
 ```
 
-This loads all 19,742 articles and their 862,076 versions (11.8 GB of text). It takes a long time.
+This loads all 19,742 articles and their 862,076 versions (11.8 GB of text): about 21 minutes and 6.3 GB on the cloud box.
 You can stop it and run it again: it continues where it stopped.
 Links from earlier articles to articles loaded later are kept only when the target is also an S article.

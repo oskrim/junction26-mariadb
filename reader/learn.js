@@ -57,27 +57,26 @@ export function sourcesHtml({ explored, items }) {
       .join("")}</ul></div>`;
 }
 
-// Turns the answer's runs of [n], [n][m] and [n, m] markers into links to the articles they cite.
-// `html` is escaped text.
-export function citeLinks(html, { here, items }) {
+// Turns the answer's runs of [n], [n][m], [n, m] and [n], [m] markers into citation markers that carry
+// their tooltip text. Learn's markers link to the article they cite; Ask's ("quotes") are buttons that show
+// the quote in the article. Markers without a source are dropped. `html` is escaped text.
+export function citeLinks(html, { type, here, items }) {
   const byN = new Map(items.map((s) => [s.n, s]));
-  byN.set(0, { ...here, url: null });
-  return html.replace(/\s*(?:\[\d+(?:\s*,\s*\d+)*\])+/g, (run) => {
-    const links = run.match(/\d+/g).map((n) => {
-      const s = byN.get(Number(n));
-      return s ? `<a class="cite" href="${escape(href(s))}" target="_blank" rel="noopener" title="${escape(s.title)}">${n}</a>` : null;
-    });
-    return links.every(Boolean) ? `<sup>${links.join(",")}</sup>` : run;
+  if (type === "sources") byN.set(0, { ...here, url: null, why: "The article you are reading" });
+  const marker = (n) => {
+    const s = byN.get(n);
+    if (!s) return null;
+    const tip = `data-tip-title="${escape(s.title)}" data-tip-meta="${escape(s.why ?? (s.section || "Introduction"))}" data-tip-quote="${escape(s.quote ?? "")}"`;
+    return type === "quotes"
+      ? `<button type="button" class="cite" data-quote="${escape(s.quote)}" ${tip}>${items.indexOf(s) + 1}</button>`
+      : `<a class="cite" href="${escape(href(s))}" target="_blank" rel="noopener" ${tip}>${n}</a>`;
+  };
+  return html.replace(/\s*\[\d+(?:\s*,\s*\d+)*\](?:\s*,?\s*\[\d+(?:\s*,\s*\d+)*\])*/g, (run) => {
+    const links = [...new Set(run.match(/\d+/g).map(Number))].map(marker).filter(Boolean);
+    return links.length ? `<sup>${links.join(",")}</sup>` : "";
   });
 }
 
 const href = (s) => (s.page_id ? `./?id=${s.page_id}` : s.url);
 
 const escape = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
-
-const style = document.createElement("style");
-style.textContent = `
-  .attach-sources a.res-item { text-decoration: none; }
-  .msg-text sup { line-height: 0; }
-  .msg-text a.cite { margin-left: 1px; font-size: 11px; font-weight: 500; text-decoration: none; color: #3366cc; }`;
-document.head.append(style);

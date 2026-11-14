@@ -13,18 +13,20 @@ const at = () => Number(new URLSearchParams(location.search).get("at")) || Math.
 
 export function respond({ mode, prompt, context, article, turn = 0, history = [], onStep = null }) {
   if (mode === "visualise") return cannedRespond({ mode, prompt, context, article, turn });
-  const request = { mode, prompt, context, page_id: article.page_id, at: at(), history: history.slice() };
+  const request = { mode, prompt, context, page_id: article.page_id, at: at(), viewport: { w: innerWidth, h: innerHeight }, history: history.slice() };
   history.push({ role: "user", text: prompt });
   let found = null;
-  const attachment = mode === "find" ? new Promise((resolve) => (found = resolve)) : null;
+  const attachment = new Promise((resolve) => (found = resolve));
   return { stream: record(answer(request, onStep, found), history), attachment };
 }
 
-// Ask streams "message" text; Find sends one "result" with its text and attachment.
+// Ask streams "message" text, then "sources": the quotes its markers cite. Find sends one "result" with its
+// text and attachment.
 async function* answer(request, onStep, found) {
   try {
     for await (const { name, data } of events(BASE + "/api/ask", request)) {
       if (name === "message") yield data;
+      else if (name === "sources") found(data);
       else if (name === "result") {
         found(data.attachment && escapeResults(data.attachment));
         yield data.text;
@@ -32,7 +34,7 @@ async function* answer(request, onStep, found) {
       else onStep?.(name, data);
     }
   } finally {
-    found?.(null);
+    found(null);
   }
 }
 
@@ -99,13 +101,16 @@ const escapeHtml = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt
 // Clicking a quote under "In this article" scrolls to that passage in the article and highlights it.
 addEventListener("click", (event) => {
   const title = event.target.closest(".res-item")?.querySelector(".res-title")?.textContent;
+  if (title) showQuote(title);
+});
+
+export function showQuote(quote) {
   const body = document.querySelector(".body");
-  if (!title || !body) return;
-  const range = findText(body, title) ?? findText(body, title.slice(0, 60));
+  const range = body && (findText(body, quote) ?? findText(body, quote.slice(0, 60)));
   if (!range) return;
   range.startContainer.parentElement.scrollIntoView({ behavior: "smooth", block: "center" });
   if (globalThis.Highlight && CSS.highlights) CSS.highlights.set("ask-quote", new Highlight(range));
-});
+}
 
 const style = document.createElement("style");
 style.textContent = "::highlight(ask-quote) { background: #ffe58a; color: inherit; }";

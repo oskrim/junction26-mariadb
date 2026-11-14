@@ -3,7 +3,9 @@
 Both modes stream Server-Sent Events, the same as /api/learn:
   step      {id, text, done}: one piece of work; a later event with the same id updates its text or ends it
   thinking  a piece of Gemini's thought summary (a JSON string)
-  message   ask: a piece of the answer text
+  message   ask: a piece of the answer text, with markers [1], [2], ... after its claims
+  sources   ask, after the answer: {type: "quotes", here, items: [{n, title, section, quote}]}, the passages the
+            markers cite, each found word for word in the article; a marker without an item cites nothing
   result    find: {text, attachment, version}: quotes that answer the prompt, when the top one first appeared,
             and other articles that mention the key term
   error     the message of the failure that ended the request; the step running at that moment failed
@@ -27,11 +29,19 @@ MAX_HISTORY = 12
 # includeThoughts costs nothing and usually returns none.
 THINKING = {"thinkingLevel": "low", "includeThoughts": True}
 
+NARROW_W = 700
 ASK_RULES = """You answer questions about one Wikipedia article for a reader.
 - Answer in the language of the question, not the language of the article.
 - Ground every claim in the article text and edit facts given below. If they do not say, say so plainly.
-- Keep it short: 3 to 6 sentences, plain prose, no Markdown, no lists.
-- Say which version you read, by its date (for example "In the version of 12 September 2026, ...")."""
+- Keep it short: {length}, plain prose, no Markdown, no lists.
+- Say which version you read, by its date (for example "In the version of 12 September 2026, ...").
+- End each claim that rests on the article text with a marker like [1] or [1][2], numbering the passages you
+  cite: at most 4 passages, and a claim that rests on a passage already cited reuses its number."""
+QUOTE_RULES = """- After the answer, write <quotes> on its own line, then one line per marker you used: the marker, then
+  the words of the passage it rests on, copied character for character from a prose sentence of the article
+  text (one sentence or clause, 30 to 200 characters; not the infobox, a table or markup). Write nothing after
+  the last quote."""
+QUOTES_TAG = "<quotes>"
 
 FIND_RULES = """You find where one Wikipedia article says something. Read the article wikitext and return:
 - quotes: up to 5 passages that best answer the request, most relevant first. Each "text" is copied
@@ -155,8 +165,12 @@ def parse(handler):
     if mode not in ("ask", "find") or not prompt:
         raise AskError(400, "mode must be ask or find, and prompt must not be empty")
     history = [h for h in body.get("history") or [] if isinstance(h, dict) and h.get("text")][-MAX_HISTORY:]
+    try:
+        width = int((body.get("viewport") or {}).get("w") or 1200)
+    except (ValueError, TypeError, AttributeError) as error:
+        raise AskError(400, f"bad request: {error}")
     return {"mode": mode, "prompt": prompt, "context": body.get("context") or None,
-            "page_id": page_id, "at": at, "history": history}
+            "page_id": page_id, "at": at, "history": history, "narrow": width < NARROW_W}
 
 
 def version_at(cur, page_id, at):
@@ -264,11 +278,62 @@ def stream_answer(progress, request, version, facts):
     contents += [{"role": "user" if h.get("role") == "user" else "model", "parts": [{"text": str(h["text"])}]}
                  for h in request["history"]]
     contents.append({"role": "user", "parts": [{"text": request["prompt"]}]})
+    length = "2 or 3 sentences" if request["narrow"] else "3 to 6 sentences"
+    rules = ASK_RULES.format(length=length) + "\n" + QUOTE_RULES
     progress.step("Asking Gemini…")
     started = time.perf_counter()
-    for piece in gemini_stream(progress, ASK_RULES, contents):
+    cited = []
+    for kind, value in until_quotes(gemini_stream(progress, rules, contents)):
+        if kind == "quotes":
+            cited = value
+            continue
         progress.finish(f"Asked Gemini: first words after {time.perf_counter() - started:.1f} s")
-        event(progress.handler, "message", piece)
+        event(progress.handler, "message", value)
+    event(progress.handler, "sources", {"type": "quotes", "here": {"title": version["title"], "page_id": request["page_id"]},
+                                        "items": article_quotes(version, cited)})
+
+
+def until_quotes(pieces):
+    """Splits a stream that ends in a QUOTES_TAG block: yields ("text", piece) for the answer, then one
+    ("quotes", [(n, quote)]). What may be the start of the tag, and trailing whitespace, waits for more text."""
+    buffer, block = "", None
+    for piece in pieces:
+        if block is not None:
+            block += piece
+            continue
+        buffer += piece
+        at = buffer.find(QUOTES_TAG)
+        if at >= 0:
+            block, buffer = buffer[at + len(QUOTES_TAG):], buffer[:at]
+            continue
+        hold = buffer.rfind("<")
+        keep = len(buffer[:hold if hold >= 0 and QUOTES_TAG.startswith(buffer[hold:]) else None].rstrip())
+        if keep:
+            yield "text", buffer[:keep]
+            buffer = buffer[keep:]
+    if buffer.strip():
+        yield "text", buffer.rstrip()
+    found = re.findall(r"^\s*\[(\d+)\]\s*(.+)$", block or "", re.M)
+    yield "quotes", [(int(n), q.strip().strip("\"'„“”«»")) for n, q in found]
+
+
+# A heading line of the wikitext, as in "== Taustaa ==".
+HEADING = re.compile(r"^(={2,6})\s*(.*?)\s*\1\s*$", re.M)
+
+
+def article_quotes(version, cited):
+    """The cited quotes that occur word for word in the version, each with the heading of its section."""
+    clean, items, seen = version["clean"], [], set()
+    for n, quote in cited:
+        needle = Cleaned(quote).text.strip()
+        at = clean.text.find(needle) if len(needle) >= 12 and n not in seen else -1
+        if at < 0:
+            continue
+        seen.add(n)
+        headings = [m.group(2) for m in HEADING.finditer(clean.text, 0, at)]
+        items.append({"n": n, "title": version["title"], "section": plain(headings[-1]) if headings else "",
+                      "quote": plain(needle)})
+    return items
 
 
 def event(handler, name, data):

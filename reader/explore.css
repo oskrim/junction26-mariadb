@@ -427,11 +427,17 @@ body[data-view="explore"] {
   font: 500 17px var(--serif);
 }
 
+/* Stays at the bottom of the panel while the text above it scrolls. */
 .ex-actions {
+  position: sticky;
+  bottom: 0;
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-top: 20px;
+  margin: 20px -24px -24px;
+  padding: 12px 24px 20px;
+  background: #fff;
+  box-shadow: 0 -1px 0 rgb(0 0 0 / 0.06);
 }
 
 .ex-btn {
