@@ -17,7 +17,7 @@ const AGAIN = `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8a4.5 4
 // Milliseconds at 1×: the pause after each version, longer where a war starts; a paragraph opening or
 // closing; and how long a changed paragraph shows its new words.
 const STEP = 300;
-const ROUND_HOLD = 450;
+const ROUND_HOLD = 250;
 const QUIET_ROUND = 550;
 const MIN_TRIP = 1600;
 const ERASE = 550;
@@ -706,7 +706,7 @@ export function startHistoryPlay({ id, body, onClose }) {
       openUp(el, el.offsetHeight, SHUT / rate, 0).then(() => el.remove());
     }
     // In a war the next blow follows straight on.
-    if (jobs.length) await wait((typist?.war ? 250 : SETTLE) / rate, token);
+    if (jobs.length) await wait((typist?.war ? 150 : SETTLE) / rate, token);
     for (const { draft, next } of jobs) {
       if (!draft?.isConnected) continue;
       const from = draft.offsetHeight;

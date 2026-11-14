@@ -267,7 +267,8 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
       const road = (to, alpha) =>
         slab(stopZ[b.k - 1], to, (wz) => roadX(wz) + branchOffset(b, wz), (wz) => branchHalf(b, wz), LANE_H,
           `hsla(${h},${sat}%,${light}%,${alpha * a})`, `hsla(${h},${sat}%,${light - 22}%,${alpha * a})`);
-      road(stopZ[b.k], done ? 0.45 : walking ? 0.25 : 0.1);
+      // A road stays as strong once walked as while it was being walked.
+      road(stopZ[b.k], done ? 0.9 : walking ? 0.25 : 0.1);
       if (walking) road(Math.min(stopZ[b.k], nowZ), 0.9);
     }
 
@@ -652,9 +653,9 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
         targetZ = camZ = zAt(time) - BACK;
       } else trip = { from: targetZ, to: zAt(time) - BACK, t0: performance.now(), ms: 700, eased: true };
     },
-    // Travels to `time` at an even pace, arriving in `ms`.
+    // Travels to `time`, easing in and out, arriving in `ms`.
     glide(time, ms) {
-      trip = { from: targetZ, to: zAt(time) - BACK, t0: performance.now(), ms: Math.max(1, ms), eased: false };
+      trip = { from: targetZ, to: zAt(time) - BACK, t0: performance.now(), ms: Math.max(1, ms), eased: true };
     },
     // Stops where it is, mid-trip.
     freeze() {
