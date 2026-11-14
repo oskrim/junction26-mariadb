@@ -46,7 +46,7 @@ def connect():
         ssl={"verify_mode": False} if os.environ.get("DB_SSL") == "1" else None,
     )
     con.cursor().execute("SET time_zone = '+00:00'")
-    # Candidates one vector index search looks at (default 20): with M=16, 80 finds the exact top 10.
+    # Candidates one vector index search looks at (default 20); see vector.EF_SEARCH.
     con.cursor().execute(f"SET mhnsw_ef_search = {vector.EF_SEARCH}")
     return con
 

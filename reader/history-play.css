@@ -547,10 +547,9 @@
 }
 
 .hp-del {
-  color: #b42323;
-  background: #fde8e8;
+  color: var(--ink-3);
   text-decoration: line-through;
-  text-decoration-color: rgb(180 35 35 / 0.5);
+  text-decoration-color: rgb(180 35 35 / 0.55);
 }
 
 .hp-rest {

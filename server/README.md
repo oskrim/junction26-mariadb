@@ -112,7 +112,8 @@ articles.
   GPU: ~7 ms).
 - Every other Finnish article: `embed.py articles`, a GPU batch job (below). The search uses only the `fi` rows.
 - `M=16`, not the default 6: with 1024 dimensions `M=6` found only 79% of the true top 10 (MariaDB's RAG
-  starter). The app sets `mhnsw_ef_search = 80`; `deploy.sh` sets `mhnsw_max_cache_size` to 4 GB, so the
+  starter). The app sets `mhnsw_ef_search = 200` on each connection (measured below); `deploy.sh` sets
+  `mhnsw_max_cache_size` to 4 GB, so the
   index graph stays in memory.
 - `embed.py serve` (systemd `wiki-embed`, `127.0.0.1:8020`) embeds questions with the same model. Its vectors
   agree with S's at cosine 0.9999. When it does not answer, search uses keywords only.
@@ -121,7 +122,7 @@ articles.
 
 `/api/search` scores each candidate with a linear sum of saturated scores, in one statement
 (`vector.hybrid_sql`). The candidates are the union of the FULLTEXT title top 50, the FULLTEXT text top 50 and
-the vector index top 50 (`ef_search` 80). Then every candidate gets all its component scores:
+the vector index top 50 (`ef_search` 200). Then every candidate gets all its component scores:
 
 ```text
 score = 2 · sat(title MATCH, 30) + sat(text MATCH, 80) + 3 · (title = query)
@@ -217,6 +218,28 @@ On the cloud box (A100 80 GB, 22 vCPU), `wiki_full`, while the batch job was run
 | Hybrid statement, reciprocal rank fusion (before) | 29 ms |
 | Hybrid statement, saturated sum (now; 8 queries, all 568,873 articles) | 136 ms (84-299) |
 | `/api/search` (embedding, SQL, texts and snippets), saturated sum | 175-400 ms |
+
+### Recall of the vector index
+
+The MariaDB mentors' setting is `M=16` with `mhnsw_ef_search = 80`, which found 100% of the exact top 10 in
+MariaDB's RAG starter (28,345 vectors). With all 568,873 Finnish vectors it does not. 20 questions (English and
+Finnish), the index's top 10 (`WHERE lang = 'fi' ORDER BY VEC_DISTANCE_COSINE(...) LIMIT 10`) against the
+exact top 10 (every vector compared, with numpy over the exported files), median of 5 runs:
+
+| `mhnsw_ef_search` | recall@10 | worst question | median | slowest |
+|---|---|---|---|---|
+| 20 (default) | 82.5% | 0% | 2.0 ms | 30 ms |
+| 80 (mentors) | 86.0% | 0% | 2.9 ms | 36 ms |
+| **200 (the app)** | **95.5%** | 60% | 6.1 ms | 47 ms |
+| 400 | 98.0% | 80% | 9.2 ms | 62 ms |
+
+- The miss is a whole region, not a few rows: for "Sibelius Finlandia" the search at 80 stays among articles at
+  cosine distance 0.59, while the true nearest ("Finlandia (sävelruno)", "Jean Sibelius") are at 0.35-0.44.
+  The graph was built one row at a time as the vectors arrived (S, then L in page-id order), and some regions
+  are reached only by a wider search.
+- Not the `lang = 'fi'` filter: without it the search finds the same rows.
+- 200 costs ~3 ms a search more than 80. A rebuilt index (`ALTER TABLE ... DROP INDEX, ADD VECTOR INDEX`) may
+  need less; not measured.
 
 ### The GPU batch job
 

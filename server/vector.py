@@ -10,9 +10,9 @@ import urllib.request
 
 EMBED_URL = os.environ.get("EMBED_URL", "http://127.0.0.1:8020")
 TIMEOUT_S = 5
-# Candidates one index search looks at (default 20). With M=16, 80 found 100% of the exact top 10 in MariaDB's
-# RAG starter.
-EF_SEARCH = 80
+# Candidates one index search looks at (default 20). With M=16 and 568,873 vectors, 80 found 86% of the exact
+# top 10 and 200 found 95.5%, in ~6 ms (server/README.md).
+EF_SEARCH = 200
 
 
 class Unavailable(Exception):
