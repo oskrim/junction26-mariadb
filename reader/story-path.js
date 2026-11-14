@@ -207,6 +207,8 @@ export function createStoryPath({ canvas, edits, wars, onPick, onTime = () => {}
       if (z1 < camZ + NEAR || z0 > camZ + FAR) continue;
       const turns = Math.max(2, war.reverts);
       const amp = war.kind === "dispute" ? 22 : 14;
+      // While the moment shown is inside the war, its braid is bolder.
+      const inside = nowZ >= z0 - 40 && nowZ <= z1 + 120;
       for (const [k, color] of FIGHTER_COLORS.entries()) {
         let prev = null;
         for (let wz = Math.max(z0, camZ + NEAR); wz <= z1; wz += 6) {
@@ -214,8 +216,8 @@ export function createStoryPath({ canvas, edits, wars, onPick, onTime = () => {}
           const off = amp * Math.sin(Math.PI * t) * Math.sin(Math.PI * turns * t) * (k ? -1 : 1);
           const p = project(roadX(wz) + off, 0, wz);
           if (prev) {
-            ctx.strokeStyle = hexAlpha(color, ink(wz, war.kind === "dispute" ? 0.8 : 0.45) * fog(p.dz));
-            ctx.lineWidth = Math.min(2.5, Math.max(0.6, 2.4 * p.s));
+            ctx.strokeStyle = hexAlpha(color, ink(wz, inside ? 0.95 : war.kind === "dispute" ? 0.8 : 0.45) * fog(p.dz));
+            ctx.lineWidth = Math.min(inside ? 4 : 2.5, Math.max(0.6, (inside ? 4 : 2.4) * p.s));
             ctx.beginPath();
             ctx.moveTo(prev.x, prev.y);
             ctx.lineTo(p.x, p.y);
@@ -223,6 +225,25 @@ export function createStoryPath({ canvas, edits, wars, onPick, onTime = () => {}
           }
           prev = p;
         }
+      }
+      // Each revert leaps across the road from the reverter's side, in their color.
+      for (const e of war.edits) {
+        if (e.revertsTo === null) continue;
+        const f = war.fighters.indexOf(e.user);
+        const wz = z[e.index];
+        if (wz < camZ + NEAR || wz > camZ + FAR) continue;
+        const from = f === 1 ? 1 : -1;
+        const color = f === 0 || f === 1 ? FIGHTER_COLORS[f] : "#8a8f94";
+        const a = ink(wz, inside ? 0.9 : 0.6) * fog(wz - camZ) * smoothstep(NEAR, NEAR + 900, wz - camZ);
+        ctx.strokeStyle = hexAlpha(color, a);
+        ctx.lineWidth = Math.max(0.8, Math.min(2.5, 2.6 * project(0, 0, wz).s));
+        ctx.beginPath();
+        for (let u = 0; u <= 1.001; u += 0.1) {
+          const q = project(roadX(wz) + from * amp * 1.6 * (1 - 2 * u), Math.sin(Math.PI * u) * (inside ? 60 : 40), wz);
+          if (u) ctx.lineTo(q.x, q.y);
+          else ctx.moveTo(q.x, q.y);
+        }
+        ctx.stroke();
       }
     }
 
@@ -249,6 +270,14 @@ export function createStoryPath({ canvas, edits, wars, onPick, onTime = () => {}
       if (sign.z < camZ + NEAR || sign.z > camZ + FAR) continue;
       standing.push({ z: sign.z, draw: () => drawSign(sign) });
     }
+    // The fighters stand a little ahead of the camera all through their war, so they go along with it.
+    for (const war of wars) {
+      const z0 = z[war.edits[0].index];
+      const z1 = z[war.edits.at(-1).index];
+      const zm = Math.min(z1 + 200, Math.max(z0 + 300, nowZ + 500));
+      if (zm < camZ + NEAR || zm > camZ + NAMED) continue;
+      standing.push({ z: zm, draw: () => drawFighters(war, zm) });
+    }
     standing.sort((a, b) => b.z - a.z);
     const labels = [];
     for (const s of standing) s.draw();
@@ -271,7 +300,8 @@ export function createStoryPath({ canvas, edits, wars, onPick, onTime = () => {}
       const inner = roadX(zm) + b.side * (roadHalf(b.from) + KERB);
       const x0 = b.side > 0 ? inner : inner - BLOCK_W;
       const x1 = x0 + BLOCK_W;
-      const a = fog(z0 - camZ);
+      // Blocks fade as they come close, so a tall one never fills the view.
+      const a = fog(z0 - camZ) * (0.25 + 0.75 * smoothstep(NEAR, NEAR + 900, z0 - camZ));
       if (a < 0.01) return;
       const done = written(b.z0);
       // Blocks still to come are only outlines.
@@ -342,6 +372,60 @@ export function createStoryPath({ canvas, edits, wars, onPick, onTime = () => {}
       ctx.fillStyle = `rgba(32,33,34,${(isNow ? 0.95 : 0.7) * a})`;
       ctx.textAlign = "left";
       ctx.fillText(name, lx, cy + 4);
+    }
+
+    // The war's two main fighters face each other across the road, each on a post in their color.
+    function drawFighters(war, zm) {
+      const z0 = z[war.edits[0].index];
+      const a = fog(zm - camZ) * (1 - smoothstep(NAMED * 0.75, NAMED, zm - camZ));
+      const reached = written(z0);
+      const inside = nowZ >= z0 - 40 && nowZ <= z[war.edits.at(-1).index] + 120;
+      war.fighters.slice(0, 2).forEach((user, k) => {
+        const sideSign = k ? 1 : -1;
+        const x = roadX(zm) + sideSign * (roadHalf(war.edits[0].index) + 70);
+        const foot = project(x, 0, zm);
+        const head = project(x, 90, zm);
+        const alpha = (reached ? 1 : 0.3) * a;
+        ctx.strokeStyle = hexAlpha(FIGHTER_COLORS[k], 0.6 * alpha);
+        ctx.lineWidth = Math.max(1, 2 * foot.s);
+        ctx.beginPath();
+        ctx.moveTo(foot.x, foot.y);
+        ctx.lineTo(head.x, head.y);
+        ctx.stroke();
+        const r = Math.max(4, Math.min(inside ? 15 : 12, 26 * head.s));
+        const cy = head.y - r;
+        ctx.fillStyle = hexAlpha(FIGHTER_COLORS[k], alpha);
+        ctx.beginPath();
+        ctx.arc(head.x, cy, r, 0, Math.PI * 2);
+        ctx.fill();
+        if (inside) {
+          ctx.strokeStyle = hexAlpha(FIGHTER_COLORS[k], 0.35 + 0.25 * Math.sin(now / 200 + k * Math.PI));
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(head.x, cy, r + 4, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        if (r >= 7) {
+          ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+          ctx.font = `600 ${Math.round(r * 0.8)}px Inter, system-ui, sans-serif`;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(initials(user, /^[\d.:a-f]+$/i.test(user) ? "anonymous" : "person"), head.x, cy + 0.5);
+          ctx.textBaseline = "alphabetic";
+        }
+        if (!reached || r < 8) return;
+        const name = shorten(censor(user));
+        ctx.font = "600 11px Inter, system-ui, sans-serif";
+        const w = ctx.measureText(name).width;
+        const lx = Math.max(4, Math.min(width - w - 4, head.x - w / 2));
+        ctx.fillStyle = `rgba(255,255,255,${0.85 * alpha})`;
+        ctx.beginPath();
+        ctx.roundRect(lx - 3, cy - r - 20, w + 6, 16, 4);
+        ctx.fill();
+        ctx.fillStyle = hexAlpha(FIGHTER_COLORS[k], alpha);
+        ctx.textAlign = "left";
+        ctx.fillText(name, lx, cy - r - 8);
+      });
     }
 
     function drawSign(sign) {
