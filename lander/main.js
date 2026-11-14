@@ -1,4 +1,4 @@
-import { createGlobe } from "./globe.js";
+import { createGlobe } from "./globe-model.js";
 import { createBackdrop } from "./backdrop.js";
 import { suggestPages, searchPages, looksLikeQuestion, pageUrl, stem } from "./fake/api.js";
 
