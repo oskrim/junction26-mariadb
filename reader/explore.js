@@ -7,10 +7,12 @@ import { getArticle, getArticles, getGraph, getPreview, getTopics } from "./fake
 const FIRST_YEAR = 2003;
 const LAST_YEAR = 2026;
 const MAX_CARDS = 16;
-const MAX_FURTHER = 150;
+const MAX_FURTHER = 70;
 const FOCAL = 900;
 const DIST = 1060;
 const CARD_SPACING = 210;
+const MAX_GROWN = 24;
+const GROWN_CARDS = 3;
 
 export async function mountExplore(root, { id }) {
   root.innerHTML = `
@@ -22,6 +24,14 @@ export async function mountExplore(root, { id }) {
       <p class="ex-kicker">Related articles</p>
       <h2 class="ex-title"></h2>
       <p class="ex-sub"></p>
+      <div class="ex-controls">
+        <label class="ex-switch">
+          <input type="checkbox" class="ex-keep" checked />
+          <span class="ex-switch-track" aria-hidden="true"></span>
+          <span class="ex-keep-label"></span>
+        </label>
+        <button class="ex-reset" type="button" hidden>Reset map</button>
+      </div>
     </header>
     <p class="ex-hint">Drag to turn · Scroll to zoom · Click an article to open it</p>
     <div class="ex-tip" role="tooltip"></div>
@@ -44,6 +54,15 @@ export async function mountExplore(root, { id }) {
   const range = $(".ex-range");
   const yearOut = $(".ex-year");
   const playButton = $(".ex-play");
+  const keep = $(".ex-keep");
+  try {
+    keep.checked = localStorage.getItem("explore-keep-center") !== "off";
+  } catch {}
+  keep.addEventListener("change", () => {
+    try {
+      localStorage.setItem("explore-keep-center", keep.checked ? "on" : "off");
+    } catch {}
+  });
 
   const now = Math.floor(Date.now() / 1000);
   const [articles, graph, topics] = await Promise.all([getArticles(), getGraph(now), getTopics()]);
@@ -71,6 +90,11 @@ export async function mountExplore(root, { id }) {
   const pos = new Map();
   const cards = new Map();
   let pills = [];
+
+  // Articles opened while the center stays put. Their own links branch out around them, so you can
+  // keep wandering outward. grownFrom remembers which opened article brought each new one in.
+  let grown = [];
+  let grownFrom = new Map();
 
   // Which articles and links existed in the chosen year. null means "all of them, today".
   let alive = null;
@@ -101,6 +125,8 @@ export async function mountExplore(root, { id }) {
 
   async function center(nextId, from) {
     centerId = nextId;
+    grown = [];
+    grownFrom = new Map();
     const near = [...links.get(nextId)];
     const nearSet = new Set(near);
     const via = new Map();
@@ -125,6 +151,56 @@ export async function mountExplore(root, { id }) {
     setTitle();
   }
 
+  // Adds an opened article's links that aren't on the map yet, in a small cloud just beyond it,
+  // pointing away from the middle so the branch reads as "further out".
+  async function grow(n) {
+    if (n === centerId || grown.includes(n)) return;
+    const added = [...links.get(n)]
+      .filter((m) => !hop.has(m))
+      .sort((a, b) => nodes.get(b).chars - nodes.get(a).chars)
+      .slice(0, MAX_GROWN);
+    grown.push(n);
+    const from = target.get(n);
+    const length = Math.hypot(from.x, from.y, from.z) || 1;
+    const out = { x: from.x / length, y: from.y / length, z: from.z / length };
+    const rand = seeded(n);
+    for (const m of added) {
+      hop.set(m, 3);
+      grownFrom.set(m, n);
+      target.set(m, {
+        x: from.x + out.x * 120 + gauss(rand) * 60,
+        y: from.y + out.y * 120 + gauss(rand) * 60,
+        z: from.z + out.z * 120 + gauss(rand) * 60,
+      });
+      pos.set(m, { ...pos.get(n), a: 0 });
+    }
+    for (let round = 0; round < 30; round++) {
+      for (const m of added) {
+        const a = target.get(m);
+        for (const [other, b] of target) {
+          if (other === m) continue;
+          const dx = a.x - b.x;
+          const dy = a.y - b.y;
+          const dz = a.z - b.z;
+          const d = Math.hypot(dx, dy, dz);
+          if (d === 0 || d > 30) continue;
+          const push = (30 - d) / d;
+          Object.assign(a, { x: a.x + dx * push, y: a.y + dy * push, z: a.z + dz * push });
+        }
+      }
+    }
+    edges = graph.edges.filter((e) => hop.has(e.source) && hop.has(e.target) && e.source !== e.target);
+
+    // The biggest new articles get a card: with their picture if they have one, or just the title.
+    const biggest = added.slice(0, GROWN_CARDS);
+    const withCards = await Promise.all(biggest.map(async (m) => ({ m, p: await preview(nodes.get(m).title) })));
+    for (const { m, p } of withCards) {
+      const el = addCard(m, p);
+      Object.assign(el, { w: el.offsetWidth, h: el.offsetHeight });
+    }
+    setTitle();
+    return added.length;
+  }
   // Each topic gets its own patch of a sphere. Linked articles sit closer to the middle than the ones
   // a step further away, and a few rounds of nudging keep dots from landing on top of each other
   // and give picture cards room so they rarely cover one another.
@@ -202,6 +278,9 @@ export async function mountExplore(root, { id }) {
       el.classList.add("is-center");
       el.innerHTML = `<span class="ex-card-title">${title}</span>
         <span class="ex-card-meta">${links.get(n).size} linked articles</span>`;
+    } else if (!p?.thumbnail) {
+      el.classList.add("is-text");
+      el.innerHTML = `<span class="ex-card-title">${title}</span>`;
     } else {
       const diagram = /\.svg\b/i.test(p.thumbnail.url);
       el.innerHTML = `<span class="ex-card-media${diagram ? " is-diagram" : ""}"><img src="${p.thumbnail.url}" alt="" draggable="false"></span>
@@ -210,6 +289,7 @@ export async function mountExplore(root, { id }) {
     }
     layer.append(el);
     cards.set(n, el);
+    return el;
   }
 
   function buildPills() {
@@ -232,12 +312,15 @@ export async function mountExplore(root, { id }) {
     $(".ex-title").textContent = title;
     const near = [...hop].filter(([n, h]) => h === 1 && isAlive(n)).length;
     const further = [...hop].filter(([n, h]) => h === 2 && isAlive(n)).length;
+    const added = [...hop].filter(([n, h]) => h === 3 && isAlive(n)).length;
     const year = Number(range.value);
     const meta = cards.get(centerId)?.querySelector(".ex-card-meta");
     if (meta) meta.textContent = `${near} linked articles`;
     $(".ex-sub").textContent = isAlive(centerId)
-      ? `${near} linked articles · ${further} more one step away${year < LAST_YEAR ? ` · in ${year}` : ""}`
+      ? `${near} linked articles · ${further} more one step away${added ? ` · ${added} you added` : ""}${year < LAST_YEAR ? ` · in ${year}` : ""}`
       : `Not written yet in ${year}`;
+    $(".ex-keep-label").textContent = `Keep ${title} in the middle`;
+    $(".ex-reset").hidden = grown.length === 0;
   }
 
   // --- Drawing ------------------------------------------------------------------------------
@@ -307,9 +390,13 @@ export async function mountExplore(root, { id }) {
       const pb = projected.get(to);
       const touchesLit = lit !== null && (source === lit || to === lit);
       const fromCenter = source === centerId || to === centerId;
+      const onBranch = grown.includes(source) || grown.includes(to);
       if (touchesLit) {
         ctx.strokeStyle = "rgb(51 102 204)";
         ctx.globalAlpha = 0.6 * alpha;
+      } else if (onBranch) {
+        ctx.strokeStyle = "rgb(51 102 204)";
+        ctx.globalAlpha = (focusSet ? 0.12 : 0.22) * alpha;
       } else {
         ctx.strokeStyle = "rgb(32 33 34)";
         ctx.globalAlpha = alpha * (fromCenter ? 0.05 : 0.09) * (0.5 + 0.5 * (pa.near + pb.near) / 2) * (focusSet ? 0.4 : 1);
@@ -325,7 +412,7 @@ export async function mountExplore(root, { id }) {
       const point = pos.get(n);
       if (point.a < 0.02 || placedCards.has(n)) continue;
       const h = hop.get(n) ?? 2;
-      const size = (1.4 + Math.sqrt(nodes.get(n).chars) / 95) * p.s * (h === 1 ? 1.1 : 0.85);
+      const size = (1.4 + Math.sqrt(nodes.get(n).chars) / 95) * p.s * (h === 2 ? 0.85 : 1.1);
       const shade = Math.round(36 + (1 - p.near) * 150 + (h === 2 ? 40 : 0));
       const dimmed = focusSet && !focusSet.has(n);
       ctx.globalAlpha = point.a * (dimmed ? 0.25 : 1);
@@ -333,6 +420,14 @@ export async function mountExplore(root, { id }) {
       ctx.beginPath();
       ctx.arc(p.x, p.y, n === lit ? size + 2 : size, 0, Math.PI * 2);
       ctx.fill();
+      // Opened articles keep a ring, so the path you took stays visible.
+      if (grown.includes(n)) {
+        ctx.strokeStyle = "rgb(51 102 204)";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, size + 4, 0, Math.PI * 2);
+        ctx.stroke();
+      }
     }
     ctx.globalAlpha = 1;
   }
@@ -360,6 +455,7 @@ export async function mountExplore(root, { id }) {
       el.style.zIndex = String(100 + priority(n) * 1000 + Math.round(p.near * 500));
       el.classList.toggle("is-hidden", !visible);
       el.classList.toggle("is-selected", n === selectedId);
+      el.classList.toggle("is-grown", grown.includes(n));
     }
     return placed;
   }
@@ -481,12 +577,20 @@ export async function mountExplore(root, { id }) {
     tip.classList.remove("is-visible");
   }
 
-  function select(n) {
+  // With the switch on, opening an article grows the map from it; with it off, the article moves
+  // to the middle and the map rebuilds around it.
+  async function select(n) {
+    if (!keep.checked && n !== centerId) {
+      await exploreFrom(n);
+      n = centerId;
+    }
     selectedId = n;
+    const count = keep.checked ? await grow(n) : 0;
+    if (selectedId !== n) return;
     const t = target.get(n);
     cam.focusTo = n === centerId ? { x: 0, y: 0, z: 0 } : { x: t.x * 0.75, y: t.y * 0.75, z: t.z * 0.75 };
     cam.distTo = Math.min(cam.distTo, 900);
-    openPanel(n);
+    openPanel(n, count);
   }
 
   function deselect() {
@@ -497,7 +601,7 @@ export async function mountExplore(root, { id }) {
     panel.classList.remove("is-open");
   }
 
-  async function openPanel(n) {
+  async function openPanel(n, added) {
     const node = nodes.get(n);
     const article = info.get(n);
     const p = await preview(node.title);
@@ -514,6 +618,7 @@ export async function mountExplore(root, { id }) {
         <p class="ex-kicker">${n === centerId ? "You are exploring" : topics[n]}</p>
         <h3>${node.title}</h3>
         <p class="ex-relation">${relation(n)}</p>
+        ${added ? `<p class="ex-added">Added ${added} of its linked articles around it. Click one to keep going.</p>` : ""}
         ${p?.extract ? `<p class="ex-extract">${p.extract}</p>` : ""}
         <dl class="ex-stats">
           <div><dt>Versions</dt><dd>${article.versions.toLocaleString("en-US")}</dd></div>
@@ -541,6 +646,7 @@ export async function mountExplore(root, { id }) {
     if (out && back) return `${name} links here, and it links back.`;
     if (out) return `Linked from ${name}.`;
     if (back) return `Links to ${name}.`;
+    if (grownFrom.has(n)) return `Linked from ${nodes.get(grownFrom.get(n)).title}, which you opened.`;
     const through = [...links.get(n)].filter((m) => hop.get(m) === 1).map((m) => nodes.get(m).title);
     return `One step away, through ${through.slice(0, 2).join(" and ")}${through.length > 2 ? ` and ${through.length - 2} more` : ""}.`;
   }
@@ -556,6 +662,20 @@ export async function mountExplore(root, { id }) {
     cam.distTo = DIST;
     await center(n, n);
   }
+
+  $(".ex-reset").addEventListener("click", async () => {
+    deselect();
+    for (const n of hop.keys()) if (hop.get(n) === 3) hop.delete(n);
+    for (const [n, el] of cards) {
+      if (hop.has(n)) continue;
+      el.remove();
+      cards.delete(n);
+    }
+    grown = [];
+    grownFrom = new Map();
+    edges = graph.edges.filter((e) => hop.has(e.source) && hop.has(e.target) && e.source !== e.target);
+    setTitle();
+  });
 
   // --- History ------------------------------------------------------------------------------
 
