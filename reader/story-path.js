@@ -436,7 +436,7 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
   // whoever made the last edit stays, marked as the winner, and the others fade.
   function drawFight(f, now) {
     ctx.save();
-    ctx.globalAlpha = focus * 0.97;
+    ctx.globalAlpha = focus;
     ctx.fillStyle = "#fff";
     ctx.fillRect(0, 0, width, height);
     const cx = width / 2;
@@ -473,10 +473,14 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
       ctx.font = `${striking || won ? 700 : 600} 11px Inter, system-ui, sans-serif`;
       const lx = cx + Math.cos(ang) * (dist + 26);
       const ly = cy + Math.sin(ang) * (dist + 26);
-      ctx.textAlign = Math.cos(ang) > 0.3 ? "left" : Math.cos(ang) < -0.3 ? "right" : "center";
+      // Names stay inside the panel's clear middle, away from its faded edges.
+      const tw = ctx.measureText(label).width;
+      const left = Math.cos(ang) > 0.3 ? lx : Math.cos(ang) < -0.3 ? lx - tw : lx - tw / 2;
+      const x0 = Math.max(width * 0.15, Math.min(width * 0.85 - tw, left));
+      ctx.textAlign = "left";
       ctx.textBaseline = "middle";
       ctx.fillStyle = colorFor(k);
-      ctx.fillText(label, Math.max(4, Math.min(width - 4, lx)), ly);
+      ctx.fillText(label, x0, ly);
       ctx.textBaseline = "alphabetic";
       if (striking && f.revert && hit > 0) {
         ctx.globalAlpha = focus * hit;
