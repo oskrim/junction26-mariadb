@@ -385,10 +385,11 @@ export function startHistoryPlay({ id, body, onClose }) {
       color: fighter >= 0 && fighter < 8 ? colorFor(fighter) : editorColor(frame.edit.user, frame.edit.kind),
       war: !!frame.round,
     };
-    await render(version, renderMath, token, animate, onPlan, frame.round);
-    if (token !== run || closed) return;
+    // The title and round count change with the globe, as the round starts, not once it is written.
     if (frame.war) announce(frame.war);
     showRound(frame);
+    await render(version, renderMath, token, animate, onPlan, frame.round);
+    if (token !== run || closed) return;
     noteWhere(frame.round);
   }
 
