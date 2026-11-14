@@ -99,7 +99,6 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
   let shownFight = null;
   let focus = 0;
   let tags = [];
-  let tagsAt = 0;
   const thumbs = new Map();
   const thumb = (src) => {
     if (!thumbs.has(src)) thumbs.set(src, Object.assign(new Image(), { src }));
@@ -452,13 +451,13 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
       }
     }
 
-    // A note on the road being walked: dropped onto the outer edge of the side road at its point, as a small
-    // sign with the section's name or as a thumbnail of an image added.
+    // A note on the road being walked: dropped onto the middle of the side road at its point as the walker
+    // reaches it, as a small sign with the section's name or as a thumbnail of an image added.
     function drawTag(b, tag, wz) {
-      const dropped = smoothstep(0, 1, Math.min(1, (performance.now() - tagsAt - tag.k * 180) / 450));
+      // It drops onto the road as the walker reaches it.
+      const dropped = smoothstep(0, 1, (nowZ - wz + 40) / 140);
       if (dropped <= 0) return;
-      const edgeX = roadX(wz) + branchOffset(b, wz) + b.side * (branchHalf(b, wz) + 6);
-      const p = project(edgeX, LANE_H, wz);
+      const p = project(roadX(wz) + branchOffset(b, wz), LANE_H, wz);
       const a = calm * dropped * smoothstep(NEAR, NEAR + 300, wz - camZ) * (1 - smoothstep(NAMED * 0.75, NAMED, wz - camZ));
       if (a < 0.02) return;
       const lift = (1 - dropped) * 18;
@@ -467,8 +466,8 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
       if (tag.image?.complete && tag.image.naturalWidth) {
         const w = Math.max(18, Math.min(56, 90 * p.s));
         const h = (w * tag.image.naturalHeight) / tag.image.naturalWidth;
-        // Pinned to the road's edge, even if the panel clips it.
-        const x = b.side > 0 ? p.x : p.x - w;
+        // Centred on the road, even if the panel clips it.
+        const x = p.x - w / 2;
         const y = p.y - h - lift;
         ctx.shadowColor = "rgba(0,0,0,0.18)";
         ctx.shadowBlur = 6;
@@ -480,7 +479,7 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
       } else if (tag.text) {
         ctx.font = `500 ${Math.round(Math.max(9, Math.min(11, 18 * p.s)))}px Inter, system-ui, sans-serif`;
         const w = ctx.measureText(tag.text).width + 10;
-        const x = b.side > 0 ? p.x : p.x - w;
+        const x = p.x - w / 2;
         const y = p.y - 8 - lift;
         ctx.fillStyle = "rgba(255,255,255,0.92)";
         ctx.strokeStyle = "rgba(32,33,34,0.12)";
@@ -747,7 +746,6 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
     // Notes on what the version being walked changed, shown under its editor.
     setTags(list) {
       tags = list.map((t) => (t.image ? { ...t, image: thumb(t.image) } : t));
-      tagsAt = performance.now();
     },
     setStop(k) {
       stopNow = k;
