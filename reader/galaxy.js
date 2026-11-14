@@ -15,6 +15,7 @@ import { getArticle, getArticles, getGraph, getPreview, getTopics, now as curren
 
 const LIBRARY = 568873; // every article on the server; only those with a topic start out as stars
 const RADIUS = 9000; // of the disc
+const MORPH = 1700; // ms each cloud takes to glide to its place when the center changes
 const BIRTH = 900; // ms a new star takes to fly out from the article that links to it
 const BIRTH_SPREAD = 1300; // ms over which one article's new stars are born
 const MAX_BORN = 300; // new stars per article, so a long list article doesn't flood the sky
@@ -80,10 +81,11 @@ export async function mountGalaxy(root, { id }) {
   let lit = null; // the current constellation
   const past = []; // constellations lit before, kept softly lit
   const litTitles = new Set(); // every article lit so far, for the count
-  const placed = new Map(); // title → position of every article lit so far
+  const placed = new Map(); // title → anchor of every article lit so far
   // Stars born while exploring: articles linked from an opened article that weren't stars yet. Each
-  // flies out from that article's star (from) to its place (xyz), starting at t0.
-  const born = { count: 0, xyz: new Float32Array(0), from: new Float32Array(0), t0: new Float64Array(0), sx: new Float32Array(0), sy: new Float32Array(0), sz: new Float32Array(0), title: [], parent: [] };
+  // rides with the cloud of the article that links to it (cloud, or -1 for none), flying out from that
+  // article's star (from) to its place (off), both relative to the cloud, starting at t0.
+  const born = { count: 0, cloud: new Int32Array(0), off: new Float32Array(0), from: new Float32Array(0), t0: new Float64Array(0), sx: new Float32Array(0), sy: new Float32Array(0), sz: new Float32Array(0), title: [], parent: [] };
   const trail = [];
   // The camera orbits `pivot` at `dist`; `to` holds where each is heading. It starts far out, above.
   const cam = { pivot: [0, 0, 0], yaw: 0.4, pitch: 1.25, dist: 60000 };
@@ -130,6 +132,7 @@ export async function mountGalaxy(root, { id }) {
     // Distance eases in log space, so a long flight in or out keeps an even pace.
     cam.dist = Math.exp(Math.log(cam.dist) + (Math.log(to.dist) - Math.log(cam.dist)) * ease(rate));
     litFade += (litFadeTo - litFade) * ease(0.02);
+    if (now < sky.morphUntil) morph(now);
     draw();
   });
 
@@ -213,9 +216,11 @@ export async function mountGalaxy(root, { id }) {
     if (name === "neighborhood" && !lit) return;
     if (name === "library") Object.assign(to, { pivot: [0, 0, 0], pitch: VIEWS.library.pitch, dist: VIEWS.library.dist });
     else {
-      const yaw = towardCore(lit.center.pos);
+      // Where the article's star will be once the galaxy has settled around it.
+      const home = where(lit.center.anchor, true);
+      const yaw = towardCore(home);
       const turn = travel ? clamp(yaw - cam.yaw, -0.6, 0.6) : yaw - cam.yaw;
-      Object.assign(to, { pivot: aheadOf(lit.center.pos, lit.frame), yaw: cam.yaw + turn, pitch: VIEWS.neighborhood.pitch, dist: lit.frame });
+      Object.assign(to, { pivot: aheadOf(home, lit.frame), yaw: cam.yaw + turn, pitch: VIEWS.neighborhood.pitch, dist: lit.frame });
     }
     idleSince = performance.now();
     markView(name);
@@ -238,7 +243,7 @@ export async function mountGalaxy(root, { id }) {
   // Into a topic's cloud, close enough that its stars stand apart to be pointed at one by one.
   function flyTo(cloud) {
     setHover(null);
-    Object.assign(to, { pivot: [...cloud.center], pitch: Math.max(to.pitch, 0.9), dist: clamp(cloud.extent * 3.2, MIN_DIST, MAX_DIST) });
+    Object.assign(to, { pivot: [...cloud.to], pitch: Math.max(to.pitch, 0.9), dist: clamp(cloud.extent * 3.2, MIN_DIST, MAX_DIST) });
     idleSince = performance.now();
     markView(null);
   }
@@ -273,8 +278,10 @@ export async function mountGalaxy(root, { id }) {
     litFadeTo = 1;
     for (const n of built.nodes) {
       litTitles.add(n.title);
-      placed.set(n.title, n.pos);
+      placed.set(n.title, n.anchor);
     }
+    // The galaxy rearranges around the article while its new stars are born.
+    arrange(built);
     const newStars = bear(built, from === "start" ? 1300 : 0);
     trail.push({ id: nextId, title: built.center.title });
     renderTrail();
@@ -284,11 +291,7 @@ export async function mountGalaxy(root, { id }) {
       : `${built.center.title} has no neighbors with a topic`;
     countEl.querySelector("span").textContent = newStars ? `${lighting} · ${fmt(newStars)} new ${newStars === 1 ? "star" : "stars"}` : lighting;
     countEl.querySelector("em").textContent = `You’ve lit ${fmt(litTitles.size)} of ${fmt(LIBRARY)} articles`;
-    if (from !== "start") {
-      // A moment for the new stars to burst out before the trip.
-      await wait(700);
-      setView("neighborhood", { travel: true });
-    }
+    if (from !== "start") setView("neighborhood", { travel: true });
     busy = false;
     idleSince = performance.now();
     const url = new URL(location.href);
@@ -309,25 +312,27 @@ export async function mountGalaxy(root, { id }) {
         return next;
       };
       const size = Math.max(n, born.title.length * 2);
-      for (const key of ["xyz", "from"]) born[key] = grow(born[key], size * 3);
+      for (const key of ["off", "from"]) born[key] = grow(born[key], size * 3);
+      born.cloud = grow(born.cloud, size);
       born.t0 = grow(born.t0, size);
       for (const key of ["sx", "sy", "sz"]) born[key] = grow(born[key], size);
       born.title.length = born.parent.length = size;
     }
-    const [cx, cy, cz] = built.center.pos;
+    const { c, o } = built.center.anchor;
     const start = performance.now() + after;
     titles.forEach((title, k) => {
       const i = born.count + k;
       const rand = seeded(hash(title));
       const a = rand() * Math.PI * 2;
       const r = 350 + 1500 * rand() ** 0.8;
-      const pos = [cx + Math.cos(a) * r, cy + (rand() - 0.5) * r * 0.5, cz + Math.sin(a) * r];
-      born.xyz.set(pos, i * 3);
-      born.from.set(built.center.pos, i * 3);
+      const off = [o[0] + Math.cos(a) * r, o[1] + (rand() - 0.5) * r * 0.5, o[2] + Math.sin(a) * r];
+      born.cloud[i] = c;
+      born.off.set(off, i * 3);
+      born.from.set(o, i * 3);
       born.t0[i] = start + (k / titles.length) * BIRTH_SPREAD + rand() * 120;
       born.title[i] = title;
       born.parent[i] = built.center.title;
-      placed.set(title, pos);
+      placed.set(title, { c, o: off });
       litTitles.add(title);
     });
     born.count = n;
@@ -380,7 +385,7 @@ export async function mountGalaxy(root, { id }) {
     ctx.globalAlpha = 1;
 
     // Faint stars: projected into the arrays hover reads, and batched into a path per brightness and tint.
-    const { xyz, sx, sy, sz, mag, tint } = sky;
+    const { off, cc, cloudOf, sx, sy, sz, mag, tint } = sky;
     const paths = LEVELS.map(() => TINTS.map(() => new Path2D()));
     const hot = new Path2D(); // the hovered topic's stars
     const hotCloud = hovered?.cloud ? sky.clouds.indexOf(hovered.cloud) : -1;
@@ -389,9 +394,10 @@ export async function mountGalaxy(root, { id }) {
     const grow = clamp(4000 / cam.dist, 1, 3);
     const boost = Math.log2(grow);
     for (let i = 0; i < sky.count; i++) {
-      const dx = xyz[i * 3] - eye[0];
-      const dy = xyz[i * 3 + 1] - eye[1];
-      const dz = xyz[i * 3 + 2] - eye[2];
+      const c = cloudOf[i] * 3;
+      const dx = off[i * 3] + cc[c] - eye[0];
+      const dy = off[i * 3 + 1] + cc[c + 1] - eye[1];
+      const dz = off[i * 3 + 2] + cc[c + 2] - eye[2];
       const z = dx * fw[0] + dy * fw[1] + dz * fw[2];
       sz[i] = z;
       if (z < 50) continue;
@@ -446,18 +452,22 @@ export async function mountGalaxy(root, { id }) {
       const d = dx * fw[0] + dy * fw[1] + dz * fw[2];
       return [cx + ((dx * rt[0] + dy * rt[1] + dz * rt[2]) * f) / d, cy - ((dx * up[0] + dy * up[1] + dz * up[2]) * f) / d, d];
     };
-    const { xyz, from } = born;
+    const { off, from } = born;
+    const { cc } = sky;
     for (let i = 0; i < born.count; i++) {
       const t = (now - born.t0[i]) / BIRTH;
       born.sz[i] = -1;
       if (t < 0) continue;
       const k = i * 3;
-      let [x, y, z] = [xyz[k], xyz[k + 1], xyz[k + 2]];
+      const c = born.cloud[i] * 3;
+      const [bx, by, bz] = c < 0 ? [0, 0, 0] : [cc[c], cc[c + 1], cc[c + 2]];
+      let [x, y, z] = [bx + off[k], by + off[k + 1], bz + off[k + 2]];
+      const [fx, fy, fz] = [bx + from[k], by + from[k + 1], bz + from[k + 2]];
       if (t < 1) {
         const e = 1 - (1 - t) ** 3;
-        x = from[k] + (x - from[k]) * e;
-        y = from[k + 1] + (y - from[k + 1]) * e;
-        z = from[k + 2] + (z - from[k + 2]) * e;
+        x = fx + (x - fx) * e;
+        y = fy + (y - fy) * e;
+        z = fz + (z - fz) * e;
       }
       const [sx, sy, d] = toScreen(x, y, z);
       if (d < 50) continue;
@@ -469,7 +479,7 @@ export async function mountGalaxy(root, { id }) {
         const r = (1.2 + 2.4 * (1 - t)) * grow;
         flash.moveTo(sx + r, sy);
         flash.arc(sx, sy, r, 0, Math.PI * 2);
-        const [ox, oy, od] = toScreen(from[k], from[k + 1], from[k + 2]);
+        const [ox, oy, od] = toScreen(fx, fy, fz);
         if (od > 50) {
           trails.moveTo(ox, oy);
           trails.lineTo(sx, sy);
@@ -502,7 +512,7 @@ export async function mountGalaxy(root, { id }) {
     const lines = new Path2D();
     const dots = new Path2D();
     for (const c of past) {
-      for (const n of c.nodes) n.p = project(n.pos);
+      for (const n of c.nodes) n.p = project(where(n.anchor));
       for (const n of c.nodes) {
         if (n.p.z < 50) continue;
         dots.moveTo(n.p.x + 1.6, n.p.y);
@@ -522,7 +532,7 @@ export async function mountGalaxy(root, { id }) {
 
   function drawLit(project, f, taken) {
     const { center, nodes } = lit;
-    for (const n of nodes) n.p = project(n.pos);
+    for (const n of nodes) n.p = project(where(n.anchor));
     const focus = hovered?.node ?? null;
     const linked = focus ? lit.links.get(focus.id) : null;
 
@@ -663,9 +673,12 @@ export async function mountGalaxy(root, { id }) {
   // What a topic is, in a few words, and its size. Topics are often articles' titles too, so the line
   // is the start of that article; it is asked for the first time the topic is named.
   function shortLine(c) {
-    const size = `${fmt(c.count)} ${c.count === 1 ? "article" : "articles"}`;
     describe(c);
-    return c.sentence ? `${clip(c.sentence, 64)} · ${size}` : size;
+    if (c.line === undefined || c.lineOf !== c.sentence) {
+      const size = `${fmt(c.count)} ${c.count === 1 ? "article" : "articles"}`;
+      [c.lineOf, c.line] = [c.sentence, c.sentence ? `${clip(c.sentence, 64)} · ${size}` : size];
+    }
+    return c.line;
   }
 
   function describe(c) {
@@ -787,54 +800,36 @@ export async function mountGalaxy(root, { id }) {
 
   // --- Layout --------------------------------------------------------------------------------
 
-  // The library as stars. Topics are laid out biggest first from the core outwards, along the arms of a
-  // spiral; each topic's articles are a soft, flattened cloud around its place. Everything is seeded, so
-  // the galaxy is the same on every visit.
+  // The library as stars. Each topic's articles are a soft, flattened cloud; where the clouds sit is
+  // up to arrange(), and every star is kept as an offset from its cloud's middle so that the clouds can
+  // glide and their stars go with them. Everything is seeded, so the galaxy is the same on every visit.
   function buildSky(topicOf) {
     const byTopic = new Map();
     for (const [page, topic] of Object.entries(topicOf)) {
       if (!byTopic.has(topic)) byTopic.set(topic, []);
       byTopic.get(topic).push(Number(page));
     }
-    // The biggest topic is the core; the rest take turns along the arms in a seeded order, each placed
-    // by how many stars lie inward of it, so the disc thins out evenly towards the rim.
-    const bySize = [...byTopic.keys()].sort((a, b) => byTopic.get(b).length - byTopic.get(a).length || a.localeCompare(b));
-    const names = [bySize[0], ...bySize.slice(1).sort((a, b) => hash(a) - hash(b) || a.localeCompare(b))];
+    const names = [...byTopic.keys()].sort((a, b) => byTopic.get(b).length - byTopic.get(a).length || a.localeCompare(b));
     const count = Object.keys(topicOf).length;
-    const outer = count - byTopic.get(names[0]).length;
-    const xyz = new Float32Array(count * 3);
+    const off = new Float32Array(count * 3);
     const ids = new Int32Array(count);
     const cloudOf = new Uint16Array(count);
     const tint = new Uint8Array(count);
     const mag = new Float32Array(count);
     const byId = new Map();
-    const clouds = [];
-    let inward = 0;
-    names.forEach((name, k) => {
+    let i = 0;
+    const clouds = names.map((name, k) => {
       const members = byTopic.get(name).sort((a, b) => a - b);
       const rand = seeded(hash(name));
       const radius = 25 + 16 * Math.sqrt(members.length);
-      let center = [0, 0, 0];
-      if (k > 0) {
-        const s = (0.03 + (0.97 * (inward + members.length / 2)) / outer) ** 0.62;
-        inward += members.length;
-        const r = RADIUS * s * (0.94 + rand() * 0.12);
-        const a = ((k % ARMS) / ARMS) * Math.PI * 2 + s * WIND + (rand() - 0.5) * 0.38;
-        center = [Math.cos(a) * r, (rand() - 0.5) * 360 * (1 - s), Math.sin(a) * r];
-      }
-      // extent: how far out most of its stars lie, which is what hovering and framing go by.
-      clouds.push({ name, members, count: members.length, center, radius, extent: radius * 0.75, tint: hash(name) % TINTS.length, lit: false });
-    });
-    separate(clouds);
-    let i = 0;
-    clouds.forEach((cloud, k) => {
-      const { center, radius } = cloud;
-      for (const page of cloud.members) {
+      // Each topic keeps its arm, its order among equals and its small offsets from the arm whatever
+      // the center, so the galaxy rearranges without reshuffling.
+      const cloud = { k, name, count: members.length, radius, extent: radius * 0.75, tint: hash(name) % TINTS.length, lit: false };
+      Object.assign(cloud, { arm: hash(name) % ARMS, order: hash(name + "·"), jitter: [rand(), rand(), rand()] });
+      for (const page of members) {
         const pr = seeded(page * 7 + 3);
         const g = () => (pr() + pr() + pr() - 1.5) * 1.2;
-        xyz[i * 3] = center[0] + g() * radius * 0.55;
-        xyz[i * 3 + 1] = center[1] + g() * radius * 0.22;
-        xyz[i * 3 + 2] = center[2] + g() * radius * 0.55;
+        off.set([g() * radius * 0.55, g() * radius * 0.22, g() * radius * 0.55], i * 3);
         ids[i] = page;
         cloudOf[i] = k;
         tint[i] = cloud.tint;
@@ -842,52 +837,151 @@ export async function mountGalaxy(root, { id }) {
         byId.set(page, i);
         i++;
       }
+      return cloud;
     });
-    const cloudByName = new Map(clouds.map((c) => [c.name, c]));
-    return {
+    const made = {
       count,
-      xyz,
+      off,
+      cc: new Float32Array(clouds.length * 3), // each cloud's middle as it is now, for the star loop
       ids,
       cloudOf,
       tint,
       mag,
       byId,
       clouds,
-      cloudByName,
+      cloudByName: new Map(clouds.map((c) => [c.name, c])),
+      morphUntil: 0,
       sx: new Float32Array(count),
       sy: new Float32Array(count),
       sz: new Float32Array(count),
-      pos: (k) => [xyz[k * 3], xyz[k * 3 + 1], xyz[k * 3 + 2]],
+      anchor: (k) => ({ c: cloudOf[k], o: [off[k * 3], off[k * 3 + 1], off[k * 3 + 2]] }),
       sprites: TINTS.map((t) => glowSprite(t)),
       litSprite: glowSprite(LIT),
     };
+    // Before any article: the biggest topic is the core.
+    layout(clouds, new Map(), clouds[0]);
+    for (const c of clouds) {
+      c.center = [...c.to];
+      made.cc.set(c.center, c.k * 3);
+    }
+    return made;
+  }
+
+  // Where every cloud goes for a center: the article's own topic is the core; along each arm, the
+  // topics its neighborhood reaches come first, the more of its articles the closer, and the rest
+  // follow in their fixed order out to the rim. Each is placed by how many stars lie inward of it in
+  // its part of the arm, so the disc thins out evenly; overlaps are then pushed apart.
+  function layout(clouds, weight, core) {
+    const arms = Array.from({ length: ARMS }, () => []);
+    for (const c of clouds) if (c !== core) arms[c.arm].push(c);
+    core.to = [0, 0, 0];
+    for (const [a, list] of arms.entries()) {
+      list.sort((x, y) => (weight.get(y) ?? 0) - (weight.get(x) ?? 0) || x.order - y.order);
+      // The reached topics fill the inner third of the arm, the rest the outer part.
+      const near = list.filter((c) => weight.has(c));
+      const zones = [
+        { list: near, from: 0.05, to: near.length ? 0.34 : 0.05 },
+        { list: list.filter((c) => !weight.has(c)), from: near.length ? 0.34 : 0.05, to: 1 },
+      ];
+      const place = new Map();
+      for (const zone of zones) {
+        const total = zone.list.reduce((n, c) => n + c.count, 0);
+        let inward = 0;
+        for (const c of zone.list) {
+          place.set(c, zone.from + (zone.to - zone.from) * ((inward + c.count / 2) / total) ** 0.62);
+          inward += c.count;
+        }
+      }
+      for (const c of list) {
+        const [jr, ja, jy] = c.jitter;
+        const s = place.get(c);
+        const r = RADIUS * s * (0.94 + jr * 0.12);
+        const angle = (a / ARMS) * Math.PI * 2 + s * WIND + (ja - 0.5) * 0.38;
+        c.to = [Math.cos(angle) * r, (jy - 0.5) * 360 * (1 - s), Math.sin(angle) * r];
+      }
+    }
+    separate(clouds, core);
+  }
+
+  // Lays the galaxy out around a new constellation and sets every cloud gliding there: the topics it
+  // reaches first, the rest a little after, each swinging round the core rather than cutting across.
+  function arrange(built) {
+    const weight = new Map();
+    for (const n of built.nodes) {
+      const c = n.anchor.c >= 0 ? sky.clouds[n.anchor.c] : null;
+      if (c) weight.set(c, (weight.get(c) ?? 0) + 1);
+    }
+    const own = built.center.anchor.c;
+    const core = own >= 0 ? sky.clouds[own] : [...weight.keys()].sort((a, b) => weight.get(b) - weight.get(a))[0] ?? sky.clouds[0];
+    layout(sky.clouds, weight, core);
+    const now = performance.now();
+    let last = now;
+    for (const c of sky.clouds) {
+      c.from = [...c.center];
+      c.t0 = now + (weight.has(c) ? 0 : 150 + (c.order % 1000) * 0.45);
+      last = Math.max(last, c.t0 + MORPH);
+    }
+    sky.morphUntil = last;
+    // Framed so that most of the neighborhood is in view once it has settled.
+    const home = where(built.center.anchor, true);
+    const spread = built.nodes.map((n) => Math.hypot(...sub(where(n.anchor, true), home))).sort((a, b) => a - b);
+    built.frame = clamp(spread[Math.floor(spread.length * 0.5)] * 1.1, 4000, 9000);
+  }
+
+  function morph(now) {
+    for (const c of sky.clouds) {
+      const t = clamp((now - c.t0) / MORPH, 0, 1);
+      const e = t < 0.5 ? 4 * t ** 3 : 1 - (-2 * t + 2) ** 3 / 2;
+      const [fx, fy, fz] = c.from;
+      const [tx, ty, tz] = c.to;
+      const ra = Math.hypot(fx, fz);
+      const rb = Math.hypot(tx, tz);
+      const aa = Math.atan2(fz, fx);
+      const ab = nearestAngle(Math.atan2(tz, tx), aa);
+      const r = ra + (rb - ra) * e;
+      const a = aa + (ab - aa) * e;
+      c.center = [Math.cos(a) * r, fy + (ty - fy) * e, Math.sin(a) * r];
+      sky.cc.set(c.center, c.k * 3);
+    }
+  }
+
+  // An anchor's position: its cloud's middle plus its offset, now or (settled) once the galaxy has
+  // finished rearranging.
+  function where({ c, o }, settled = false) {
+    const base = c < 0 ? [0, 0, 0] : settled ? sky.clouds[c].to : sky.clouds[c].center;
+    return [base[0] + o[0], base[1] + o[1], base[2] + o[2]];
   }
 
   // Clouds that overlap are pushed apart across the disc, the core staying put, so that each can be
-  // pointed at on its own.
-  function separate(clouds) {
-    for (let round = 0; round < 30; round++) {
+  // pointed at on its own. Only neighbors in a coarse grid are compared.
+  function separate(clouds, core) {
+    const cell = 2 * Math.max(...clouds.map((c) => c.extent)) + 50;
+    const side = 96; // cells across; the disc spans far fewer
+    const grid = Array.from({ length: side * side }, () => []);
+    const cellOf = (c) => (clamp(Math.floor(c.to[0] / cell) + side / 2, 1, side - 2) * side + clamp(Math.floor(c.to[2] / cell) + side / 2, 1, side - 2));
+    for (let round = 0; round < 24; round++) {
+      for (const list of grid) list.length = 0;
+      for (const c of clouds) grid[cellOf(c)].push(c);
       let moved = false;
-      for (let a = 0; a < clouds.length; a++) {
-        const A = clouds[a];
-        for (let b = a + 1; b < clouds.length; b++) {
-          const B = clouds[b];
-          const dx = B.center[0] - A.center[0];
-          const dz = B.center[2] - A.center[2];
-          const need = A.extent + B.extent + 50;
-          if (Math.abs(dx) >= need || Math.abs(dz) >= need) continue;
-          const d = Math.hypot(dx, dz) || 1;
-          if (d >= need) continue;
-          const push = (need - d) / 2;
-          const ux = dx / d;
-          const uz = dz / d;
-          if (a > 0) {
-            A.center[0] -= ux * push;
-            A.center[2] -= uz * push;
+      for (const A of clouds) {
+        const home = cellOf(A);
+        for (const near of [-side - 1, -side, -side + 1, -1, 0, 1, side - 1, side, side + 1]) {
+          for (const B of grid[home + near]) {
+            if (B.k <= A.k) continue;
+            const dx = B.to[0] - A.to[0];
+            const dz = B.to[2] - A.to[2];
+            const need = A.extent + B.extent + 50;
+            if (dx * dx + dz * dz >= need * need) continue;
+            const d = Math.hypot(dx, dz) || 1;
+            const push = (need - d) / 2;
+            const [ux, uz] = [dx / d, dz / d];
+            const [pa, pb] = A === core ? [0, 2] : B === core ? [2, 0] : [1, 1];
+            A.to[0] -= ux * push * pa;
+            A.to[2] -= uz * push * pa;
+            B.to[0] += ux * push * pb;
+            B.to[2] += uz * push * pb;
+            moved = true;
           }
-          B.center[0] += ux * push * (a ? 1 : 2);
-          B.center[2] += uz * push * (a ? 1 : 2);
-          moved = true;
         }
       }
       if (!moved) break;
@@ -909,23 +1003,24 @@ export async function mountGalaxy(root, { id }) {
     }
     const linked = links.get(centerId);
     const maxChars = Math.log10(1 + Math.max(...graph.nodes.map((n) => n.chars ?? 0)));
+    // Each article's anchor: its own star, the star it was born as, or else a place near its topic's
+    // cloud (for the article) or near the article (for the others).
     const at = (n) => {
       const k = sky.byId.get(n.id);
-      if (k != null) return sky.pos(k);
-      // An article without a topic that was born as a star earlier keeps that star.
+      if (k != null) return sky.anchor(k);
       if (placed.has(n.title)) return placed.get(n.title);
       const rand = seeded(n.id * 31);
-      const base = n.id === centerId ? sky.cloudByName.get(n.topic)?.center ?? [0, 0, 0] : centerPos;
-      return [base[0] + (rand() - 0.5) * 600, base[1] + (rand() - 0.5) * 200, base[2] + (rand() - 0.5) * 600];
+      const base = n.id === centerId ? { c: sky.cloudByName.get(n.topic)?.k ?? -1, o: [0, 0, 0] } : centerAnchor;
+      return { c: base.c, o: [base.o[0] + (rand() - 0.5) * 600, base.o[1] + (rand() - 0.5) * 200, base.o[2] + (rand() - 0.5) * 600] };
     };
-    const centerPos = at(self);
+    const centerAnchor = at(self);
     const nodes = graph.nodes.map((n) => ({
       id: n.id,
       title: n.title,
       topic: n.topic,
       hop: n.id === centerId ? 0 : linked.has(n.id) ? 1 : 2,
       r: 1 + 4 * (Math.log10(1 + (n.chars ?? 0)) / maxChars),
-      pos: n.id === centerId ? centerPos : at(n),
+      anchor: n.id === centerId ? centerAnchor : at(n),
     }));
     const byId = new Map(nodes.map((n) => [n.id, n]));
     const center = byId.get(centerId);
@@ -950,15 +1045,12 @@ export async function mountGalaxy(root, { id }) {
     for (const n of nodes) {
       n.el = makeLabel(n, linked.size, nodes.length - 1 - linked.size);
       layer.append(n.el);
-      n.w = n.el.offsetWidth;
-      n.h = n.el.offsetHeight;
     }
-    // Framed so that most of the neighborhood is in view; the farthest few may run off the edge.
-    const spread = nodes.map((n) => Math.hypot(...sub(n.pos, centerPos))).sort((a, b) => a - b);
-    const frame = clamp(spread[Math.floor(spread.length * 0.5)] * 1.1, 4000, 9000);
+    // Measured after all are in, so the page lays out once.
+    for (const n of nodes) [n.w, n.h] = [n.el.offsetWidth, n.el.offsetHeight];
     const inGraph = new Set(nodes.map((n) => n.title));
     const linkTitles = linkedTitles(article?.version?.text ?? "").filter((t) => !inGraph.has(t));
-    return { center, nodes, byId, links, preview, frame, topicCount: reached.size, linkTitles };
+    return { center, nodes, byId, links, preview, topicCount: reached.size, linkTitles };
   }
 
   function makeLabel(n, linkCount, farCount) {

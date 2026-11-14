@@ -76,6 +76,7 @@ export async function mountArchipelago(root, { id }) {
   let drag = null;
   let hovered = null; // { hill } or { body }
   let busy = false;
+  let needsFit = false;
 
   new ResizeObserver(() => {
     const dpr = devicePixelRatio || 1;
@@ -84,7 +85,7 @@ export async function mountArchipelago(root, { id }) {
     canvas.width = width * dpr;
     canvas.height = height * dpr;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    if (scene && !landed && !busy) Object.assign(to, fit(scene));
+    if (scene && !landed) refit(false);
   }).observe(stage);
 
   await go(id, { from: "start" });
@@ -159,18 +160,33 @@ export async function mountArchipelago(root, { id }) {
 
   function overview() {
     landed = null;
-    Object.assign(to, fit(scene));
+    refit(false);
     overviewButton.hidden = true;
     idleSince = performance.now();
   }
 
   // The view that fits the whole archipelago, hills included, between the switch at the top and the
   // trail at the bottom, at the current turn and tilt: back off until it fits, then centre it.
+  // Aims the camera at the whole archipelago, `snap` putting it there at once. A pane that is hidden
+  // has no size to fit to, so the fit waits until it is shown again.
+  function refit(snap) {
+    const view = scene && fit(scene);
+    needsFit = !view;
+    if (!view) return;
+    Object.assign(to, view);
+    if (snap) {
+      cam.pivot = [...view.pivot];
+      cam.dist = view.dist * 1.3;
+    }
+  }
+
   function fit(s) {
+    if (!width || !height) return null;
     const box = { left: 40, right: width - 40, top: 110, bottom: height - 90 };
     const keyBox = { right: keyEl.offsetLeft + keyEl.offsetWidth + 16, bottom: keyEl.offsetTop + keyEl.offsetHeight + 70 };
+    // Where the land will stand: hills on the move count at their goal.
     const marks = s.bodies.flatMap((b) => [0, 1, 2, 3, 4, 5, 6, 7].map((k) => [b.x + Math.cos(k * 0.785) * b.R, 0, b.z + Math.sin(k * 0.785) * b.R]));
-    for (const h of s.hills) marks.push([h.x, h.summit, h.z]);
+    for (const h of s.hills) marks.push([h.goal?.x ?? h.x, Math.max(h.summit, terraceY(h.goal?.top ?? 0)), h.goal?.z ?? h.z]);
     const view = { pivot: [...s.mid], yaw: to.yaw, pitch: to.pitch, dist: 2000 };
     const bounds = () => {
       const { project } = projector(view);
@@ -194,6 +210,7 @@ export async function mountArchipelago(root, { id }) {
       }
       view.dist = far;
       const b = bounds();
+      if (!b) break;
       const f = height * FOCAL;
       const across = ((b.left + b.right) / 2 - (box.left + box.right) / 2) * (view.dist / f);
       const along = ((b.top + b.bottom) / 2 - (box.top + box.bottom) / 2) * (view.dist / f / Math.sin(view.pitch));
@@ -201,7 +218,7 @@ export async function mountArchipelago(root, { id }) {
       const ground = Math.hypot(fw[0], fw[2]) || 1;
       view.pivot = [view.pivot[0] + rt[0] * across - (fw[0] / ground) * along, 0, view.pivot[2] + rt[2] * across - (fw[2] / ground) * along];
     }
-    return { pivot: view.pivot, dist: view.dist };
+    return [...view.pivot, view.dist].every(Number.isFinite) ? { pivot: view.pivot, dist: view.dist } : null;
   }
 
   function projector(view) {
@@ -228,7 +245,16 @@ export async function mountArchipelago(root, { id }) {
     requestAnimationFrame(frame);
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
-    if (root.hidden || !width || !scene) return;
+    if (root.hidden || !width || !height || !scene) return;
+    // Heal a camera that has lost its way, and make the fit that waited for the pane to be shown.
+    if (![...cam.pivot, cam.yaw, cam.pitch, cam.dist, ...to.pivot, to.yaw, to.pitch, to.dist].every(Number.isFinite)) {
+      Object.assign(cam, { yaw: VIEW.yaw, pitch: VIEW.pitch });
+      Object.assign(to, { yaw: VIEW.yaw, pitch: VIEW.pitch });
+      landed = null;
+      refit(true);
+    } else if (needsFit && !landed) {
+      refit(false);
+    }
     const ease = (rate) => 1 - Math.pow(rate, dt);
     // Left alone, the archipelago turns gently back and forth so its hills keep showing their height.
     if (!drag?.moved && !hovered && !busy && !landed && now - idleSince > 3000) {
@@ -240,6 +266,11 @@ export async function mountArchipelago(root, { id }) {
     cam.pitch += (to.pitch - cam.pitch) * ease(rate);
     cam.dist += (to.dist - cam.dist) * ease(rate);
     if (scene.morph) morph(now);
+    // Settled land that came out empty is made once more from its hills.
+    else if (!scene.terrain.land.length && !scene.remade) {
+      scene.remade = true;
+      scene.terrain = terrainOf(scene.hills, false);
+    }
     draw();
   });
 
@@ -265,13 +296,8 @@ export async function mountArchipelago(root, { id }) {
     renderKey();
     landed = null;
     overviewButton.hidden = true;
-    const view = fit(scene);
     handOver(old, nextId);
-    if (!old) {
-      cam.pivot = view.pivot;
-      cam.dist = view.dist * 1.3;
-    }
-    Object.assign(to, view);
+    refit(!old);
     idleSince = performance.now();
     swayFrom = to.yaw;
     const url = new URL(location.href);
@@ -968,7 +994,7 @@ const EMPTY_TERRAIN = { grid: null, land: [], water: [], hills: [] };
 // The land made from the hills as they stand: the height field and its terraces. While hills are on
 // the move it is made coarser, so it can be remade every frame.
 function terrainOf(hills, coarse) {
-  const live = hills.filter((h) => h.top > COAST * 0.6 || h.footTop > COAST * 0.6);
+  const live = hills.filter((h) => (h.top > COAST * 0.6 || h.footTop > COAST * 0.6) && Number.isFinite(h.x + h.z + h.top + h.sigma));
   if (!live.length) return EMPTY_TERRAIN;
   for (const h of live) h.reach = hillReach(h);
   const grid = heightField(live, coarse);
