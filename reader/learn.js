@@ -46,15 +46,13 @@ async function* read(request, found, history, onStep) {
 }
 
 // The articles the agent went through, as a list under the answer.
-export function sourcesHtml({ explored, items }) {
+export function sourcesHtml({ items }) {
   return `<div class="attach attach-results attach-sources">
-    <p class="res-label">Read ${items.length} of ${explored} linked articles · [0] is this article</p>
     <ul>${items
       .map(
         (s) => `
         <li><a class="res-item" href="${escape(href(s))}" target="_blank" rel="noopener">
           <span class="res-title">${s.n}. ${escape(s.title)}</span>
-          <span class="res-meta">${s.page_id ? "In this app" : "Wikipedia"}</span>
           <span class="res-note">${escape(s.why)}</span>
         </a></li>`,
       )
