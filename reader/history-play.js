@@ -19,8 +19,9 @@ const STEP = 300;
 const ROUND_HOLD = 250;
 const QUIET_ROUND = 550;
 const MIN_TRIP = 1600;
-// Years the strip shows at a time; Infinity shows the article's whole life.
-const ZOOM_YEARS = Infinity;
+// Years the strip shows at a time; it follows the marker unless the reader has just panned it.
+const ZOOM_YEARS = 6;
+const PAN_HOLD = 5000;
 const ERASE = 550;
 const REVEAL = 900;
 // Rounds of a war shown at most, and how fast ordinary versions and war rounds play, at 1×.
@@ -352,20 +353,35 @@ export function startHistoryPlay({ id, body, onClose }) {
     }
   }
 
-  // The strip shows ZOOM_YEARS at a time, panning with the marker so the marker stays in the middle.
+  // The strip shows ZOOM_YEARS at a time, panning with the marker so the marker stays in the middle;
+  // after the reader drags or scrolls it, it stays where they left it for PAN_HOLD.
+  let pan = 0;
+  let panHeld = 0;
+  const stripWidth = () => {
+    const view = $(".hp-map").clientWidth;
+    const span = edits.at(-1).time - edits[0].time;
+    return { view, full: Math.max(view, view * (span / (ZOOM_YEARS * 31_557_600_000))) };
+  };
+  function setPan(px, ms = 0, easing = "linear") {
+    const { view, full } = stripWidth();
+    pan = Math.min(full - view, Math.max(0, px));
+    const inner = $(".hp-map-inner");
+    inner.style.width = `${full}px`;
+    inner.style.transition = `transform ${ms}ms ${easing}`;
+    inner.style.transform = `translateX(${-pan}px)`;
+  }
   function moveMarker(time, ms, easing = "linear") {
     const marker = $(".minimap-now");
     marker.style.transitionDuration = `${ms}ms`;
     marker.style.transitionTimingFunction = easing;
     minimap.setTime(time);
-    const inner = $(".hp-map-inner");
-    const view = $(".hp-map").clientWidth;
-    const span = edits.at(-1).time - edits[0].time;
-    const full = Math.max(view, view * (span / (ZOOM_YEARS * 31_557_600_000)));
-    inner.style.width = `${full}px`;
-    const x = ((time - edits[0].time) / span) * full;
-    inner.style.transition = `transform ${ms}ms ${easing}`;
-    inner.style.transform = `translateX(${-Math.min(full - view, Math.max(0, x - view / 2))}px)`;
+    const { view, full } = stripWidth();
+    const x = ((time - edits[0].time) / (edits.at(-1).time - edits[0].time)) * full;
+    if (performance.now() < panHeld) {
+      setPan(pan);
+      return;
+    }
+    setPan(x - view / 2, ms, easing);
   }
 
   // The year strip can be dragged: the marker follows the pointer, the road glides along, and the
@@ -407,6 +423,12 @@ export function startHistoryPlay({ id, body, onClose }) {
       if (!drag) return;
       if (Math.abs(event.clientX - drag.x) > 4) drag.moved = true;
       if (!drag.moved) return;
+      // Dragging the strip itself pans it; dragging the marker's handle scrubs.
+      if (drag.panning) {
+        panHeld = performance.now() + PAN_HOLD;
+        setPan(drag.pan - (event.clientX - drag.x));
+        return;
+      }
       moveMarker(time, 0);
       path.setTime(time);
       $(".hp-date").textContent = formatDate(time);
@@ -418,22 +440,37 @@ export function startHistoryPlay({ id, body, onClose }) {
       closeWar();
       run++;
       looping = false;
-      drag = { x: event.clientX, moved: false };
+      const handle = $(".minimap-now").getBoundingClientRect();
+      drag = { x: event.clientX, moved: false, pan, panning: Math.abs(event.clientX - (handle.left + handle.width / 2)) > 14 };
       map.classList.add("is-dragging");
     });
     const finish = (event) => {
       if (!drag) return;
       const time = timeAt(event);
       const moved = drag.moved;
+      const wasPanning = drag.panning;
       drag = null;
       shownAt = -1;
       map.classList.remove("is-dragging");
+      const panned = moved && wasPanning;
+      if (panned) return;
       if (!moved) {
+        panHeld = 0;
         moveMarker(time, 450, "cubic-bezier(0.25, 0.8, 0.25, 1)");
         path.setTime(time);
       }
       jump(frameAt(time));
     };
+    // A sideways scroll, or a vertical one, pans the strip too.
+    map.addEventListener(
+      "wheel",
+      (event) => {
+        event.preventDefault();
+        panHeld = performance.now() + PAN_HOLD;
+        setPan(pan + (Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY));
+      },
+      { passive: false },
+    );
     map.addEventListener("pointerup", finish);
     map.addEventListener("pointercancel", finish);
   }

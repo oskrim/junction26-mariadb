@@ -16,7 +16,7 @@ const NEAR = 280; // nothing closer than this is drawn
 const FAR = 4200; // a short view keeps the road calm; the timeline is stretched out instead
 const NAMED = 2600; // editors are shown on blocks nearer than this
 const ROAD = 30; // half the road's width once the article is at its longest
-const STEP_Z = 520; // road between two stops; a little more inside a war, so the fight has room
+const STEP_Z = 520; // road between two stops; a war's rounds take little, as the fight plays on the globe
 const LANE_H = 10; // how high the lane and its side roads stand off the floor
 const SWORD = 150; // swords sign height above the road
 const GRID = 340; // floor grid spacing
@@ -29,7 +29,7 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
   const inWar = new Map();
   for (const war of wars) for (const e of war.edits) inWar.set(e.index, war);
   const stopZ = [0];
-  for (let k = 1; k < stops.length; k++) stopZ.push(stopZ[k - 1] + (inWar.has(stops[k]) ? 1.3 : 1) * STEP_Z);
+  for (let k = 1; k < stops.length; k++) stopZ.push(stopZ[k - 1] + (inWar.has(stops[k]) ? 0.2 : 1) * STEP_Z);
   const z = new Float64Array(edits.length);
   for (let k = 0; k < stops.length; k++) {
     const from = k ? stops[k - 1] : 0;

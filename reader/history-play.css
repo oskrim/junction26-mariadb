@@ -261,6 +261,13 @@
   cursor: grabbing;
 }
 
+/* Zoomed in: the strip is wider than its box and pans; the hover date above it may still show */
+.hp-dock .hp-map {
+  overflow-x: clip;
+  cursor: grab;
+  mask-image: linear-gradient(to right, transparent, #000 3%, #000 97%, transparent);
+}
+
 /* The marker's handle */
 .hp-map .minimap-now::after {
   content: "";
