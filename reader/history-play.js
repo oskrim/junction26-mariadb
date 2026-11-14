@@ -5,8 +5,7 @@ import { formatDate } from "./history-cards.js";
 import { analyzeHistory, findEditWars, parseRowStart, pickMilestones } from "./history-model.js";
 import { loadMath } from "./math.js";
 import { createMinimap } from "./minimap.js";
-import { createStoryPath, editorColor } from "./story-path.js";
-import { FIGHTER_COLORS } from "./timeline3d.js";
+import { colorFor, createStoryPath, editorColor } from "./story-path.js";
 import { closeWar, warHeading } from "./war-inline.js";
 import { renderWikitext } from "./wikitext.js";
 
@@ -317,7 +316,8 @@ export function startHistoryPlay({ id, body, onClose }) {
     const fighter = frame.round?.fighters.indexOf(frame.edit.user) ?? -1;
     typist = {
       name: `${censor(version.user)}${frame.round && frame.edit.revertsTo !== null ? " · undo" : ""}`,
-      color: fighter === 0 || fighter === 1 ? FIGHTER_COLORS[fighter] : editorColor(frame.edit.user, frame.edit.kind),
+      // The same color as their cursor around the globe.
+      color: fighter >= 0 && fighter < 8 ? colorFor(fighter) : editorColor(frame.edit.user, frame.edit.kind),
       war: !!frame.round,
     };
     await render(version, renderMath, token, animate, onPlan, frame.round);
@@ -337,7 +337,7 @@ export function startHistoryPlay({ id, body, onClose }) {
   function showRound(frame) {
     if (!frame.round || announced !== frame.round) return;
     const round = $(".hp-war-round");
-    const last = frame.round.edits.findLast((e) => frame.round.fighters.slice(0, 2).includes(e.user));
+    const last = frame.round.edits.findLast((e) => frame.round.fighters.slice(0, 8).includes(e.user));
     if (round) {
       round.textContent = frame.n === frame.of && last ? `${censor(last.user)} wins` : `${frame.n}/${frame.of}`;
     }
