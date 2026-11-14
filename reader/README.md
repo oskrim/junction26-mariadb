@@ -3,7 +3,7 @@
 One page with three views of an article, switched in the top bar:
 
 - **Article**: a calm reading view with contents on the left and images in the margin. Hover a link for a preview.
-  Press Q for the liquid cursor menu (Ask, Find, Learn) and its chats.
+  Press Q for the query bar: type anything, and Gemini routes it to Ask, Find, Learn or Visualise in a chat.
 - **Explore**: the article's related articles as a 3D map you can grow outward.
 - **History**: the article's whole edit history as a 3D path you fly along, with the article as it read at
   each moment in a sidebar, and edit wars you can watch being fought.
@@ -39,9 +39,10 @@ The **Explore** switch in the top bar shows the article's related articles as a 
   doesn't have yet (see the note in `fake/api.js`).
 - The fake link graph is built in `fake/graph.js` from the articles the Quantum computing page links to.
 
-## Cursor menu
+## Query bar
 
-- `cursor-menu.js` and `cursor-menu.css`: the menu and its prompt bar. Press Q to open it (no browser uses a bare Q).
+- `cursor-menu.js` and `cursor-menu.css`: the query bar. Press Q to open it (no browser uses a bare Q); select or
+  paint a passage to ask about it. POST /api/intent (`server/intent.py`) picks the path for each request.
 - `chat.js`: the chats: a floating window or side panel, with a tray of tabs and a history list.
 - `model3d.js`: the 3D qubit that Visualise shows, drawn on a canvas.
 - `fake/assistant.js`: every canned answer and the earlier chats in History. Replace the body of `respond()` with a real call to go live.

@@ -8,17 +8,6 @@
   --shadow-float: 0 0 0 1px rgba(0, 0, 0, 0.06), 0 2px 6px rgba(0, 0, 0, 0.05), 0 8px 32px rgba(0, 0, 0, 0.09);
 }
 
-/* Painting: the pointer is the menu's text cursor, so the real one hides. */
-html.qm-following,
-html.qm-following * {
-  cursor: none !important;
-}
-
-html.qm-following ::selection {
-  background: var(--paint);
-  color: inherit;
-}
-
 ::highlight(qm-paint) {
   background-color: var(--paint);
 }
@@ -78,7 +67,7 @@ html.qm-following ::selection {
   fill: url(#qm-caret-shine);
 }
 
-/* Once a mode is picked, the I-beam gives way to the Wikipedia globe beside the prompt bar. */
+/* While the query bar is open, the I-beam gives way to the Wikipedia globe beside it. */
 .qm-caret svg,
 .qm-globe {
   transition: opacity 160ms ease, transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
@@ -110,56 +99,6 @@ html.qm-following ::selection {
   transform: translate(-50%, -50%) scale(1);
 }
 
-/* Pills: the liquid layer grows each pill out of the caret; once out, a crisp pill with a hairline
-   edge sits on top, so the menu reads sharp while the liquid stays with the caret and the paint. */
-
-.qm-btn {
-  position: absolute;
-  left: 0;
-  top: 0;
-  height: 30px;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 4px 0 10px;
-  border: 0;
-  border-radius: 999px;
-  background: transparent;
-  box-shadow: none;
-  transition: background-color 120ms ease, box-shadow 120ms ease;
-  color: var(--ink);
-  font: 500 13px/1 var(--sans);
-  white-space: nowrap;
-  pointer-events: none;
-  will-change: transform;
-}
-
-.qm[data-state="pinned"] .qm-btn.is-out {
-  pointer-events: auto;
-  cursor: pointer;
-}
-
-.qm-btn > * {
-  opacity: 0;
-  filter: blur(2px);
-  transition: opacity 120ms ease, filter 120ms ease;
-}
-
-.qm-icon {
-  flex: none;
-  width: 16px;
-  height: 16px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.4;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.qm-label {
-  margin-right: 1px;
-}
-
 .qm kbd {
   display: inline-grid;
   place-items: center;
@@ -172,24 +111,7 @@ html.qm-following ::selection {
   font: 500 11px/1 var(--sans);
 }
 
-.qm-btn.is-out {
-  background: var(--liquid);
-  box-shadow: var(--shadow-float);
-  transition-delay: calc(var(--i) * 40ms + 110ms);
-}
-
-.qm-btn.is-out > * {
-  opacity: 1;
-  filter: none;
-  transition-delay: calc(var(--i) * 40ms + 110ms);
-}
-
-.qm[data-state="pinned"] .qm-btn.is-out:hover {
-  background: #f7f8fa;
-  transition-delay: 0ms;
-}
-
-/* Prompt bar: the chosen blob stretches to this shape; the bar fades in on top of it. */
+/* Query bar: the blob grows out of the caret to this shape; the bar fades in on top of it. */
 
 .qm-bar {
   position: absolute;

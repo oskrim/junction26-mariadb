@@ -38,6 +38,24 @@ async function* answer(request, onStep, found) {
   }
 }
 
+// Which path a request from the query bar takes: POST /api/intent (server/intent.py) asks Gemini whether it
+// is a question (ask), a search (find), something to understand (learn) or something to show (visualise).
+// Resolves to { mode, why }; when that fails, to Ask with the reason in `failed`.
+export async function route({ prompt, context, history = [] }) {
+  try {
+    const response = await fetch(BASE + "/api/intent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt, context, history }),
+    });
+    const reply = await response.json().catch(() => null);
+    if (!response.ok || !reply?.mode) throw new Error(reply?.error ?? `the server returned ${response.status}`);
+    return reply;
+  } catch (error) {
+    return { mode: "ask", why: "", failed: error.message };
+  }
+}
+
 // Posts request to url and yields its Server-Sent Events as { name, data } until "done" or "error". A request
 // that fails before or during the stream ends with one "error" event.
 export async function* events(url, request) {
