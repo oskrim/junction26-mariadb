@@ -3,7 +3,7 @@
 One page with three views of an article, switched in the top bar:
 
 - **Article**: a calm reading view with contents on the left and images in the margin. Hover a link for a preview.
-  Press Q for the liquid cursor menu (Ask, Find, Visualise) and its chats.
+  Press Q for the liquid cursor menu (Ask, Find, Learn) and its chats.
 - **Explore**: the article's related articles as a 3D map you can grow outward.
 - **History**: the article's whole edit history as a 3D path you fly along, with the article as it read at
   each moment in a sidebar, and edit wars you can watch being fought.

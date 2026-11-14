@@ -78,21 +78,58 @@ html.qm-following ::selection {
   fill: url(#qm-caret-shine);
 }
 
-/* Blobs: the circle is drawn in the liquid layer; this is the crisp icon and label on top. */
+/* Once a mode is picked, the I-beam gives way to the Wikipedia globe beside the prompt bar. */
+.qm-caret svg,
+.qm-globe {
+  transition: opacity 160ms ease, transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.qm-globe {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  box-sizing: border-box;
+  width: 32px;
+  height: 32px;
+  padding: 4px;
+  border-radius: 50%;
+  background: var(--liquid);
+  box-shadow: var(--shadow-float);
+  object-fit: contain;
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.6);
+}
+
+.qm[data-state="bar"] .qm-caret svg {
+  opacity: 0;
+  transform: scale(0.6);
+}
+
+.qm[data-state="bar"] .qm-globe {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+
+/* Pills: the liquid layer grows each pill out of the caret; once out, a crisp pill with a hairline
+   edge sits on top, so the menu reads sharp while the liquid stays with the caret and the paint. */
 
 .qm-btn {
   position: absolute;
-  left: -18px;
-  top: -18px;
-  width: 36px;
-  height: 36px;
-  padding: 0;
+  left: 0;
+  top: 0;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px 0 10px;
   border: 0;
-  border-radius: 50%;
+  border-radius: 999px;
   background: transparent;
+  box-shadow: none;
+  transition: background-color 120ms ease, box-shadow 120ms ease;
   color: var(--ink);
-  display: grid;
-  place-items: center;
+  font: 500 13px/1 var(--sans);
+  white-space: nowrap;
   pointer-events: none;
   will-change: transform;
 }
@@ -102,7 +139,14 @@ html.qm-following ::selection {
   cursor: pointer;
 }
 
+.qm-btn > * {
+  opacity: 0;
+  filter: blur(2px);
+  transition: opacity 120ms ease, filter 120ms ease;
+}
+
 .qm-icon {
+  flex: none;
   width: 16px;
   height: 16px;
   fill: none;
@@ -110,45 +154,17 @@ html.qm-following ::selection {
   stroke-width: 1.4;
   stroke-linecap: round;
   stroke-linejoin: round;
-  opacity: 0;
-  filter: blur(2px);
-  transition: opacity 120ms ease, filter 120ms ease;
 }
 
 .qm-label {
-  position: absolute;
-  top: 50%;
-  left: calc(100% + 10px);
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  height: 28px;
-  padding: 0 5px 0 11px;
-  border-radius: 999px;
-  background: var(--liquid);
-  box-shadow: var(--shadow-float);
-  font-size: 13px;
-  font-weight: 500;
-  white-space: nowrap;
-  opacity: 0;
-  filter: blur(2px);
-  transform: translate(-6px, -50%);
-  transition: opacity 120ms ease, filter 120ms ease, transform 160ms ease;
-}
-
-.qm[data-side="left"] .qm-label {
-  left: auto;
-  right: calc(100% + 10px);
-  flex-direction: row-reverse;
-  padding: 0 11px 0 5px;
-  transform: translate(6px, -50%);
+  margin-right: 1px;
 }
 
 .qm kbd {
   display: inline-grid;
   place-items: center;
-  min-width: 19px;
-  height: 19px;
+  min-width: 20px;
+  height: 20px;
   padding: 0 4px;
   border-radius: 6px;
   background: var(--chip);
@@ -156,23 +172,21 @@ html.qm-following ::selection {
   font: 500 11px/1 var(--sans);
 }
 
-.qm-btn.is-out .qm-icon,
-.qm-btn.is-out .qm-label {
+.qm-btn.is-out {
+  background: var(--liquid);
+  box-shadow: var(--shadow-float);
+  transition-delay: calc(var(--i) * 40ms + 110ms);
+}
+
+.qm-btn.is-out > * {
   opacity: 1;
   filter: none;
   transition-delay: calc(var(--i) * 40ms + 110ms);
 }
 
-.qm-btn.is-out .qm-label {
-  transform: translate(0, -50%);
-}
-
-.qm[data-state="pinned"] .qm-btn.is-out:hover .qm-label {
-  background: #f7f8fa;
-}
-
 .qm[data-state="pinned"] .qm-btn.is-out:hover {
-  background: rgba(0, 0, 0, 0.04);
+  background: #f7f8fa;
+  transition-delay: 0ms;
 }
 
 /* Prompt bar: the chosen blob stretches to this shape; the bar fades in on top of it. */

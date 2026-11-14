@@ -1,11 +1,14 @@
 // A small liquid menu that rides on the pointer. Press Q to open it; the pointer becomes a text
-// cursor you can paint a passage with. Press A, F, V or L (or click a blob once it settles) and that
-// blob stretches into a prompt bar; Enter hands the request to onSubmit.
+// cursor you can paint a passage with. Press A, F or L (or click a pill once it settles) and that
+// pill stretches into a prompt bar; Enter hands the request to onSubmit.
 //
 // States: closed → follow (rides the pointer) → pinned (stays put, blobs clickable) → bar (typing).
 // Painting keeps it following; a plain click pins it where the pointer is. Picking an action stops it.
 
 export const OPEN_KEY = "q";
+
+// While the prompt bar is open, the caret becomes the Wikipedia globe.
+const GLOBE = new URL("files/wikipedia-globe.png", import.meta.url).href;
 
 const MODES = [
   {
@@ -25,14 +28,6 @@ const MODES = [
     icon: `<circle cx="7" cy="7" r="4" /><path d="M10 10l3.5 3.5" />`,
   },
   {
-    id: "visualise",
-    label: "Visualise",
-    key: "v",
-    placeholder: "What should I show? A model, a chart…",
-    fallback: "Show me how this works",
-    icon: `<path d="M3 13V8.5M8 13V3.5M13 13V6.5" />`,
-  },
-  {
     id: "learn",
     label: "Learn",
     key: "l",
@@ -43,8 +38,10 @@ const MODES = [
 ];
 
 const CARET_GAP = 20;
-const BLOB = 36;
-const REACH = 58;
+const BLOB = 30; // pill height
+const PILL_GAP = 22; // caret to the nearest pill edge
+const PILL_STEP = 42; // pill centre to pill centre: a clear gap, so the liquid never joins two pills
+const ARC = 10; // the middle pills sit a little further out, so the stack curves around the caret
 const BAR_W = 400;
 const BAR_H = 48;
 const EDGE = 16;
@@ -69,6 +66,7 @@ export function cursorMenu({ root, onSubmit }) {
   let timers = [];
   let frame = 0;
   let last = 0;
+  let widths = MODES.map(() => 100); // each pill's natural width, measured when the menu opens
 
   const presence = new Spring(0); // 0 hidden, 1 shown: scales the caret in and out
   const blobs = MODES.map(() => ({ x: new Spring(0), y: new Spring(0), w: new Spring(0), h: new Spring(0), phase: "home" }));
@@ -161,6 +159,7 @@ export function cursorMenu({ root, onSubmit }) {
     });
     el.input.value = "";
     el.root.hidden = false;
+    widths = el.buttons.map((b) => b.offsetWidth);
     run();
   }
 
@@ -242,17 +241,19 @@ export function cursorMenu({ root, onSubmit }) {
     return mouse ?? { x: innerWidth / 2, y: innerHeight / 2 };
   }
 
-  // Blobs fan out to the right, or to the left near the right edge, and tilt away from the top
-  // and bottom edges so every blob and label stays on screen.
+  // Pills stack beside the caret: to the right, or to the left near the right edge. The stack
+  // slides down or up near the top and bottom edges so every pill stays on screen.
   function spots({ x, y }) {
     if (side === "right" && x > innerWidth - 240) side = "left";
     else if (side === "left" && x < innerWidth - 290) side = "right";
     el.root.dataset.side = side;
-    const tilt = y < 96 ? 42 : y > innerHeight - 96 ? -42 : 0;
+    const mid = (MODES.length - 1) / 2;
+    const half = mid * PILL_STEP + BLOB / 2;
+    const cy = clamp(y, EDGE + half, innerHeight - EDGE - half);
+    const dir = side === "right" ? 1 : -1;
     return MODES.map((_, i) => {
-      const deg = (i - (MODES.length - 1) / 2) * 40;
-      const a = ((deg + tilt) * Math.PI) / 180;
-      return { x: x + (side === "right" ? 1 : -1) * REACH * Math.cos(a), y: y + REACH * Math.sin(a) };
+      const out = PILL_GAP + ARC * (1 - Math.abs(i - mid) / Math.max(mid, 1)) + widths[i] / 2;
+      return { x: x + dir * out, y: cy + (i - mid) * PILL_STEP };
     });
   }
 
@@ -284,7 +285,7 @@ export function cursorMenu({ root, onSubmit }) {
       let to;
       let feel = FEEL.close;
       if (b.phase === "out") {
-        to = { ...targets[i], w: BLOB, h: BLOB };
+        to = { ...targets[i], w: widths[i], h: BLOB };
         feel = state === "follow" && b.w.settled ? FEEL.follow : FEEL.open;
       } else if (b.phase === "bar") {
         to = { x: bar.x + bar.w / 2, y: bar.y + bar.h / 2, w: bar.w, h: bar.h };
@@ -315,15 +316,17 @@ export function cursorMenu({ root, onSubmit }) {
     el.caret.style.transform = `translate(${c.x}px, ${c.y}px) scale(${clamp(presence.v, 0, 1.15)})`;
 
     blobs.forEach((b, i) => {
-      const w = Math.max(b.w.v, 0);
-      const h = Math.max(b.h.v, 0);
+      // A settled pill is drawn crisp by its button, so its liquid shape steps aside: two edges read as a double border.
+      const crisp = b.phase === "out" && b.w.settled && b.h.settled;
+      const w = crisp ? 0 : Math.max(b.w.v, 0);
+      const h = crisp ? 0 : Math.max(b.h.v, 0);
       const rect = el.rects[i];
       rect.setAttribute("x", b.x.v - w / 2);
       rect.setAttribute("y", b.y.v - h / 2);
       rect.setAttribute("width", w);
       rect.setAttribute("height", h);
       rect.setAttribute("rx", Math.min(w, h) / 2);
-      el.buttons[i].style.transform = `translate(${b.x.v}px, ${b.y.v}px)`;
+      el.buttons[i].style.transform = `translate(${b.x.v - widths[i] / 2}px, ${b.y.v - BLOB / 2}px)`;
       el.buttons[i].classList.toggle("is-out", b.phase === "out");
     });
 
@@ -391,12 +394,14 @@ function build() {
         <path class="qm-caret-body" d="M4 3h12a2 2 0 0 1 0 4h-4v16h4a2 2 0 0 1 0 4H4a2 2 0 0 1 0-4h4V7H4a2 2 0 0 1 0-4Z" />
         <path class="qm-caret-shine" d="M8.9 7.6h1.2v14.8H8.9z" />
       </svg>
+      <img class="qm-globe" src="${GLOBE}" alt="" />
     </span>
     ${MODES.map(
       (m, i) => `
       <button type="button" class="qm-btn" data-mode="${m.id}" style="--i: ${i}" tabindex="-1">
         <svg class="qm-icon" viewBox="0 0 16 16" aria-hidden="true">${m.icon}</svg>
-        <span class="qm-label">${m.label}<kbd>${m.key.toUpperCase()}</kbd></span>
+        <span class="qm-label">${m.label}</span>
+        <kbd>${m.key.toUpperCase()}</kbd>
       </button>`,
     ).join("")}
     <form class="qm-bar" autocomplete="off">
