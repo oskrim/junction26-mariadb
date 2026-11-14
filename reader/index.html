@@ -13,10 +13,15 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
     <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
     <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./explore.css" />
   </head>
   <body>
     <header class="bar">
       <a class="wordmark" href="./">Wikipedia</a>
+      <nav class="views" aria-label="View">
+        <button type="button" data-view="article" aria-pressed="true">Article</button>
+        <button type="button" data-view="explore" aria-pressed="false">Explore</button>
+      </nav>
       <label class="search">
         <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5" /><path d="M10.5 10.5 14 14" /></svg>
         <input type="search" placeholder="Search articles" />
@@ -30,6 +35,8 @@
         <article class="body"></article>
       </main>
     </div>
+
+    <section class="explore" aria-label="Related articles" hidden></section>
 
     <div class="card card-preview" role="tooltip"></div>
     <div class="card card-ref" role="tooltip"></div>

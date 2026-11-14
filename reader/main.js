@@ -5,6 +5,7 @@ import { renderWikitext } from "./wikitext.js";
 const DEFAULT_ARTICLE = 4011;
 
 const id = Number(new URLSearchParams(location.search).get("id") ?? DEFAULT_ARTICLE);
+setUpViews();
 const now = Math.floor(Date.now() / 1000);
 const [articles, { version }] = await Promise.all([getArticles(), getArticle(id, now)]);
 const summary = articles.find((a) => a.page_id === id);
@@ -51,6 +52,39 @@ if (!version || !summary) {
   body.addEventListener("click", (event) => {
     if (event.target.closest("a.wl")) event.preventDefault();
   });
+}
+
+// Article and Explore share the page. Explore loads the first time it's opened, and can move to
+// another article; switching back to Article then opens that one.
+function setUpViews() {
+  const layout = document.querySelector(".layout");
+  const explore = document.querySelector(".explore");
+  const buttons = document.querySelectorAll(".views button");
+  let mounted = null;
+
+  const show = (view) => {
+    const url = new URL(location.href);
+    const current = Number(url.searchParams.get("id") ?? DEFAULT_ARTICLE);
+    if (view === "article" && current !== id) {
+      url.searchParams.delete("view");
+      location.href = url;
+      return;
+    }
+    if (view === "explore") url.searchParams.set("view", "explore");
+    else url.searchParams.delete("view");
+    history.replaceState(null, "", url);
+    document.body.dataset.view = view;
+    layout.hidden = view === "explore";
+    explore.hidden = view !== "explore";
+    for (const b of buttons) b.setAttribute("aria-pressed", String(b.dataset.view === view));
+    if (view === "explore") {
+      scrollTo(0, 0);
+      mounted ??= import("./explore.js").then((m) => m.mountExplore(explore, { id }));
+    }
+  };
+
+  for (const b of buttons) b.addEventListener("click", () => show(b.dataset.view));
+  show(new URLSearchParams(location.search).get("view") === "explore" ? "explore" : "article");
 }
 
 function formatDate(rowStart) {

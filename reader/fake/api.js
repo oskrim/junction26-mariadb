@@ -1,3 +1,5 @@
+import { buildFakeGraph, graphAt } from "./graph.js";
+
 // FAKE API. Stands in for app.py (port 8010) with the same requests and response shapes.
 // To go live, replace each function body with the fetch shown above it; the screens stay unchanged.
 
@@ -37,12 +39,21 @@ const LOCAL_FILES = {
 // Opening lines and lead image of each article this page links to, keyed by link target.
 const PREVIEWS = await fetch(new URL("./previews.json", import.meta.url)).then((r) => r.json());
 
+// Looked up by the link text as written, or by the article's own title.
+const PREVIEWS_BY_TITLE = Object.fromEntries(
+  Object.values(PREVIEWS).filter(Boolean).map((p) => [p.title, p]),
+);
+
+// Every article on the map, with when its links were added. Built from the lists above.
+const GRAPH = buildFakeGraph(ARTICLES, PREVIEWS, 4011);
+const ALL_ARTICLES = GRAPH.articles.map(({ page_id, title, versions, first }) => ({ page_id, title, versions, first }));
+
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // fetch("/api/articles").then((r) => r.json())
 export async function getArticles() {
   await delay(120);
-  return ARTICLES;
+  return ALL_ARTICLES;
 }
 
 // fetch(`/api/article?id=${id}&at=${at}`).then((r) => r.json())
@@ -71,7 +82,20 @@ export async function getArticle(id, at) {
 // first paragraph of /api/article. Returns { title, extract, thumbnail: { url, width, height } | null } or null.
 export async function getPreview(title) {
   await delay(60);
-  return PREVIEWS[title] ?? null;
+  return PREVIEWS[title] ?? PREVIEWS_BY_TITLE[title] ?? null;
+}
+
+// fetch(`/api/graph?at=${at}`).then((r) => r.json())
+export async function getGraph(at) {
+  await delay(180);
+  return graphAt(GRAPH, at);
+}
+
+// Not in app.py yet. Groups articles into broad topics for the map's labels. A real version could
+// cluster the link graph, or ask a model to name the clusters. Returns { [page_id]: topic name }.
+export async function getTopics() {
+  await delay(40);
+  return Object.fromEntries(GRAPH.articles.map((a) => [a.page_id, a.topic]));
 }
 
 // Not an API request: turns a [[File:...]] name from the article text into an image URL.
