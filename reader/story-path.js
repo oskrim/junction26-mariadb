@@ -373,10 +373,8 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
       const dw = diff?.length ? ctx.measureText(diff.join("  ")).width : 0;
       ctx.font = `${walking ? 600 : 500} 11px Inter, system-ui, sans-serif`;
       const lw = Math.max(w, dw);
-      // On the road's outer side when there is room, otherwise on the other side of the disc.
-      const right = foot.x + r + 5;
-      const left = foot.x - r - 5 - lw;
-      const lx = b.side > 0 ? (right + lw <= width * 0.9 ? right : left) : left >= width * 0.1 ? left : right;
+      // Always on the side toward the lane, so it never flips: left of the disc on right-hand roads.
+      const lx = b.side > 0 ? Math.max(4, foot.x - r - 5 - lw) : Math.min(width - lw - 4, foot.x + r + 5);
       const box = { x: lx - 3, y: cy - 8, w: lw + 6, h: diff?.length ? 30 : 16 };
       if (!walking && labels.some((o) => box.x < o.x + o.w && o.x < box.x + box.w && box.y < o.y + o.h && o.y < box.y + box.h)) return;
       labels.push(box);
