@@ -23,6 +23,9 @@ export async function mountExplore(root, { id }) {
     </div>
     <div class="ex-tip" role="tooltip"></div>
     <aside class="ex-panel" aria-live="polite"></aside>
+    <button class="ex-back" type="button" title="Back (Ctrl+Z / ⌘Z)" hidden>
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3 5 8l5 5" /></svg>Back
+    </button>
     <div class="ex-time">
       <button class="ex-play" type="button" aria-label="Play the history">
         <svg viewBox="0 0 16 16" aria-hidden="true"><path class="ex-icon-play" d="M5 3.5v9l7.5-4.5z" /><path class="ex-icon-pause" d="M4.5 3.5h2.5v9H4.5zM9 3.5h2.5v9H9z" /></svg>
@@ -666,7 +669,7 @@ export async function mountExplore(root, { id }) {
     stage.classList.remove("is-dragging");
     if (!clicked) return;
     pointAt(event);
-    if (hoverId !== null) select(hoverId);
+    if (hoverId !== null) open(hoverId);
     else deselect();
   });
 
@@ -688,12 +691,50 @@ export async function mountExplore(root, { id }) {
   // Cards are buttons, so keyboard users can tab to them and press Enter.
   layer.addEventListener("click", (event) => {
     const card = event.target.closest(".ex-card");
-    if (card && event.detail === 0) select(Number(card.dataset.id));
+    if (card && event.detail === 0) open(Number(card.dataset.id));
   });
 
   addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !root.hidden) deselect();
+    const typing = event.target.closest?.("input, textarea, [contenteditable]");
+    if (event.key.toLowerCase() === "z" && (event.metaKey || event.ctrlKey) && !event.shiftKey && document.body.dataset.view === "explore" && !typing) {
+      event.preventDefault();
+      undo();
+    }
   });
+
+  // --- Undo -------------------------------------------------------------------------------------
+  // Each click that opens an article or moves the middle saves where the map was, so Back (or
+  // Ctrl+Z / ⌘Z) can return there by opening the same articles again.
+  const undoStack = [];
+  const backButton = $(".ex-back");
+  backButton.addEventListener("click", () => undo());
+
+  function remember() {
+    undoStack.push({ center: centerId, path: [...trail], selected: selectedId });
+    backButton.hidden = false;
+  }
+
+  async function open(n) {
+    if (n === selectedId) return;
+    remember();
+    await select(n);
+  }
+
+  async function move(n) {
+    remember();
+    await exploreFrom(n);
+  }
+
+  async function undo() {
+    const state = undoStack.pop();
+    backButton.hidden = undoStack.length === 0;
+    if (!state || moving) return;
+    if (state.center !== centerId) await exploreFrom(state.center);
+    if (!state.path.length) await select(centerId);
+    for (const m of state.path) if (hop.has(m)) await select(m);
+    if (state.selected === null) deselect();
+  }
 
   function pointAt(event) {
     const box = stage.getBoundingClientRect();
@@ -805,7 +846,7 @@ export async function mountExplore(root, { id }) {
     if (close) close.onclick = deselect;
     separateActions();
     const recenter = panel.querySelector("[data-act=center]");
-    if (recenter) recenter.onclick = () => exploreFrom(n);
+    if (recenter) recenter.onclick = () => move(n);
     const { version } = await getArticle(n, now);
     if (version && shownId === n) panel.querySelector(".ex-btn.is-primary").hidden = false;
   }
