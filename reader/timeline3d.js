@@ -1,22 +1,24 @@
 // The 3D timeline: scrolling flies the camera forward along a path on the floor. Every edit is a dot on
-// the path, notable edits and edit wars float beside it as cards, and the path bends toward each card.
-// Everything is projected by hand each frame, so the canvas path and the HTML cards stay in step.
+// the path, notable edits and edit wars stand beside it as small labels, and the path bends toward each one.
+// Scaled-down cards can't be read, so labels keep a readable size, and only the stop in front of the
+// camera opens as a full card, flat and at its natural size, beside the road with a line to its label.
+// Everything is projected by hand each frame, so the canvas path and the HTML stay in step.
 
 const SPACING = 1000; // world units between cards
 const WAR_LENGTH = 1600; // stretch of path a war's braid takes up
-const SIDE = 360; // card distance from the path
-const BEND = 90; // how far the path leans toward a card
-const CARD_HEIGHT = 170; // card center above the floor
+const SIDE = 230; // label distance from the path
+const BEND = 90; // how far the path leans toward a label
+const PIN_HEIGHT = 110; // label height above the floor
 const EYE = 230; // camera height
 const VIEW = 1050; // distance at which a card is shown at its natural size
 const FAR = 7000;
-const CARD_FAR = 4800; // cards appear later than the path, so the horizon stays quiet
+const CARD_FAR = 4800; // labels appear later than the path, so the horizon stays quiet
 // Page scroll per world unit for each spacing setting: more scroll per unit means slower travel.
 export const SPACINGS = { tight: 0.6, normal: 1.2, roomy: 2.6 };
 
 export const FIGHTER_COLORS = ["#3366cc", "#d73333"];
 
-export function createTimeline({ stage, canvas, layer, spacer, edits, stops, renderCard, onMove }) {
+export function createTimeline({ stage, canvas, layer, spacer, edits, stops, renderCard, renderPin, onMove }) {
   const ctx = canvas.getContext("2d");
 
   // Lay the stops out along z; a war gets a stretch of path rather than a point.
@@ -40,13 +42,14 @@ export function createTimeline({ stage, canvas, layer, spacer, edits, stops, ren
   const editZ = edits.map((e) => timeToZ(e.time));
 
   for (const stop of stops) {
+    stop.pin = document.createElement("div");
+    stop.pin.className = "tl-pin-slot";
+    stop.pin.innerHTML = renderPin(stop);
+    stop.pin.addEventListener("click", () => goToZ(stop.z));
     stop.el = document.createElement("div");
     stop.el.className = "tl-slot";
     stop.el.innerHTML = renderCard(stop);
-    stop.el.addEventListener("click", (event) => {
-      if (!event.target.closest("[data-action]")) goToZ(stop.z);
-    });
-    layer.append(stop.el);
+    layer.append(stop.pin, stop.el);
   }
 
   const years = [];
@@ -163,36 +166,73 @@ export function createTimeline({ stage, canvas, layer, spacer, edits, stops, ren
     let best = null;
     for (const stop of stops) {
       const dz = stop.z - camZ;
-      if (dz < 120 || dz > CARD_FAR) {
-        stop.el.style.visibility = "hidden";
-        continue;
-      }
-      const cardX = pathX(stop.z) + stop.side * SIDE * fit;
-      const p = project(cardX, CARD_HEIGHT, stop.z);
-      const foot = project(pathX(stop.z), 0, stop.z);
-      const opacity = (1 - smoothstep(CARD_FAR * 0.55, CARD_FAR, dz)) * smoothstep(250, 650, dz);
-      const scale = (VIEW / dz) * fit;
-      stop.el.style.visibility = opacity > 0.01 ? "visible" : "hidden";
-      stop.el.style.opacity = opacity.toFixed(3);
-      stop.el.style.zIndex = String(Math.round(FAR - dz));
-      stop.el.style.transform = `translate(${p.x}px, ${p.y}px) scale(${scale})`;
-
-      const edge = project(cardX - stop.side * 150, CARD_HEIGHT, stop.z);
-      ctx.strokeStyle = `rgba(32,33,34,${0.18 * opacity})`;
-      ctx.lineWidth = Math.max(0.5, 1.2 * p.s);
-      ctx.setLineDash([3, 4]);
-      ctx.beginPath();
-      ctx.moveTo(edge.x, edge.y);
-      ctx.lineTo(foot.x, foot.y);
-      ctx.stroke();
-      ctx.setLineDash([]);
-
-      if (dz > 500 && (!best || Math.abs(dz - VIEW) < Math.abs(best.z - camZ - VIEW))) best = stop;
+      if (dz > 500 && dz < CARD_FAR && (!best || Math.abs(dz - VIEW) < Math.abs(best.z - camZ - VIEW))) best = stop;
     }
     if (best !== focused) {
       focused?.el.classList.remove("is-focus");
+      focused?.pin.classList.remove("is-focus");
       best?.el.classList.add("is-focus");
+      best?.pin.classList.add("is-focus");
       focused = best;
+    }
+
+    for (const stop of stops) {
+      const dz = stop.z - camZ;
+      if (dz < 120 || dz > CARD_FAR) {
+        stop.pin.style.visibility = "hidden";
+        continue;
+      }
+      const pinX = pathX(stop.z) + stop.side * SIDE * fit;
+      const p = project(pinX, PIN_HEIGHT, stop.z);
+      const foot = project(pathX(stop.z), 0, stop.z);
+      const opacity = (1 - smoothstep(CARD_FAR * 0.55, CARD_FAR, dz)) * smoothstep(250, 650, dz);
+      // Labels shrink a little with distance for depth, but never below a size that can be read.
+      const scale = Math.min(1, 0.78 + 0.22 * (VIEW / dz));
+      stop.pin.style.visibility = opacity > 0.01 ? "visible" : "hidden";
+      stop.pin.style.opacity = opacity.toFixed(3);
+      stop.pin.style.zIndex = String(Math.round(FAR - dz));
+      stop.pin.style.transform = `translate(${p.x}px, ${p.y}px) scale(${scale})`;
+      stop.footAt = foot;
+      // The open stop's card stands in for its label.
+      if (stop === focused) continue;
+
+      ctx.strokeStyle = `rgba(32,33,34,${0.2 * opacity})`;
+      ctx.lineWidth = Math.max(0.5, 1.2 * p.s);
+      ctx.setLineDash([3, 4]);
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y);
+      ctx.lineTo(foot.x, foot.y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // The open card sits flat beside the road on its label's side, drifting a little as the camera passes.
+    // A card that loses focus stays where it was and fades out.
+    if (focused) {
+      const stop = focused;
+      const dz = stop.z - camZ;
+      const card = stop.el.firstElementChild;
+      const w = card.offsetWidth;
+      const h = card.offsetHeight;
+      const reach = Math.min(420, Math.max(w / 2 + 40, (width - inset) * 0.27));
+      const drift = Math.max(-40, Math.min(40, (VIEW - dz) * 0.06));
+      const x = Math.max(inset + w / 2 + 24, Math.min(width - w / 2 - 24, center + stop.side * (reach + drift)));
+      const y = Math.max(h / 2 + 140, Math.min(height - h / 2 - 150, height * 0.5 - drift * 0.5));
+      stop.el.style.transform = `translate(${x}px, ${y}px)`;
+      // A thin line from the stop's place on the road to the card's near edge.
+      const edgeX = x - stop.side * (w / 2);
+      ctx.strokeStyle = "rgba(32,33,34,0.3)";
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 4]);
+      ctx.beginPath();
+      ctx.moveTo(stop.footAt.x, stop.footAt.y);
+      ctx.lineTo(edgeX, Math.max(y - h / 2 + 28, Math.min(y + h / 2 - 28, stop.footAt.y)));
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = "rgba(32,33,34,0.75)";
+      ctx.beginPath();
+      ctx.arc(stop.footAt.x, stop.footAt.y, 3.5, 0, Math.PI * 2);
+      ctx.fill();
     }
     onMove(zToTime(camZ + VIEW));
   }

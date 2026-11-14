@@ -8,6 +8,26 @@ export function renderStop(stop, changes) {
     : editCard(stop.edit, changes.get(stop.edit.rev_id) ?? null);
 }
 
+// The small label a stop shows in the scene until the camera reaches it.
+export function renderPin(stop) {
+  if (stop.type === "war") {
+    const { war } = stop;
+    return `
+      <div class="tl-pin is-war is-${war.kind}">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 2.5l8 8M13.5 2.5l-8 8M9 12l3-3M7 12L4 9M12 12.5l1.5 1.5M4 12.5L2.5 14"/></svg>
+        <b>${war.kind === "dispute" ? "Edit war" : "Vandalism"}</b>
+        <span>${war.section ? esc(war.section) : formatMonth(war.start)}</span>
+      </div>`;
+  }
+  const { edit } = stop;
+  return `
+    <div class="tl-pin">
+      ${avatar(edit.user, edit.kind, null)}
+      <b>${esc(censor(edit.user))}</b>
+      ${edit.index === 0 ? `<span class="tl-delta is-new">Created</span>` : deltaBadge(edit.delta)}
+    </div>`;
+}
+
 function editCard(edit, change) {
   const created = edit.index === 0;
   const comment = cleanComment(edit.comment);

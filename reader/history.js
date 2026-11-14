@@ -1,6 +1,6 @@
 import { createArticlePanel } from "./article-panel.js";
 import { getArticles, getChange, getHistory } from "./api.js";
-import { formatMonth, renderStop } from "./history-cards.js";
+import { formatMonth, renderPin, renderStop } from "./history-cards.js";
 import { analyzeHistory, findEditWars, pickMilestones } from "./history-model.js";
 import { createMinimap } from "./minimap.js";
 import { createTimeline } from "./timeline3d.js";
@@ -110,6 +110,7 @@ export async function mountHistory(root, { id }) {
     edits,
     stops,
     renderCard: (stop) => renderStop(stop, changes),
+    renderPin,
     onMove: (time) => {
       const label = formatMonth(time);
       if (month.textContent !== label) month.textContent = label;
