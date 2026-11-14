@@ -55,8 +55,14 @@ if (!version || !summary) {
     render: (link) =>
       `<span class="card-ref-n">${link.dataset.ref}</span>${document.getElementById(`cite-${link.dataset.ref}`).innerHTML}`,
   });
-  body.addEventListener("click", (event) => {
-    if (event.target.closest("a.wl")) event.preventDefault();
+  // A link opens the linked article here when we have it, otherwise on Finnish Wikipedia.
+  body.addEventListener("click", async (event) => {
+    const link = event.target.closest("a.wl");
+    if (!link) return;
+    event.preventDefault();
+    const target = await getPreview(link.dataset.title);
+    if (target?.id) location.href = `?id=${target.id}`;
+    else window.open(`https://fi.wikipedia.org/wiki/${encodeURIComponent(link.dataset.title.replace(/ /g, "_"))}`, "_blank", "noopener");
   });
   const chat = chatPanel({ article: summary, onClose: () => menu.clearPaint() });
   const menu = cursorMenu({ root: body, onSubmit: (request) => chat.ask(request) });
