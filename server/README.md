@@ -103,11 +103,13 @@ articles.
 | `article_vector` | `(lang, page_id)`, `model`, `truncated`, `embedding VECTOR(1024) NOT NULL`, `VECTOR INDEX (embedding) M=16 DISTANCE=cosine` |
 
 - S's ready-made vectors (fi, sv, en): `load.py s --vectors`, 29,460 rows in 40 s, index included. It also
-  loads `$WIKI_DATA/exports/vectors-bge-m3-extra-fi.parquet` when present: the vectors the cloud box computed,
-  exported with `load.py export-vectors --out /data/exports/vectors-bge-m3-extra-fi.parquet` (`--m-only`: only
-  the M articles) and served at <https://65-109-75-60.sslip.io/exports/> with `SHA256SUMS`.
-- On your machine: `VECTORS=1 server/local.sh` downloads that file when its checksum changed, loads it, and runs
-  `embed.py serve` for the questions (CPU: ~55 ms a question on 12 cores; GPU: ~7 ms).
+  loads the files in `$WIKI_DATA/exports/` when present: the vectors the cloud box computed, exported with
+  `load.py export-vectors --scope m --out /data/exports` (`vectors-bge-m3-extra-fi.parquet`, the 457 M articles S
+  lacks, 2.3 MB) and `--scope l` (`vectors-bge-m3-l-fi.parquet`, the L articles), served at
+  <https://65-109-75-60.sslip.io/exports/> with `SHA256SUMS`.
+- On your machine: `VECTORS=1 server/local.sh` downloads the M file (with `L=1` also the L file) when its
+  checksum changed, loads it, and runs `embed.py serve` for the questions (CPU: ~55 ms a question on 12 cores;
+  GPU: ~7 ms).
 - Every other Finnish article: `embed.py articles`, a GPU batch job (below). The search uses only the `fi` rows.
 - `M=16`, not the default 6: with 1024 dimensions `M=6` found only 79% of the true top 10 (MariaDB's RAG
   starter). The app sets `mhnsw_ef_search = 80`; `deploy.sh` sets `mhnsw_max_cache_size` to 4 GB, so the

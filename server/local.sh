@@ -22,19 +22,26 @@ sha256_check() {  # in the current directory, against SHA256SUMS
   if command -v sha256sum >/dev/null; then sha256sum -c --quiet SHA256SUMS; else shasum -a 256 -c --quiet SHA256SUMS; fi
 }
 
-# The vectors the cloud box computed for the articles S has none for, when their SHA256SUMS changed.
+# The vectors the cloud box computed for the articles S has none for: the M articles' file, and with L=1 the L
+# articles' (~2.3 GB). A file is downloaded again only when its checksum in SHA256SUMS changed.
 download_vectors() {
-  local dir=$WIKI_DATA/exports
+  local dir=$WIKI_DATA/exports name
+  local names=(vectors-bge-m3-extra-fi.parquet)
+  if [ "${L:-}" = 1 ]; then names+=(vectors-bge-m3-l-fi.parquet); fi
   mkdir -p "$dir"
-  curl -fsSL "$EXPORTS/SHA256SUMS" -o "$dir/SHA256SUMS.new"
-  if cmp -s "$dir/SHA256SUMS.new" "$dir/SHA256SUMS" && (cd "$dir" && sha256_check); then
-    rm "$dir/SHA256SUMS.new"
-    return
-  fi
-  echo "local: downloading the extra vectors"
-  mv "$dir/SHA256SUMS.new" "$dir/SHA256SUMS"
-  awk '{print $2}' "$dir/SHA256SUMS" | while read -r name; do curl -fL --retry 3 -o "$dir/$name" "$EXPORTS/$name"; done
-  (cd "$dir" && sha256_check)
+  curl -fsSL "$EXPORTS/SHA256SUMS" -o "$dir/SHA256SUMS.all"
+  for name in "${names[@]}"; do
+    if ! grep -q "  $name\$" "$dir/SHA256SUMS.all"; then
+      echo "local: $name is not exported yet"
+      continue
+    fi
+    grep "  $name\$" "$dir/SHA256SUMS.all" > "$dir/SHA256SUMS"
+    if [ -f "$dir/$name" ] && (cd "$dir" && sha256_check 2>/dev/null); then continue; fi
+    echo "local: downloading $name"
+    curl -fL --retry 3 -o "$dir/$name" "$EXPORTS/$name"
+    (cd "$dir" && sha256_check)
+  done
+  rm -f "$dir/SHA256SUMS"
 }
 
 download() {  # one dataset release into $WIKI_DATA/<tag>, checked against its SHA256SUMS
