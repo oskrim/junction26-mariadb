@@ -18,6 +18,13 @@ AS_OF = """SELECT title, rev_id, user, comment, row_start, text
 FROM article FOR SYSTEM_TIME AS OF TIMESTAMP %s
 WHERE page_id = %s"""
 
+GRAPH_NODES = """SELECT page_id AS id, title, chars
+FROM page FOR SYSTEM_TIME AS OF TIMESTAMP %s"""
+
+GRAPH_EDGES = """SELECT l.src AS source, p.page_id AS target
+FROM link FOR SYSTEM_TIME AS OF TIMESTAMP %s AS l
+JOIN page FOR SYSTEM_TIME AS OF TIMESTAMP %s AS p ON p.title = l.dst"""
+
 PAGE = Path(__file__).with_name("index.html").read_bytes()
 
 
@@ -60,6 +67,16 @@ class Handler(BaseHTTPRequestHandler):
                 return
             rows, sql = query(AS_OF, (moment.strftime("%Y-%m-%d %H:%M:%S"), page_id))
             self.send_json(200, {"sql": sql, "version": rows[0] if rows else None})
+        elif url.path == "/api/graph":
+            try:
+                moment = datetime.fromtimestamp(int(parse_qs(url.query)["at"][0]), timezone.utc)
+            except (KeyError, ValueError, OverflowError, OSError):
+                self.send_json(400, {"error": "at (unix seconds) is required"})
+                return
+            at = moment.strftime("%Y-%m-%d %H:%M:%S")
+            nodes, nodes_sql = query(GRAPH_NODES, (at,))
+            edges, edges_sql = query(GRAPH_EDGES, (at, at))
+            self.send_json(200, {"sql": [nodes_sql, edges_sql], "nodes": nodes, "edges": edges})
         else:
             self.send_json(404, {"error": "not found"})
 
