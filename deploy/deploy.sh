@@ -14,6 +14,11 @@ main() {
     exec bash "$REPO_DIR/deploy/deploy.sh" --updated
   fi
   echo "deploy: at $(git log -1 --format='%h %s')"
+  if [ "${GEMINI_API_KEY_ON_STDIN:-}" = 1 ]; then
+    local key
+    IFS= read -r key || true
+    if [ -n "$key" ]; then set_env GEMINI_API_KEY "$key"; fi
+  fi
 
   set -a
   # shellcheck source=/dev/null
@@ -41,6 +46,16 @@ main() {
   else
     echo "deploy: server/app.py is not on main yet; skipping app"
   fi
+}
+
+# Sets NAME=value in the env file, replacing an earlier value.
+set_env() {
+  local tmp
+  tmp=$(mktemp)
+  grep -v "^$1=" "$ENV_FILE" > "$tmp" || true
+  printf '%s=%s\n' "$1" "$2" >> "$tmp"
+  install -m 600 "$tmp" "$ENV_FILE"
+  rm -f "$tmp"
 }
 
 # Teammate logins: wiki.* access, TLS required. Also asserts the server has TLS on.

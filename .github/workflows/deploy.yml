@@ -18,10 +18,12 @@ jobs:
         env:
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           install -m 700 -d ~/.ssh
           printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -T 15 -t ed25519 "$DEPLOY_HOST" > ~/.ssh/known_hosts
-          ssh -o IdentitiesOnly=yes -o ServerAliveInterval=30 "root@$DEPLOY_HOST" \
-            'cd /srv/junction26-mariadb && git fetch -q origin && git reset -q --hard origin/main && bash deploy/deploy.sh'
+          # The key goes over stdin so it never appears on a command line.
+          printf '%s\n' "$GEMINI_API_KEY" | ssh -o IdentitiesOnly=yes -o ServerAliveInterval=30 "root@$DEPLOY_HOST" \
+            'cd /srv/junction26-mariadb && git fetch -q origin && git reset -q --hard origin/main && GEMINI_API_KEY_ON_STDIN=1 bash deploy/deploy.sh'

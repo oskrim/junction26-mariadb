@@ -1,4 +1,4 @@
-import { PAST_CHATS, respond } from "./fake/assistant.js";
+import { PAST_CHATS, respond } from "./assistant.js";
 import { modelHtml, mountModel } from "./model3d.js";
 
 // Chats. Every request from the menu starts a new chat. Open chats are tabs in the tray at the
@@ -134,7 +134,7 @@ export function chatPanel({ article, onClose }) {
     chat.log.append(reply);
     scrollDown(chat.log, true);
 
-    const { stream, attachment } = respond({ mode, prompt, context, article, turn: chat.turn });
+    const { stream, attachment } = respond({ mode, prompt, context, article, turn: chat.turn, history: (chat.history ??= []) });
     chat.turn++;
     let text = "";
     for await (const piece of stream) {
@@ -144,8 +144,9 @@ export function chatPanel({ article, onClose }) {
       scrollDown(chat.log);
     }
     reply.classList.add("is-done");
-    if (attachment) {
-      reply.insertAdjacentHTML("beforeend", renderAttachment(attachment));
+    const shown = await attachment;
+    if (shown) {
+      reply.insertAdjacentHTML("beforeend", renderAttachment(shown));
       reply.querySelectorAll("[data-model]").forEach(mountModel);
       scrollDown(chat.log);
     }

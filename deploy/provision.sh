@@ -139,6 +139,7 @@ write_box_env() {
     echo "DB_ROOT_PASSWORD=$(secret_read junction-wiki-db-root-password)"
     echo "DB_OSKARI_PASSWORD=$(secret_read junction-wiki-db-oskari)"
     echo "DB_VEETI_PASSWORD=$(secret_read junction-wiki-db-veeti)"
+    echo "GEMINI_API_KEY=$(secret_read google-aistudio-api-key)"
   } | ssh_box 'umask 077 && cat > /etc/junction-wiki.env'
 }
 

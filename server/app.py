@@ -16,6 +16,8 @@ from urllib.parse import parse_qs, quote, urlparse
 
 import pymysql
 
+import ask
+
 READER = Path(__file__).resolve().parent.parent / "reader"
 TYPES = {".html": "text/html", ".js": "text/javascript", ".json": "application/json", ".css": "text/css",
          ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
@@ -240,6 +242,8 @@ def search(cur, params):
 
 ROUTES = {"/api/articles": articles, "/api/article": article, "/api/history": history, "/api/change": change,
           "/api/graph": graph, "/api/topics": topics, "/api/preview": preview, "/api/search": search}
+# POST handlers write their own response, so they can stream.
+POST_ROUTES = {"/api/ask": ask.serve}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -249,6 +253,16 @@ class Handler(BaseHTTPRequestHandler):
         started = time.perf_counter()
         try:
             self.route()
+        finally:
+            self.log_message('"%s" %s %.0f ms', self.requestline, self.status, (time.perf_counter() - started) * 1000)
+
+    def do_POST(self):
+        started = time.perf_counter()
+        try:
+            route = POST_ROUTES.get(urlparse(self.path).path)
+            if not route:
+                return self.send(404, "application/json", b'{"error": "not found"}')
+            route(self, connect)
         finally:
             self.log_message('"%s" %s %.0f ms', self.requestline, self.status, (time.perf_counter() - started) * 1000)
 
