@@ -437,7 +437,12 @@ body[data-view="explore"] {
   margin: 20px -24px -24px;
   padding: 12px 24px 20px;
   background: #fff;
-  box-shadow: 0 -1px 0 rgb(0 0 0 / 0.06);
+  box-shadow: 0 -1px 0 rgb(0 0 0 / 0), 0 -10px 16px -14px rgb(0 0 0 / 0);
+  transition: box-shadow 0.2s;
+}
+
+.ex-actions.is-stuck {
+  box-shadow: 0 -1px 0 rgb(0 0 0 / 0.06), 0 -10px 16px -14px rgb(0 0 0 / 0.25);
 }
 
 .ex-btn {
