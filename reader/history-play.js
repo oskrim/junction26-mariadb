@@ -241,7 +241,7 @@ export function startHistoryPlay({ id, body, onClose }) {
     if (travel?.left > 0) travelTo(travel.time, travel.left);
   }
 
-  // The year in large type above the road, with the month under it; the year rolls in when it changes.
+  // The year in large type under the road, with the month under it; a new date simply takes its place.
   let momentYear = null;
   let momentMonth = null;
   function showMoment(time) {
@@ -251,13 +251,8 @@ export function startHistoryPlay({ id, body, onClose }) {
     if (month !== momentMonth) side.querySelector(".hp-month").textContent = momentMonth = month;
     if (year === momentYear) return;
     const el = side.querySelector(".hp-year");
-    const up = momentYear === null || year > momentYear;
     momentYear = year;
     el.textContent = year;
-    el.animate([{ opacity: 0, transform: `translateY(${up ? 18 : -18}px)` }, { opacity: 1, transform: "none" }], {
-      duration: 450,
-      easing: "cubic-bezier(0.2, 0.8, 0.2, 1)",
-    });
   }
 
   async function show(i, token, animate, onPlan = () => {}) {
