@@ -445,7 +445,7 @@
 /* The article being written */
 
 .hp-added,
-.hp-changed:not(p) {
+.hp-changed {
   animation: hp-glow 3s ease;
 }
 
@@ -453,33 +453,6 @@
   from,
   30% {
     background-color: #fff4cc;
-  }
-}
-
-.hp-changed ins {
-  text-decoration: none;
-  border-radius: 2px;
-  animation:
-    hp-ink 0.5s ease var(--d, 0ms) both,
-    hp-glow 2.6s ease var(--d, 0ms) both;
-}
-
-@keyframes hp-ink {
-  from {
-    opacity: 0;
-    filter: blur(3px);
-  }
-}
-
-.hp-changed del {
-  color: var(--ink-3);
-  text-decoration-color: rgb(215 51 51 / 0.6);
-  animation: hp-fade 0.8s ease 0.5s both;
-}
-
-@keyframes hp-fade {
-  to {
-    opacity: 0.25;
   }
 }
 
@@ -507,7 +480,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .hp-added,
-  .hp-changed ins,
+  .hp-caret,
   .hp-fought,
   .hp-war.is-new,
   .hp-sword.is-on::after {
@@ -543,4 +516,44 @@
 
 .hp-mode .chat-history {
   bottom: 152px;
+}
+
+/* Typing: a cursor deletes old words and types new ones */
+.hp-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1.1em;
+  margin: 0 1px -0.18em;
+  border-radius: 1px;
+  background: var(--ink);
+  animation: hp-blink 0.9s steps(1) infinite;
+}
+
+@keyframes hp-blink {
+  50% {
+    opacity: 0.15;
+  }
+}
+
+.hp-ins {
+  border-radius: 2px;
+  background: #fff1bf;
+  box-shadow: 0 0 0 1px #fff1bf;
+}
+
+.hp-del {
+  color: #b42323;
+  background: #fde8e8;
+  text-decoration: line-through;
+  text-decoration-color: rgb(180 35 35 / 0.5);
+}
+
+.hp-rest {
+  animation: hp-rest 0.6s ease;
+}
+
+@keyframes hp-rest {
+  from {
+    opacity: 0;
+  }
 }

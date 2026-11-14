@@ -19,9 +19,13 @@ const STEP = 500;
 const WAR_HOLD = 2600;
 const GROW = 700;
 const SHUT = 420;
-const READ = 1000;
-// Places in one version that the page glides to in turn.
-const VISITS = 3;
+// Typing a version's changes takes about TYPE ms, however long they are; they then show for SETTLE ms.
+const TYPE = 1800;
+const SETTLE = 700;
+const QUOTA = 500;
+const LONG_HEAD = 90; // letters typed of a long passage before the rest fades in
+// Places in one version the page glides to; the others change quietly where they are.
+const VISITS = 1;
 const CLOSED = { height: "0px", marginTop: "0px", marginBottom: "0px", overflow: "hidden", opacity: "0" };
 const SPEEDS = [1, 2, 4];
 // After the reader scrolls by hand, the page stops following the changes for this long.
@@ -337,6 +341,8 @@ export function startHistoryPlay({ id, body, onClose }) {
     if (i < 0) return;
     closeWar();
     travel = null;
+    // Playing again before this version has loaded starts from here, not from where it was.
+    at = i;
     if (playing) play(i);
     else {
       looping = false;
@@ -428,13 +434,13 @@ export function startHistoryPlay({ id, body, onClose }) {
         .slice(0, VISITS),
     );
     const ordered = places.filter((p) => visits.has(p));
-    // About how long the visits will take, so the road can be timed to it.
-    const visitMs = (p) => 500 + (p.rewrites.length ? SHUT + READ + SHUT : p.adds.length ? GROW : SHUT);
+    // About how long the visit will take, so the road can be timed to it.
+    const visitMs = (p) => 500 + (typeable(p) ? TYPE + SETTLE : GROW);
     onPlan((animate ? ordered.reduce((sum, p) => sum + visitMs(p), 0) : 0) / speed);
-    for (const place of places) if (!visits.has(place)) applyNow(place, animate && !place.quiet);
+    for (const place of places) if (!visits.has(place)) applyQuietly(place, animate && !place.quiet);
     for (const place of ordered) {
       if (!animate || token !== run || closed) {
-        applyNow(place, false);
+        applyQuietly(place, false);
         continue;
       }
       // New paragraphs wait at no height where they will open, so the page can glide to that spot.
@@ -444,58 +450,158 @@ export function startHistoryPlay({ id, body, onClose }) {
       }
       await glideTo(place.rewrites[0]?.old ?? place.removes[0] ?? place.adds[0], token);
       if (token !== run || closed) {
-        applyNow(place, false);
+        applyQuietly(place, false);
         continue;
       }
-      await applyAnimated(place, token);
+      await applyTyped(place, token);
     }
   }
 
-  // A place's changes, with no visit: animated where they are if asked, otherwise at once.
-  function applyNow(place, animated) {
-    if (animated) {
-      applyAnimated(place, run);
-      return;
-    }
+  // A place the page doesn't visit changes where it is: new paragraphs open, changed ones are swapped
+  // with a soft highlight, cut ones close. Without `animated`, all at once.
+  function applyQuietly(place, animated) {
+    const ms = (n) => (animated ? n / speed : 0);
     for (const el of place.adds) {
       el.hidden = false;
       for (const k of Object.keys(CLOSED)) el.style[k] = "";
+      if (animated && !el.matches("ol.references")) el.classList.add("hp-added");
+      openUp(el, 0, ms(GROW));
     }
-    for (const { old, next } of place.rewrites) old.replaceWith(next);
-    for (const el of place.removes) el.remove();
-  }
-
-  async function applyAnimated(place, token) {
-    const ms = (n) => n / speed;
-    const work = [];
-    for (const el of place.adds) {
-      el.hidden = false;
-      for (const k of Object.keys(CLOSED)) el.style[k] = "";
-      if (!el.matches("ol.references")) el.classList.add("hp-added");
-      work.push(openUp(el, 0, ms(GROW)));
+    for (const { old, next } of place.rewrites) {
+      const from = old.offsetHeight;
+      old.replaceWith(next);
+      if (animated && !next.matches("ol.references")) next.classList.add("hp-changed");
+      openUp(next, from, ms(SHUT));
     }
     for (const el of place.removes) {
-      work.push(openUp(el, el.offsetHeight, ms(SHUT), 0).then(() => el.remove()));
+      if (animated) openUp(el, el.offsetHeight, ms(SHUT), 0).then(() => el.remove());
+      else el.remove();
     }
-    const settles = [];
+  }
+
+  // The visited place is written as if by hand: a cursor goes through it in reading order, deleting
+  // the old words a letter at a time and typing the new ones, one change after another. Paragraphs then
+  // settle into the article's own text, links and all.
+  async function applyTyped(place, token) {
+    for (const el of place.removes) await openUp(el, el.offsetHeight, SHUT / speed, 0).then(() => el.remove());
+    const jobs = [];
+    for (const el of place.adds) {
+      for (const k of Object.keys(CLOSED)) el.style[k] = "";
+      el.hidden = false;
+      if (!prose(el)) {
+        el.classList.add("hp-added");
+        await openUp(el, 0, GROW / speed);
+        continue;
+      }
+      const draft = blank(el);
+      el.replaceWith(draft);
+      jobs.push({ draft, next: el, ops: [{ ins: textOf(el), whole: true }] });
+    }
     for (const { old, next } of place.rewrites) {
-      const marked = rewrite(old, next.cloneNode(true));
-      const from = old.offsetHeight;
-      old.replaceWith(marked);
-      work.push(openUp(marked, from, ms(SHUT)));
-      settles.push({ marked, next });
+      if (!prose(next) || !prose(old)) {
+        old.replaceWith(next);
+        next.classList.add("hp-changed");
+        continue;
+      }
+      const draft = blank(next);
+      old.replaceWith(draft);
+      jobs.push({ draft, next, ops: wordEdits(textOf(old), textOf(next)), from: old });
     }
-    await Promise.all(work);
-    if (settles.length) await wait(ms(READ), token);
-    // Changed paragraphs go back to the article's own text, links and all, once read.
-    await Promise.all(
-      settles.map(({ marked, next }) => {
-        if (!marked.isConnected) return null;
-        const from = marked.offsetHeight;
-        marked.replaceWith(next);
-        return openUp(next, from, ms(SHUT));
-      }),
-    );
+    // Only about QUOTA letters are typed in a version: a long passage types its opening and the rest
+    // fades in, and new paragraphs past the quota simply open up.
+    const lettersOf = (job) => job.ops.reduce((m, op) => m + Math.min(LONG_HEAD, op.ins?.length ?? 0) + Math.min(LONG_HEAD, op.del?.length ?? 0) / 2, 0);
+    let left = QUOTA;
+    for (const job of jobs) {
+      job.typed = left > 0 || !job.ops[0].whole;
+      if (job.typed) left -= lettersOf(job);
+    }
+    const letters = jobs.filter((j) => j.typed).reduce((n, j) => n + lettersOf(j), 0);
+    const perLetter = Math.min(34, Math.max(5, TYPE / Math.max(1, letters)));
+    for (const job of jobs) {
+      if (job.typed) {
+        await typeInto(job.draft, job.ops, perLetter, token);
+        continue;
+      }
+      job.draft.replaceWith(job.next);
+      job.next.classList.add("hp-added");
+      job.draft = null;
+      openUp(job.next, 0, GROW / speed);
+    }
+    if (jobs.length) await wait(SETTLE / speed, token);
+    for (const { draft, next } of jobs) {
+      if (!draft?.isConnected) continue;
+      const from = draft.offsetHeight;
+      draft.replaceWith(next);
+      openUp(next, from, SHUT / speed);
+    }
+  }
+
+  // Plays `ops` into `el` at `perLetter` ms a letter (at 1×); a jump or close finishes it at once.
+  function typeInto(el, ops, perLetter, token) {
+    const caret = document.createElement("span");
+    caret.className = "hp-caret";
+    const parts = [];
+    for (const op of ops) {
+      if (op.keep) {
+        el.append(op.keep);
+        continue;
+      }
+      const span = document.createElement("span");
+      span.className = op.del ? "hp-del" : op.whole ? "hp-new" : "hp-ins";
+      span.textContent = op.del ?? "";
+      el.append(span);
+      parts.push({ span, op, typed: 0 });
+    }
+    const finish = () => {
+      for (const { span, op } of parts) {
+        if (op.del) span.remove();
+        else span.textContent = op.ins;
+      }
+      caret.remove();
+    };
+    return new Promise((resolve) => {
+      let k = 0;
+      let budget = 0;
+      let last = performance.now();
+      const step = (now) => {
+        if (token !== run || closed) {
+          finish();
+          return resolve();
+        }
+        if (playing) budget += (now - last) * speed;
+        last = now;
+        while (budget >= perLetter && k < parts.length) {
+          const part = parts[k];
+          if (caret.previousSibling !== part.span) part.span.after(caret);
+          budget -= perLetter;
+          if (part.op.del) {
+            // Deleting goes two letters at a time; a long cut goes in one stroke once it has started.
+            const text = part.span.textContent;
+            part.span.textContent = part.op.del.length - text.length >= LONG_HEAD ? "" : text.slice(0, -2);
+            if (!part.span.textContent) {
+              part.span.remove();
+              k++;
+            }
+          } else {
+            part.span.textContent = part.op.ins.slice(0, ++part.typed);
+            if (part.typed >= part.op.ins.length) k++;
+            else if (part.typed >= LONG_HEAD && part.op.ins.length > LONG_HEAD * 2) {
+              // The rest of a long passage fades in instead of being typed.
+              const rest = document.createElement("span");
+              rest.className = `${part.span.className} hp-rest`;
+              rest.textContent = part.op.ins.slice(part.typed);
+              part.span.after(rest);
+              part.span = rest;
+              k++;
+            }
+          }
+        }
+        if (k < parts.length) return requestAnimationFrame(step);
+        caret.remove();
+        resolve();
+      };
+      requestAnimationFrame(step);
+    });
   }
 
   // Animates `el` from `from` px tall to its own height (or `to`), margins and all.
@@ -649,27 +755,38 @@ function textOf(el) {
   return clone.textContent.replace(/\s+/g, " ").trim();
 }
 
-// A changed paragraph, as plain text for now, with its new words written in and the cut ones struck.
-// Anything that isn't a paragraph of prose is just swapped and marked.
-function rewrite(prev, next) {
-  // Old versions sometimes hold table markup the renderer leaves as text; a word diff of that is noise.
-  const markup = /\{\||\|-|style=|<\/?t[dhr]\b/.test(next.textContent + prev.textContent);
-  if (next.tagName !== "P" || markup || next.querySelector(".katex, img")) {
-    if (!next.matches("ol.references")) next.classList.add("hp-changed");
-    return next;
+// Prose that can be typed: paragraphs and headings of plain text, not old table markup or maths.
+function prose(el) {
+  return /^(P|H2|H3|H4)$/.test(el.tagName) && !el.querySelector(".katex, img") && !/\{\||\|-|style=|<\/?t[dhr]\b/.test(el.textContent);
+}
+
+function typeable(place) {
+  return place.adds.some(prose) || place.rewrites.some(({ next }) => prose(next));
+}
+
+// An empty element like `el`, for typing into.
+function blank(el) {
+  const draft = document.createElement(el.tagName);
+  draft.className = `${el.className} hp-draft`;
+  if (el.id) draft.id = el.id;
+  return draft;
+}
+
+// The word changes from `before` to `after`, as kept, deleted and inserted text in reading order.
+function wordEdits(before, after) {
+  const ops = [];
+  for (const r of diff(words(before), words(after))) {
+    if (r.type === "equal") {
+      ops.push({ keep: r.b.join("") });
+      continue;
+    }
+    const removed = r.a.join("");
+    const added = r.b.join("");
+    if (removed.trim()) ops.push({ del: removed });
+    if (added.trim()) ops.push({ ins: added });
+    else if (added) ops.push({ keep: added });
   }
-  let n = 0;
-  next.innerHTML = diff(words(textOf(prev)), words(textOf(next)))
-    .map((r) => {
-      if (r.type === "equal") return escape(r.b.join(""));
-      const removed = r.a.join("");
-      const addedText = r.b.join("");
-      const delay = `style="--d:${Math.min(n++, 12) * 60}ms"`;
-      return `${removed.trim() ? `<del ${delay}>${escape(removed)}</del>` : ""}${addedText.trim() ? `<ins ${delay}>${escape(addedText)}</ins>` : escape(addedText)}`;
-    })
-    .join("");
-  next.classList.add("hp-changed");
-  return next;
+  return ops;
 }
 
 function escape(s) {
