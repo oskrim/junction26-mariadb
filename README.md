@@ -2,8 +2,8 @@
 
 Pick a Wikipedia article, drag a date slider, and read the article as it was on that day.
 
-The data is the full edit history of 50 Simple English Wikipedia articles (about 18,000
-versions, 2003 to 2026). It lives in one MariaDB table. MariaDB keeps every old version by
+The data is the full edit history of 642 Simple English Wikipedia articles (about 207,000
+versions, 2003 to 2026), plus the links between them at every moment. It lives in one MariaDB table. MariaDB keeps every old version by
 itself, so "the article in 2012" is a single query.
 
 ## What you need
@@ -24,7 +24,7 @@ cd junction26-mariadb
 ```
 
 `setup.sh` starts the database, downloads 100 MB of Wikipedia history and loads it. It takes
-about a minute on a fast connection. You can run it again at any time: it skips what is already
+about 3 minutes. You can run it again at any time: it skips what is already
 done.
 
 ## Open the page
@@ -43,6 +43,7 @@ The page talks to two URLs. Both return JSON.
 |---|---|
 | `/api/articles` | Every article: `page_id`, `title`, number of `versions`, and `first` (when it was created, in Unix seconds) |
 | `/api/article?id=13&at=1325376000` | Article 13 as it was at that moment (`at` is Unix seconds): text, who saved it, when, and the SQL that was run |
+| `/api/graph?at=1325376000` | The link graph at that moment: `nodes` (`id`, `title`, `chars`) and `edges` (`source`, `target`). Ready for a force-directed or 3D graph |
 
 The API is in `app.py` and the page is `index.html`. Both are short.
 
@@ -102,7 +103,8 @@ docker compose exec -T mariadb mariadb -uwiki -pwiki wiki -t -v < demo.sql
 | `setup.sh` | Does the whole setup |
 | `fetch.sh` | Downloads the start of the Wikipedia history dump into `data/` |
 | `load.py` | Reads the dump and stores every version with its real edit time |
-| `schema.sql` | The one table |
+| `schema.sql` | The article table |
+| `build_graph.py` | Builds the `page` and `link` tables from the article history |
 | `app.py`, `index.html` | The API and the page |
 | `demo.sql` | A tour of time-travel queries |
 
