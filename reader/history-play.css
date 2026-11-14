@@ -34,8 +34,8 @@
 
 .hp-mode .layout {
   --toc: 300px;
-  /* Tall enough that the road stays pinned to the window even while the article is short */
-  min-height: 100vh;
+  /* Fills the window under the 60px top bar, so a short article doesn't scroll */
+  min-height: calc(100vh - 60px);
   padding-bottom: 160px;
 }
 
