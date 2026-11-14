@@ -136,7 +136,7 @@ export async function mountExplore(root, { id }) {
 
   // --- Layout -------------------------------------------------------------------------------
 
-  async function center(nextId, from) {
+  async function center(nextId, from, include = null) {
     await load(nextId);
     centerId = nextId;
     trail = [];
@@ -147,6 +147,7 @@ export async function mountExplore(root, { id }) {
     const allSet = new Set(all);
     const score = (n) => nodes.get(n).chars + 4000 * [...links.get(n)].filter((m) => allSet.has(m)).length;
     const near = all.sort((a, b) => score(b) - score(a)).slice(0, MAX_NEAR);
+    if (include !== null && allSet.has(include) && !near.includes(include)) near[near.length - 1] = include;
     const further = [];
     hop = new Map([[nextId, 0], ...near.map((n) => [n, 1])]);
 
@@ -437,7 +438,7 @@ export async function mountExplore(root, { id }) {
   function freeRadius() {
     const w = stage.clientWidth;
     const h = stage.clientHeight;
-    return Math.max(Math.min((w > 900 ? w - 380 : w) - 80, h - 190) / 2, 160);
+    return Math.max(Math.min((w > 900 ? w - 440 : w) - 80, h - 190) / 2, 160);
   }
 
   // Zooms onto an opened article and the links it brought in, so the branch you're on gets the room.
@@ -453,7 +454,7 @@ export async function mountExplore(root, { id }) {
 
   // The panel covers the right side on wide screens, so the map centers in the space beside it.
   function middleX() {
-    return width > 900 ? (width - 360) / 2 : width / 2;
+    return width > 900 ? (width - 460) / 2 : width / 2;
   }
 
   // Hovering or opening an article lights up the articles it links with and fades the rest.
@@ -704,6 +705,9 @@ export async function mountExplore(root, { id }) {
 
   // Opening an article grows the map from it; the middle article stays put.
   async function select(n) {
+    // At most two articles have their links out: opening a link of the last opened article moves the
+    // middle to that article, so the first one folds away.
+    if (hop.get(n) === 3 && grownFrom.get(n) === trail.at(-1)) return exploreFrom(trail.at(-1), n);
     selectedId = n;
     const count = await grow(n);
     if (selectedId !== n) return;
@@ -744,7 +748,7 @@ export async function mountExplore(root, { id }) {
         <p class="ex-kicker">${isCenter ? "Related articles" : topics[n]}</p>
         <h3>${node.title}</h3>
         ${isCenter ? `<p class="ex-sub">${summary}</p>` : ""}
-        ${p?.extract ? `<p class="ex-extract is-clamped">${p.extract}</p><button class="ex-more" type="button" hidden>Show more</button>` : ""}
+        ${p?.extract ? `<p class="ex-extract">${p.extract}</p>` : ""}
         <dl class="ex-stats">
           <div><dt>Versions</dt><dd>${node.versions.toLocaleString("en-US")}</dd></div>
           <div><dt>Written</dt><dd>${new Date(node.first * 1000).getUTCFullYear()}</dd></div>
@@ -758,17 +762,6 @@ export async function mountExplore(root, { id }) {
     panel.classList.add("is-open");
     const close = panel.querySelector(".ex-close");
     if (close) close.onclick = deselect;
-    // Long summaries start at four lines, so the numbers and buttons stay in view.
-    const extract = panel.querySelector(".ex-extract");
-    const more = panel.querySelector(".ex-more");
-    if (extract && extract.scrollHeight > extract.clientHeight + 2) {
-      more.hidden = false;
-      more.onclick = () => {
-        const open = extract.classList.toggle("is-clamped") === false;
-        more.textContent = open ? "Show less" : "Show more";
-        separateActions();
-      };
-    }
     separateActions();
     const recenter = panel.querySelector("[data-act=center]");
     if (recenter) recenter.onclick = () => exploreFrom(n);
@@ -789,7 +782,7 @@ export async function mountExplore(root, { id }) {
 
   // Moving to another article happens in three steps you can follow: it lights up, the view
   // glides over until it sits in the middle, and then its own links bloom out around it.
-  async function exploreFrom(n) {
+  async function exploreFrom(n, then = null) {
     if (moving) return;
     moving = true;
     selectedId = n;
@@ -809,9 +802,10 @@ export async function mountExplore(root, { id }) {
     history.replaceState(null, "", url);
     selectedId = null;
     settleUntil = performance.now() + 2200;
-    await center(n, n);
-    openPanel(n);
+    await center(n, n, then);
     moving = false;
+    if (then !== null && hop.has(then)) await select(then);
+    else openPanel(n);
   }
 
 

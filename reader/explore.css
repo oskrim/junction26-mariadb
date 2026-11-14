@@ -326,8 +326,8 @@ body[data-view="explore"] {
   position: absolute;
   top: 20px;
   right: 20px;
-  width: 340px;
-  max-height: calc(100% - 124px);
+  bottom: 20px;
+  width: 400px;
   overflow-y: auto;
   border-radius: 16px;
   background: #fff;
