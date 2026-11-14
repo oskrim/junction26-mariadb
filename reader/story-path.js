@@ -119,7 +119,7 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
       targetZ = trip.from + (trip.to - trip.from) * (trip.eased ? t * t * (3 - 2 * t) : t);
       if (t === 1) trip = null;
     }
-    camZ += (targetZ - camZ) * 0.15;
+    camZ += (targetZ - camZ) * 0.07;
     // During a war everything but the fight fades back; the fighters fade out after it.
     focus += ((fight ? 1 : 0) - focus) * 0.06;
     if (fight) shownFight = fight;
@@ -271,6 +271,44 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
       // A road stays as strong once walked as while it was being walked.
       road(stopZ[b.k], done ? 0.9 : walking ? 0.25 : 0.1);
       if (walking) road(Math.min(stopZ[b.k], nowZ), 0.9);
+      if (done || walking) twigs(b, a);
+    }
+
+    // Every edit along a side road grows a short raised bar off it as it is walked: outward for text
+    // added, inward for text cut, as long as the change was big.
+    function twigs(b, a) {
+      const [h, sat, light] = b.color;
+      for (let i = stops[b.k - 1] + 1; i <= stops[b.k]; i++) {
+        const wz = z[i];
+        if (wz > nowZ || wz < camZ + NEAR || wz > camZ + FAR) continue;
+        const e = edits[i];
+        if (Math.abs(e.delta) < 20) continue;
+        const grow = Math.min(1, (nowZ - wz) / 260);
+        const len = (8 + 9 * Math.log10(1 + Math.abs(e.delta))) * grow;
+        const dir = e.delta > 0 ? b.side : -b.side;
+        const cx = roadX(wz) + branchOffset(b, wz);
+        const from = cx + dir * branchHalf(b, wz);
+        const to = from + dir * len;
+        const p0 = project(from, LANE_H, wz);
+        const p1 = project(to, LANE_H, wz);
+        const s0 = project(from, 0, wz);
+        const s1 = project(to, 0, wz);
+        const w = Math.max(1.5, Math.min(6, 9 * p0.s));
+        ctx.lineCap = "round";
+        // Its side, then its top.
+        ctx.lineWidth = w;
+        ctx.strokeStyle = e.delta > 0 ? `hsla(${h},${sat}%,${light - 25}%,${0.8 * a})` : `rgba(170,60,60,${0.6 * a})`;
+        ctx.beginPath();
+        ctx.moveTo((p0.x + s0.x) / 2, (p0.y + s0.y) / 2);
+        ctx.lineTo((p1.x + s1.x) / 2, (p1.y + s1.y) / 2);
+        ctx.stroke();
+        ctx.strokeStyle = e.delta > 0 ? `hsla(${h},${sat}%,${light - 5}%,${0.95 * a})` : `rgba(226,140,140,${0.85 * a})`;
+        ctx.beginPath();
+        ctx.moveTo(p0.x, p0.y);
+        ctx.lineTo(p1.x, p1.y);
+        ctx.stroke();
+        ctx.lineCap = "butt";
+      }
     }
 
     // An edit war splits the lane in two: both fighters' branches leave it at once, one each side, and
@@ -654,9 +692,10 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
         targetZ = camZ = zAt(time) - BACK;
       } else trip = { from: targetZ, to: zAt(time) - BACK, t0: performance.now(), ms: 700, eased: true };
     },
-    // Travels to `time`, easing in and out, arriving in `ms`.
+    // Travels to `time` at an even pace, arriving in `ms`; trips follow on without stopping, and the
+    // camera's own easing smooths the changes of pace between them.
     glide(time, ms) {
-      trip = { from: targetZ, to: zAt(time) - BACK, t0: performance.now(), ms: Math.max(1, ms), eased: true };
+      trip = { from: targetZ, to: zAt(time) - BACK, t0: performance.now(), ms: Math.max(1, ms), eased: false };
     },
     // Stops where it is, mid-trip.
     freeze() {

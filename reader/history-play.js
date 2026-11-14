@@ -210,9 +210,10 @@ export function startHistoryPlay({ id, body, onClose }) {
         (frames[i].war ? WAR_HOLD : frames[i].round ? (typing ? ROUND_HOLD : QUIET_ROUND) : STEP) / rate;
       // While a version is written, the marker and the road travel to it: as soon as it knows how long
       // its writing will take, the trip starts, timed to arrive as the writing and the pause after it end.
+      // The trip gets some slack, so typing that runs long doesn't leave the walker standing.
       await show(i, token, true, (ms) => {
         typing = ms;
-        travelTo(time, ms + hold());
+        travelTo(time, ms * 1.3 + hold());
       });
       if (token !== run) return;
       if (travel?.time !== time) travelTo(time, hold());
@@ -246,11 +247,11 @@ export function startHistoryPlay({ id, body, onClose }) {
     });
   }
 
-  // Every trip takes at least MIN_TRIP and eases in and out, so the road never stops dead or darts ahead.
+  // Every trip takes at least MIN_TRIP at an even pace, so one trip runs straight into the next.
   function travelTo(time, ms) {
     ms = Math.max(MIN_TRIP / rate, ms);
     travel = { time, end: performance.now() + ms, left: 0 };
-    moveMarker(time, ms, "cubic-bezier(0.45, 0, 0.55, 1)");
+    moveMarker(time, ms);
     path.glide(time, ms);
   }
 
