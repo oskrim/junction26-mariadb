@@ -61,6 +61,35 @@
   display: block;
   width: 100%;
   height: 100%;
+  /* Soft edges: the road fades out at the sides and the top instead of being cut off */
+  mask-image:
+    linear-gradient(to right, transparent, #000 14%, #000 86%, transparent),
+    linear-gradient(to bottom, transparent 12%, #000 30%, #000 92%, transparent);
+  mask-composite: intersect;
+}
+
+/* The year the road is at, large above it */
+.hp-moment {
+  position: absolute;
+  top: 28px;
+  left: 40px;
+  pointer-events: none;
+}
+
+.hp-year {
+  margin: 0;
+  font: 400 64px/1 var(--serif);
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  font-variant-numeric: lining-nums tabular-nums;
+}
+
+.hp-month {
+  margin: 6px 0 0 3px;
+  font: 500 12px var(--sans);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
 }
 
 @keyframes hp-path-in {
@@ -421,7 +450,7 @@
 /* The article being written */
 
 .hp-added,
-.hp-changed:not(p) {
+.hp-changed {
   animation: hp-glow 3s ease;
 }
 
@@ -429,33 +458,6 @@
   from,
   30% {
     background-color: #fff4cc;
-  }
-}
-
-.hp-changed ins {
-  text-decoration: none;
-  border-radius: 2px;
-  animation:
-    hp-ink 0.5s ease var(--d, 0ms) both,
-    hp-glow 2.6s ease var(--d, 0ms) both;
-}
-
-@keyframes hp-ink {
-  from {
-    opacity: 0;
-    filter: blur(3px);
-  }
-}
-
-.hp-changed del {
-  color: var(--ink-3);
-  text-decoration-color: rgb(215 51 51 / 0.6);
-  animation: hp-fade 0.8s ease 0.5s both;
-}
-
-@keyframes hp-fade {
-  to {
-    opacity: 0.25;
   }
 }
 
@@ -483,7 +485,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .hp-added,
-  .hp-changed ins,
+  .hp-caret,
   .hp-fought,
   .hp-war.is-new,
   .hp-sword.is-on::after {
@@ -519,4 +521,74 @@
 
 .hp-mode .chat-history {
   bottom: 152px;
+}
+
+/* Typing: a cursor deletes old words and types new ones */
+.hp-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1.1em;
+  margin: 0 1px -0.18em;
+  border-radius: 1px;
+  background: var(--ink);
+  animation: hp-blink 0.9s steps(1) infinite;
+}
+
+@keyframes hp-blink {
+  50% {
+    opacity: 0.15;
+  }
+}
+
+.hp-ins {
+  border-radius: 2px;
+  background: #fff1bf;
+  box-shadow: 0 0 0 1px #fff1bf;
+}
+
+.hp-del {
+  color: #b42323;
+  background: #fde8e8;
+  text-decoration: line-through;
+  text-decoration-color: rgb(180 35 35 / 0.5);
+}
+
+.hp-rest {
+  animation: hp-rest 0.6s ease;
+}
+
+@keyframes hp-rest {
+  from {
+    opacity: 0;
+  }
+}
+
+/* The paragraph an edit war broke out over: a red bar in the margin beside it that pulses, then fades */
+.hp-fight-spot {
+  position: relative;
+}
+
+.hp-fight-spot::before {
+  content: "";
+  position: absolute;
+  inset: 2px auto 2px -18px;
+  width: 3px;
+  border-radius: 2px;
+  background: #d73333;
+  animation: hp-fight-spot 4s ease forwards;
+}
+
+@keyframes hp-fight-spot {
+  0% {
+    opacity: 0;
+    scale: 1 0.4;
+  }
+  15%,
+  60% {
+    opacity: 1;
+    scale: 1;
+  }
+  100% {
+    opacity: 0.35;
+  }
 }

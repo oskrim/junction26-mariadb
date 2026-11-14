@@ -19,9 +19,14 @@ const STEP = 500;
 const WAR_HOLD = 2600;
 const GROW = 700;
 const SHUT = 420;
-const READ = 1000;
-// Places in one version that the page glides to in turn.
-const VISITS = 3;
+// Typing goes at an even PER_LETTER ms a letter (deleting two at a time). Each version types at most
+// QUOTA letters; the rest of it fades in. Typed text then shows for SETTLE ms.
+const PER_LETTER = 28;
+const QUOTA = 150;
+const SETTLE = 700;
+const LONG_HEAD = 60; // letters typed of a long passage before the rest fades in
+// Places in one version the page glides to; the others change quietly where they are.
+const VISITS = 1;
 const CLOSED = { height: "0px", marginTop: "0px", marginBottom: "0px", overflow: "hidden", opacity: "0" };
 const SPEEDS = [1, 2, 4];
 // After the reader scrolls by hand, the page stops following the changes for this long.
@@ -55,7 +60,7 @@ export function startHistoryPlay({ id, body, onClose }) {
   const side = document.createElement("aside");
   side.className = "hp-path";
   side.setAttribute("aria-label", "The article's life as a road");
-  side.innerHTML = `<canvas></canvas>`;
+  side.innerHTML = `<canvas></canvas><div class="hp-moment"><p class="hp-year"></p><p class="hp-month"></p></div>`;
   document.querySelector(".layout").append(side);
   const dock = document.createElement("div");
   dock.className = "hp-dock";
@@ -70,6 +75,8 @@ export function startHistoryPlay({ id, body, onClose }) {
   let edits = [];
   let minimap = null;
   let path = null;
+  // The marker and the road travel at an even pace toward the next version while this one is written.
+  let travel = null;
   let at = -1;
   let playing = true;
   let looping = false;
@@ -80,15 +87,26 @@ export function startHistoryPlay({ id, body, onClose }) {
   let handsOffUntil = 0;
   let announced = null;
 
-  const load = (frame) => (frame.version ??= getArticle(id, Math.floor(frame.edit.time / 1000)).then((r) => r.version));
+  // A version that fails to load is skipped, and asked for again next time.
+  const load = (frame) =>
+    (frame.version ??= getArticle(id, Math.floor(frame.edit.time / 1000))
+      .then((r) => r.version)
+      .catch(() => {
+        frame.version = null;
+        return null;
+      }));
 
   async function setUp() {
     edits = analyzeHistory(await getHistory(id));
     const wars = findEditWars(edits);
     const picked = new Map(pickMilestones(edits, wars).map((e) => [e.index, { edit: e }]));
+    // Each war gets three stops: just before it, so the next stop shows only the contested edit and the
+    // page goes to where the fight is; the contested edit; and how it ended.
     for (const war of wars) {
       const start = edits[war.edits[0].index];
+      if (start.index > 0) picked.set(start.index - 1, { edit: edits[start.index - 1] });
       picked.set(start.index, { edit: start, war });
+      picked.set(war.edits.at(-1).index, { edit: war.edits.at(-1), ended: war });
     }
     picked.set(edits.length - 1, { edit: edits.at(-1) });
     frames = [...picked.values()].sort((a, b) => a.edit.index - b.edit.index);
@@ -101,6 +119,7 @@ export function startHistoryPlay({ id, body, onClose }) {
       canvas: side.querySelector("canvas"),
       edits,
       wars,
+      onTime: showMoment,
       onPick: (war) => {
         setPlaying(false);
         jump(frames.findIndex((f) => f.war === war));
@@ -156,12 +175,15 @@ export function startHistoryPlay({ id, body, onClose }) {
     looping = true;
     for (let i = from; i < frames.length; i++) {
       for (let k = i + 1; k <= i + 3 && k < frames.length; k++) load(frames[k]);
-      await show(i, token, true);
-      if (token !== run) return;
-      if (i === frames.length - 1) break;
+      const next = frames[i + 1];
       const hold = (frames[i].war ? WAR_HOLD : STEP) / speed;
-      moveMarker(frames[i + 1].edit.time, hold);
-      const waited = await wait(hold, token);
+      // As soon as this version knows how long its writing will take, the trip to the next one starts,
+      // timed to arrive as the writing and the pause after it end.
+      await show(i, token, true, (ms) => next && travelTo(next.edit.time, ms + hold));
+      if (token !== run) return;
+      if (!next) break;
+      if (travel?.time !== next.edit.time) travelTo(next.edit.time, hold);
+      const waited = await wait(Math.max(0, travel.end - performance.now()), token);
       if (!waited) return;
     }
     if (token === run) {
@@ -189,22 +211,64 @@ export function startHistoryPlay({ id, body, onClose }) {
     });
   }
 
-  async function show(i, token, animate) {
+  function travelTo(time, ms) {
+    travel = { time, end: performance.now() + ms, left: 0 };
+    moveMarker(time, ms);
+    path.glide(time, ms);
+  }
+
+  // Pausing stops the marker and the road where they are; playing again carries on with the time left.
+  function freezeTravel() {
+    if (!travel) return;
+    travel.left = Math.max(0, travel.end - performance.now());
+    const marker = $(".minimap-now");
+    marker.style.left = getComputedStyle(marker).left;
+    marker.style.transitionDuration = "0ms";
+    path.freeze();
+  }
+
+  function resumeTravel() {
+    if (travel?.left > 0) travelTo(travel.time, travel.left);
+  }
+
+  // The year in large type above the road, with the month under it; the year rolls in when it changes.
+  let momentYear = null;
+  let momentMonth = null;
+  function showMoment(time) {
+    const d = new Date(time);
+    const year = d.getUTCFullYear();
+    const month = d.toLocaleString("en-GB", { month: "long", timeZone: "UTC" });
+    if (month !== momentMonth) side.querySelector(".hp-month").textContent = momentMonth = month;
+    if (year === momentYear) return;
+    const el = side.querySelector(".hp-year");
+    const up = momentYear === null || year > momentYear;
+    momentYear = year;
+    el.textContent = year;
+    el.animate([{ opacity: 0, transform: `translateY(${up ? 18 : -18}px)` }, { opacity: 1, transform: "none" }], {
+      duration: 450,
+      easing: "cubic-bezier(0.2, 0.8, 0.2, 1)",
+    });
+  }
+
+  async function show(i, token, animate, onPlan = () => {}) {
     const frame = frames[i];
     const version = await load(frame);
     if (token !== run || closed || !version) return;
     const renderMath = await loadMath(version.text);
     if (token !== run || closed) return;
     at = i;
-    // During playback the marker is already on its way here; after a jump it glides over.
-    if (animate) moveMarker(frame.edit.time, 0);
-    else if (!$(".hp-map").classList.contains("is-dragging")) moveMarker(frame.edit.time, 350, "ease");
-    path.setTime(frame.edit.time, { instant: !animate });
+    // During playback the marker and road are already here, unless playing started from a jump.
+    if (animate && travel?.time === frame.edit.time) travel = null;
+    else if (!$(".hp-map").classList.contains("is-dragging")) {
+      travel = null;
+      moveMarker(frame.edit.time, 450, "cubic-bezier(0.25, 0.8, 0.25, 1)");
+      path.setTime(frame.edit.time);
+    }
     path.setWar(frame.war ?? null);
     $(".hp-date").textContent = formatDate(parseRowStart(version.row_start));
     $(".hp-who").innerHTML = `${escape(censor(version.user))} <span>· version ${(frame.edit.index + 1).toLocaleString("en-US")} of ${edits.length.toLocaleString("en-US")}</span>`;
-    if (!frame.war && announced && frame.edit.time > announced.end) announce(null);
-    await render(version, renderMath, token, animate);
+    if (!frame.war && announced && (frame.edit.time > announced.end || frame.edit.time < announced.start)) announce(null);
+    await render(version, renderMath, token, animate, onPlan);
     if (frame.war && token === run && !closed) announce(frame.war);
   }
 
@@ -288,6 +352,9 @@ export function startHistoryPlay({ id, body, onClose }) {
   function jump(i) {
     if (i < 0) return;
     closeWar();
+    travel = null;
+    // Playing again before this version has loaded starts from here, not from where it was.
+    at = i;
     if (playing) play(i);
     else {
       looping = false;
@@ -299,8 +366,12 @@ export function startHistoryPlay({ id, body, onClose }) {
     playing = on;
     playButton.innerHTML = on ? PAUSE : PLAY;
     playButton.setAttribute("aria-label", on ? "Pause" : "Play");
-    if (!on) return;
+    if (!on) {
+      freezeTravel();
+      return;
+    }
     closeWar();
+    if (looping) resumeTravel();
     if (!looping) play(at >= frames.length - 1 ? 0 : Math.max(0, at));
   }
 
@@ -308,7 +379,11 @@ export function startHistoryPlay({ id, body, onClose }) {
   // visited in turn: the page glides there, new paragraphs open up and are written in, changed ones show
   // their new words before settling, and cut ones close. Only the biggest few places get a visit; the rest
   // change at the same time as the last one, so a version never takes too long.
-  async function render(version, renderMath, token, animate) {
+  // The paragraph the last version's visit went to: where a fight that breaks out is marked.
+  let visited = null;
+
+  async function render(version, renderMath, token, animate, onPlan) {
+    visited = null;
     const { html } = renderWikitext(version.text, { fileUrl, renderMath });
     const box = document.createElement("div");
     box.innerHTML = html;
@@ -318,6 +393,7 @@ export function startHistoryPlay({ id, body, onClose }) {
     // A version that replaced most of the article fades over instead.
     if (!shown || (changed > 8 && changed > blocks.length * 0.6)) {
       const swap = () => body.replaceChildren(...blocks.map((b) => b.el));
+      onPlan(500 / speed);
       if (animate && shown) await fadeOver(swap);
       else swap();
       shown = blocks;
@@ -374,10 +450,13 @@ export function startHistoryPlay({ id, body, onClose }) {
         .slice(0, VISITS),
     );
     const ordered = places.filter((p) => visits.has(p));
-    for (const place of places) if (!visits.has(place)) applyNow(place, animate && !place.quiet);
+    // About how long the visit will take, so the road can be timed to it.
+    const visitMs = (p) => 500 + (typeable(p) ? Math.min(QUOTA, typingLetters(p)) * PER_LETTER + SETTLE : GROW);
+    onPlan((animate ? ordered.reduce((sum, p) => sum + visitMs(p), 0) : 0) / speed);
+    for (const place of places) if (!visits.has(place)) applyQuietly(place, animate && !place.quiet);
     for (const place of ordered) {
       if (!animate || token !== run || closed) {
-        applyNow(place, false);
+        applyQuietly(place, false);
         continue;
       }
       // New paragraphs wait at no height where they will open, so the page can glide to that spot.
@@ -385,60 +464,164 @@ export function startHistoryPlay({ id, body, onClose }) {
         el.hidden = false;
         Object.assign(el.style, CLOSED);
       }
-      await glideTo(place.rewrites[0]?.old ?? place.removes[0] ?? place.adds[0], token);
+      const spot = place.rewrites[0]?.old ?? place.removes[0] ?? place.adds[0];
+      await glideTo(spot, token);
+      visited = place.rewrites[0]?.next ?? place.adds[0] ?? null;
       if (token !== run || closed) {
-        applyNow(place, false);
+        applyQuietly(place, false);
         continue;
       }
-      await applyAnimated(place, token);
+      await applyTyped(place, token);
     }
   }
 
-  // A place's changes, with no visit: animated where they are if asked, otherwise at once.
-  function applyNow(place, animated) {
-    if (animated) {
-      applyAnimated(place, run);
-      return;
-    }
+  // A place the page doesn't visit changes where it is: new paragraphs open, changed ones are swapped
+  // with a soft highlight, cut ones close. Without `animated`, all at once.
+  function applyQuietly(place, animated) {
+    const ms = (n) => (animated ? n / speed : 0);
     for (const el of place.adds) {
       el.hidden = false;
       for (const k of Object.keys(CLOSED)) el.style[k] = "";
+      if (animated && !el.matches("ol.references")) el.classList.add("hp-added");
+      openUp(el, 0, ms(GROW));
     }
-    for (const { old, next } of place.rewrites) old.replaceWith(next);
-    for (const el of place.removes) el.remove();
-  }
-
-  async function applyAnimated(place, token) {
-    const ms = (n) => n / speed;
-    const work = [];
-    for (const el of place.adds) {
-      el.hidden = false;
-      for (const k of Object.keys(CLOSED)) el.style[k] = "";
-      if (!el.matches("ol.references")) el.classList.add("hp-added");
-      work.push(openUp(el, 0, ms(GROW)));
+    for (const { old, next } of place.rewrites) {
+      const from = old.offsetHeight;
+      old.replaceWith(next);
+      if (animated && !next.matches("ol.references")) next.classList.add("hp-changed");
+      openUp(next, from, ms(SHUT));
     }
     for (const el of place.removes) {
-      work.push(openUp(el, el.offsetHeight, ms(SHUT), 0).then(() => el.remove()));
+      if (animated) openUp(el, el.offsetHeight, ms(SHUT), 0).then(() => el.remove());
+      else el.remove();
     }
-    const settles = [];
+  }
+
+  // The visited place is written as if by hand: a cursor goes through it in reading order, deleting
+  // the old words a letter at a time and typing the new ones, one change after another. Paragraphs then
+  // settle into the article's own text, links and all.
+  async function applyTyped(place, token) {
+    for (const el of place.removes) await openUp(el, el.offsetHeight, SHUT / speed, 0).then(() => el.remove());
+    const jobs = [];
+    for (const el of place.adds) {
+      for (const k of Object.keys(CLOSED)) el.style[k] = "";
+      el.hidden = false;
+      if (!prose(el)) {
+        el.classList.add("hp-added");
+        await openUp(el, 0, GROW / speed);
+        continue;
+      }
+      const draft = blank(el);
+      el.replaceWith(draft);
+      jobs.push({ draft, next: el, ops: [{ ins: textOf(el), whole: true }] });
+    }
     for (const { old, next } of place.rewrites) {
-      const marked = rewrite(old, next.cloneNode(true));
-      const from = old.offsetHeight;
-      old.replaceWith(marked);
-      work.push(openUp(marked, from, ms(SHUT)));
-      settles.push({ marked, next });
+      if (!prose(next) || !prose(old)) {
+        old.replaceWith(next);
+        next.classList.add("hp-changed");
+        continue;
+      }
+      const draft = blank(next);
+      old.replaceWith(draft);
+      jobs.push({ draft, next, ops: wordEdits(textOf(old), textOf(next)), from: old });
     }
-    await Promise.all(work);
-    if (settles.length) await wait(ms(READ), token);
-    // Changed paragraphs go back to the article's own text, links and all, once read.
-    await Promise.all(
-      settles.map(({ marked, next }) => {
-        if (!marked.isConnected) return null;
-        const from = marked.offsetHeight;
-        marked.replaceWith(next);
-        return openUp(next, from, ms(SHUT));
-      }),
-    );
+    // Once the version's QUOTA is typed, the rest fades in: new paragraphs open up, and edits left in a
+    // paragraph appear at once.
+    const quota = { left: QUOTA };
+    for (const job of jobs) {
+      if (quota.left > 0 || !job.ops[0].whole) {
+        await typeInto(job.draft, job.ops, quota, token);
+        continue;
+      }
+      job.draft.replaceWith(job.next);
+      job.next.classList.add("hp-added");
+      job.draft = null;
+      openUp(job.next, 0, GROW / speed);
+    }
+    if (jobs.length) await wait(SETTLE / speed, token);
+    for (const { draft, next } of jobs) {
+      if (!draft?.isConnected) continue;
+      const from = draft.offsetHeight;
+      draft.replaceWith(next);
+      openUp(next, from, SHUT / speed);
+    }
+  }
+
+  // Plays `ops` into `el` at PER_LETTER ms a letter (at 1×), using up `quota`; once it runs out the rest
+  // fades in. A jump or close finishes it at once.
+  function typeInto(el, ops, quota, token) {
+    const caret = document.createElement("span");
+    caret.className = "hp-caret";
+    const parts = [];
+    for (const op of ops) {
+      if (op.keep) {
+        el.append(op.keep);
+        continue;
+      }
+      const span = document.createElement("span");
+      span.className = op.del ? "hp-del" : op.whole ? "hp-new" : "hp-ins";
+      span.textContent = op.del ?? "";
+      el.append(span);
+      parts.push({ span, op, typed: 0 });
+    }
+    const finish = (from = 0) => {
+      for (const part of parts.slice(from)) {
+        if (part.op.del) part.span.remove();
+        else if (part.span.textContent !== part.op.ins) {
+          part.span.textContent = part.op.ins;
+          part.span.classList.add("hp-rest");
+        }
+      }
+      caret.remove();
+    };
+    return new Promise((resolve) => {
+      let k = 0;
+      let budget = 0;
+      let last = performance.now();
+      const step = (now) => {
+        if (token !== run || closed) {
+          finish();
+          return resolve();
+        }
+        if (playing) budget += (now - last) * speed;
+        last = now;
+        if (quota.left <= 0) {
+          finish(k);
+          return resolve();
+        }
+        while (budget >= PER_LETTER && k < parts.length && quota.left > 0) {
+          const part = parts[k];
+          if (caret.previousSibling !== part.span) part.span.after(caret);
+          budget -= PER_LETTER;
+          quota.left--;
+          if (part.op.del) {
+            // Deleting goes two letters at a time; a long cut goes in one stroke once it has started.
+            const text = part.span.textContent;
+            part.span.textContent = part.op.del.length - text.length >= LONG_HEAD ? "" : text.slice(0, -2);
+            if (!part.span.textContent) {
+              part.span.remove();
+              k++;
+            }
+          } else {
+            part.span.textContent = part.op.ins.slice(0, ++part.typed);
+            if (part.typed >= part.op.ins.length) k++;
+            else if (part.typed >= LONG_HEAD && part.op.ins.length > LONG_HEAD * 2) {
+              // The rest of a long passage fades in instead of being typed.
+              const rest = document.createElement("span");
+              rest.className = `${part.span.className} hp-rest`;
+              rest.textContent = part.op.ins.slice(part.typed);
+              part.span.after(rest);
+              part.span = rest;
+              k++;
+            }
+          }
+        }
+        if (k < parts.length) return requestAnimationFrame(step);
+        caret.remove();
+        resolve();
+      };
+      requestAnimationFrame(step);
+    });
   }
 
   // Animates `el` from `from` px tall to its own height (or `to`), margins and all.
@@ -528,6 +711,13 @@ export function startHistoryPlay({ id, body, onClose }) {
       heading.classList.add("hp-fought");
       // A paragraph that moves would replay the flash, so it goes once played.
       heading.addEventListener("animationend", () => heading.classList.remove("hp-fought"), { once: true });
+    }
+    // The page is already at the contested paragraph; it is marked. Without one, it goes to the heading.
+    if (visited?.isConnected) {
+      visited.classList.remove("hp-fight-spot");
+      void visited.offsetWidth;
+      visited.classList.add("hp-fight-spot");
+    } else if (heading) {
       glideTo(heading, run);
     }
   }
@@ -592,25 +782,48 @@ function textOf(el) {
   return clone.textContent.replace(/\s+/g, " ").trim();
 }
 
-// A changed paragraph, as plain text for now, with its new words written in and the cut ones struck.
-// Anything that isn't a paragraph of prose is just swapped and marked.
-function rewrite(prev, next) {
-  if (next.tagName !== "P" || next.querySelector(".katex, img")) {
-    if (!next.matches("ol.references")) next.classList.add("hp-changed");
-    return next;
+// Prose that can be typed: paragraphs and headings of plain text, not old table markup or maths.
+function prose(el) {
+  return /^(P|H2|H3|H4)$/.test(el.tagName) && !el.querySelector(".katex, img") && !/\{\||\|-|style=|<\/?t[dhr]\b/.test(el.textContent);
+}
+
+// About how many letters typing `place` takes, as typeInto counts them.
+function typingLetters(place) {
+  const count = (ops) =>
+    ops.reduce((n, op) => n + Math.min(LONG_HEAD + 1, op.ins?.length ?? 0) + Math.min(LONG_HEAD / 2 + 1, (op.del?.length ?? 0) / 2), 0);
+  let letters = 0;
+  for (const el of place.adds) if (prose(el)) letters += count([{ ins: textOf(el) }]);
+  for (const { old, next } of place.rewrites) if (prose(old) && prose(next)) letters += count(wordEdits(textOf(old), textOf(next)));
+  return letters;
+}
+
+function typeable(place) {
+  return place.adds.some(prose) || place.rewrites.some(({ next }) => prose(next));
+}
+
+// An empty element like `el`, for typing into.
+function blank(el) {
+  const draft = document.createElement(el.tagName);
+  draft.className = `${el.className} hp-draft`;
+  if (el.id) draft.id = el.id;
+  return draft;
+}
+
+// The word changes from `before` to `after`, as kept, deleted and inserted text in reading order.
+function wordEdits(before, after) {
+  const ops = [];
+  for (const r of diff(words(before), words(after))) {
+    if (r.type === "equal") {
+      ops.push({ keep: r.b.join("") });
+      continue;
+    }
+    const removed = r.a.join("");
+    const added = r.b.join("");
+    if (removed.trim()) ops.push({ del: removed });
+    if (added.trim()) ops.push({ ins: added });
+    else if (added) ops.push({ keep: added });
   }
-  let n = 0;
-  next.innerHTML = diff(words(textOf(prev)), words(textOf(next)))
-    .map((r) => {
-      if (r.type === "equal") return escape(r.b.join(""));
-      const removed = r.a.join("");
-      const addedText = r.b.join("");
-      const delay = `style="--d:${Math.min(n++, 12) * 60}ms"`;
-      return `${removed.trim() ? `<del ${delay}>${escape(removed)}</del>` : ""}${addedText.trim() ? `<ins ${delay}>${escape(addedText)}</ins>` : escape(addedText)}`;
-    })
-    .join("");
-  next.classList.add("hp-changed");
-  return next;
+  return ops;
 }
 
 function escape(s) {

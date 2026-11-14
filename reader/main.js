@@ -78,7 +78,12 @@ if (!version || !summary) {
     else window.open(`https://fi.wikipedia.org/wiki/${encodeURIComponent(link.dataset.title.replace(/ /g, "_"))}`, "_blank", "noopener");
   });
   const chat = chatPanel({ article: summary, onClose: () => menu.clearPaint() });
-  const menu = cursorMenu({ root: body, onSubmit: (request) => chat.ask(request) });
+  // Learn opens a lesson in the wide sheet at the top; the other actions open a chat.
+  const lessons = import("./learn-view.js").then((m) => m.learnView({ article: summary }));
+  const menu = cursorMenu({
+    root: body,
+    onSubmit: (request) => (request.mode === "learn" ? lessons.then((l) => (menu.clearPaint(), l.open(request))) : chat.ask(request)),
+  });
 }
 
 // Article, Explore and History share the page; each keeps its own scroll position. Explore and History

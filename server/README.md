@@ -234,9 +234,19 @@ current text as the main table), then whatever else is in `m_article_stats`. It 
 so search improves while it runs, and on a second connection while the GPU embeds the next chunk. Stopped, it
 continues where it stopped. Texts are sorted by length and batched by 160,000 padded tokens, in float16.
 
-Measured on the A100: 145 articles/s, 100,000 tokens/s, the GPU busy ~90% of the time. Committing each chunk in
-one transaction matters: with a commit per statement the vector index took only 60-70 rows/s, and four parallel
-writers were slower still (45 rows/s), as they wait for each other in the index.
+Measured on the A100 80 GB, 14 November 2026, into `wiki_full`:
+
+| | |
+|---|---|
+| Articles embedded | 549,588: the 457 M articles S lacks, and 549,131 L articles; with S's 19,285, all 568,873 Finnish articles have a vector |
+| Tokens read | 329 million; 2,439 articles (0.4%) were cut at 8,192 tokens |
+| Job time | 58 min (3,454 s, of which the GPU 2,954 s), in 63 min of wall clock with restarts |
+| Steady state | 213 articles/s, 111,000 tokens/s: the last run, 474,297 articles in 37 min, the GPU busy 97% of the time |
+
+Committing each chunk in one transaction matters: with a commit per statement the vector index took only 60-70
+rows/s, and four parallel writers were slower still (45 rows/s), as they wait for each other in the index.
+The exports for local copies: `vectors-bge-m3-extra-fi.parquet` (457 M articles, 2.3 MB) and
+`vectors-bge-m3-l-fi.parquet` (549,131 L articles, 2.25 GB), written by `load.py export-vectors` in 24 s.
 The NVIDIA driver comes from Ubuntu's prebuilt modules for the running kernel (`bootstrap.sh`), loaded with
 `modprobe`, without a reboot.
 

@@ -3,7 +3,7 @@
 One page with three views of an article, switched in the top bar:
 
 - **Article**: a calm reading view with contents on the left and images in the margin. Hover a link for a preview.
-  Press Q for the liquid cursor menu (Ask, Find, Visualise) and its chats.
+  Press Q for the liquid cursor menu (Ask, Find, Learn) and its chats.
 - **Explore**: the article's related articles as a 3D map you can grow outward.
 - **History**: the article's whole edit history as a 3D path you fly along, with the article as it read at
   each moment in a sidebar, and edit wars you can watch being fought.
@@ -45,6 +45,18 @@ The **Explore** switch in the top bar shows the article's related articles as a 
 - `chat.js`: the chats: a floating window or side panel, with a tray of tabs and a history list.
 - `model3d.js`: the 3D qubit that Visualise shows, drawn on a canvas.
 - `fake/assistant.js`: every canned answer and the earlier chats in History. Replace the body of `respond()` with a real call to go live.
+
+## Learn
+
+Learn (L in the cursor menu) opens a wide sheet at the top of the page instead of a chat.
+
+- `learn-view.js`, `learn-view.css`: the lesson. `/api/learn` with `shape: "lesson"` reads the article's links and
+  writes a title, a one-line goal, 3 or 4 sections and the terms a newcomer would not know. A term opens a card with
+  what it means here; "Learn about …" makes it a lesson of its own, and the trail at the top goes back. Questions go
+  under the lesson (`shape: "reply"`).
+- `learn-audio.js`: Listen, the lesson as an audio book with chapters, a transcript that follows the voice, and Ask,
+  which pauses it, reads the answer out where it was asked and then carries on. The voice is the browser's speech
+  synthesis for now.
 
 ## History
 

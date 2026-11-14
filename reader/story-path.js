@@ -11,17 +11,18 @@ import { FIGHTER_COLORS } from "./timeline3d.js";
 const EYE = 360; // camera height
 const BACK = 760; // camera distance behind the moment shown
 const NEAR = 280; // nothing closer than this is drawn
-const FAR = 9000;
+const FAR = 4200; // a short view keeps the road calm; the timeline is stretched out instead
+const NAMED = 2600; // editors are shown on blocks nearer than this
 const ROAD = 30; // half the road's width once the article is at its longest
 const KERB = 26; // gap between the road's edge and the blocks
 const BLOCK_W = 46;
 const MIN_DEPTH = 26;
 const MIN_BLOCK = 120; // characters a sitting must change to get a block; smaller ones are dots on the road
-const WAR_STRETCH = 26; // extra road per edit inside a war, so a fight gets room for its braid
+const WAR_STRETCH = 40; // extra road per edit inside a war, so a fight gets room for its braid
 const SWORD = 150; // swords sign height above the road
 const GRID = 340; // floor grid spacing
 
-export function createStoryPath({ canvas, edits, wars, onPick }) {
+export function createStoryPath({ canvas, edits, wars, onPick, onTime = () => {} }) {
   const ctx = canvas.getContext("2d");
 
   // Distance along the road: a step per edit plus the time between edits, so busy years and quiet years
@@ -31,7 +32,7 @@ export function createStoryPath({ canvas, edits, wars, onPick }) {
   const z = new Float64Array(edits.length);
   for (let i = 1; i < edits.length; i++) {
     const days = (edits[i].time - edits[i - 1].time) / 86_400_000;
-    z[i] = z[i - 1] + 7 + Math.min(260, Math.sqrt(days) * 22) + (inWar.has(i) ? WAR_STRETCH : 0);
+    z[i] = z[i - 1] + 16 + Math.min(520, Math.sqrt(days) * 44) + (inWar.has(i) ? WAR_STRETCH : 0);
   }
   const maxChars = Math.max(...edits.map((e) => e.chars));
   const years = [];
@@ -77,6 +78,8 @@ export function createStoryPath({ canvas, edits, wars, onPick }) {
   let height = 0;
   let camZ = -BACK;
   let targetZ = -BACK;
+  // The camera's target travels from `from` to `to` over `ms`: evenly during playback, eased after a jump.
+  let trip = null;
   let nowZ = 0;
   let current = null;
   let frame = 0;
@@ -96,9 +99,15 @@ export function createStoryPath({ canvas, edits, wars, onPick }) {
     frame = requestAnimationFrame(tick);
     if (!canvas.getClientRects().length) return;
     if (canvas.clientWidth !== width || canvas.clientHeight !== height) resize();
-    camZ += (targetZ - camZ) * 0.06;
+    if (trip) {
+      const t = Math.min(1, (now - trip.t0) / trip.ms);
+      targetZ = trip.from + (trip.to - trip.from) * (trip.eased ? t * t * (3 - 2 * t) : t);
+      if (t === 1) trip = null;
+    }
+    camZ += (targetZ - camZ) * 0.15;
     nowZ = camZ + BACK;
     draw(now);
+    onTime(timeAtZ(nowZ));
   }
   frame = requestAnimationFrame(tick);
 
@@ -108,13 +117,13 @@ export function createStoryPath({ canvas, edits, wars, onPick }) {
 
   function draw(now) {
     const f = height * 0.95;
-    const horizon = height * 0.1;
+    const horizon = height * 0.2; // below the year shown above the road
     const camX = roadX(camZ + BACK) * 0.9;
     const project = (x, y, wz) => {
       const dz = wz - camZ;
       return { x: width / 2 + ((x - camX) * f) / dz, y: horizon + ((EYE - y) * f) / dz, s: f / dz, dz };
     };
-    const fog = (dz) => (1 - smoothstep(FAR * 0.4, FAR, dz)) * smoothstep(NEAR, NEAR + 380, dz);
+    const fog = (dz) => (1 - smoothstep(FAR * 0.45, FAR, dz)) * smoothstep(NEAR, NEAR + 380, dz);
     // Written: what lies up to the moment shown. Ahead: faint.
     const written = (wz) => wz <= nowZ + 1;
     const ink = (wz, a) => (written(wz) ? a : a * 0.3);
@@ -198,6 +207,8 @@ export function createStoryPath({ canvas, edits, wars, onPick }) {
       if (z1 < camZ + NEAR || z0 > camZ + FAR) continue;
       const turns = Math.max(2, war.reverts);
       const amp = war.kind === "dispute" ? 22 : 14;
+      // While the moment shown is inside the war, its braid is bolder.
+      const inside = nowZ >= z0 - 40 && nowZ <= z1 + 120;
       for (const [k, color] of FIGHTER_COLORS.entries()) {
         let prev = null;
         for (let wz = Math.max(z0, camZ + NEAR); wz <= z1; wz += 6) {
@@ -205,8 +216,8 @@ export function createStoryPath({ canvas, edits, wars, onPick }) {
           const off = amp * Math.sin(Math.PI * t) * Math.sin(Math.PI * turns * t) * (k ? -1 : 1);
           const p = project(roadX(wz) + off, 0, wz);
           if (prev) {
-            ctx.strokeStyle = hexAlpha(color, ink(wz, war.kind === "dispute" ? 0.8 : 0.45) * fog(p.dz));
-            ctx.lineWidth = Math.min(2.5, Math.max(0.6, 2.4 * p.s));
+            ctx.strokeStyle = hexAlpha(color, ink(wz, inside ? 0.95 : war.kind === "dispute" ? 0.8 : 0.45) * fog(p.dz));
+            ctx.lineWidth = Math.min(inside ? 4 : 2.5, Math.max(0.6, (inside ? 4 : 2.4) * p.s));
             ctx.beginPath();
             ctx.moveTo(prev.x, prev.y);
             ctx.lineTo(p.x, p.y);
@@ -214,6 +225,25 @@ export function createStoryPath({ canvas, edits, wars, onPick }) {
           }
           prev = p;
         }
+      }
+      // Each revert leaps across the road from the reverter's side, in their color.
+      for (const e of war.edits) {
+        if (e.revertsTo === null) continue;
+        const f = war.fighters.indexOf(e.user);
+        const wz = z[e.index];
+        if (wz < camZ + NEAR || wz > camZ + FAR) continue;
+        const from = f === 1 ? 1 : -1;
+        const color = f === 0 || f === 1 ? FIGHTER_COLORS[f] : "#8a8f94";
+        const a = ink(wz, inside ? 0.9 : 0.6) * fog(wz - camZ) * smoothstep(NEAR, NEAR + 900, wz - camZ);
+        ctx.strokeStyle = hexAlpha(color, a);
+        ctx.lineWidth = Math.max(0.8, Math.min(2.5, 2.6 * project(0, 0, wz).s));
+        ctx.beginPath();
+        for (let u = 0; u <= 1.001; u += 0.1) {
+          const q = project(roadX(wz) + from * amp * 1.6 * (1 - 2 * u), Math.sin(Math.PI * u) * (inside ? 60 : 40), wz);
+          if (u) ctx.lineTo(q.x, q.y);
+          else ctx.moveTo(q.x, q.y);
+        }
+        ctx.stroke();
       }
     }
 
@@ -240,6 +270,14 @@ export function createStoryPath({ canvas, edits, wars, onPick }) {
       if (sign.z < camZ + NEAR || sign.z > camZ + FAR) continue;
       standing.push({ z: sign.z, draw: () => drawSign(sign) });
     }
+    // The fighters stand a little ahead of the camera all through their war, so they go along with it.
+    for (const war of wars) {
+      const z0 = z[war.edits[0].index];
+      const z1 = z[war.edits.at(-1).index];
+      const zm = Math.min(z1 + 200, Math.max(z0 + 300, nowZ + 500));
+      if (zm < camZ + NEAR || zm > camZ + NAMED) continue;
+      standing.push({ z: zm, draw: () => drawFighters(war, zm) });
+    }
     standing.sort((a, b) => b.z - a.z);
     const labels = [];
     for (const s of standing) s.draw();
@@ -262,10 +300,12 @@ export function createStoryPath({ canvas, edits, wars, onPick }) {
       const inner = roadX(zm) + b.side * (roadHalf(b.from) + KERB);
       const x0 = b.side > 0 ? inner : inner - BLOCK_W;
       const x1 = x0 + BLOCK_W;
-      const a = fog(z0 - camZ);
+      // Blocks fade as they come close, so a tall one never fills the view.
+      const a = fog(z0 - camZ) * (0.25 + 0.75 * smoothstep(NEAR, NEAR + 900, z0 - camZ));
       if (a < 0.01) return;
       const done = written(b.z0);
-      const alpha = (done ? 1 : 0.22) * a;
+      // Blocks still to come are only outlines.
+      const alpha = (done ? 1 : 0.07) * a;
       const [h, sat, light] = b.color;
       const shade = (dl) => `hsla(${h},${sat}%,${Math.max(0, Math.min(100, light + dl))}%,${alpha})`;
       const P = (x, y, wz) => project(x, y, wz);
@@ -275,7 +315,7 @@ export function createStoryPath({ canvas, edits, wars, onPick }) {
         ctx.closePath();
         ctx.fillStyle = fill;
         ctx.fill();
-        ctx.strokeStyle = `rgba(32,33,34,${(isNow ? 0.5 : 0.1) * a})`;
+        ctx.strokeStyle = `rgba(32,33,34,${(isNow ? 0.5 : done ? 0.1 : 0.2) * a})`;
         ctx.lineWidth = isNow ? 1.4 : 0.6;
         ctx.stroke();
       };
@@ -288,12 +328,15 @@ export function createStoryPath({ canvas, edits, wars, onPick }) {
       quad([P(x0, 0, z0), P(x1, 0, z0), P(x1, b.h, z0), P(x0, b.h, z0)], shade(-4));
       quad([P(x0, b.h, z0), P(x1, b.h, z0), P(x1, b.h, b.z1), P(x0, b.h, b.z1)], shade(12));
 
-      // The editor standing on top: a disc with their initials, and their name when there is room.
+      // The editor standing on top: a disc with their initials, and their name when there is room. Only
+      // near blocks that have been written get one, so the distance stays quiet.
+      const near = 1 - smoothstep(NAMED * 0.75, NAMED, z0 - camZ);
+      if (!done || near < 0.02) return;
       const top = P((x0 + x1) / 2, b.h, (z0 + b.z1) / 2);
       const r = Math.max(2.5, Math.min(isNow ? 14 : 11, 22 * top.s));
       const stand = P((x0 + x1) / 2, b.h, (z0 + b.z1) / 2);
       const cy = stand.y - r - 2;
-      ctx.fillStyle = `hsla(${h},${Math.max(sat, 10)}%,${Math.max(18, light - 30)}%,${(done ? 1 : 0.35) * a})`;
+      ctx.fillStyle = `hsla(${h},${Math.max(sat, 10)}%,${Math.max(18, light - 30)}%,${near * a})`;
       ctx.beginPath();
       ctx.arc(stand.x, cy, r, 0, Math.PI * 2);
       ctx.fill();
@@ -305,7 +348,7 @@ export function createStoryPath({ canvas, edits, wars, onPick }) {
         ctx.stroke();
       }
       if (r >= 7) {
-        ctx.fillStyle = `rgba(255,255,255,${(done ? 0.95 : 0.6) * a})`;
+        ctx.fillStyle = `rgba(255,255,255,${0.95 * near * a})`;
         ctx.font = `600 ${Math.round(r * 0.85)}px Inter, system-ui, sans-serif`;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
@@ -329,6 +372,60 @@ export function createStoryPath({ canvas, edits, wars, onPick }) {
       ctx.fillStyle = `rgba(32,33,34,${(isNow ? 0.95 : 0.7) * a})`;
       ctx.textAlign = "left";
       ctx.fillText(name, lx, cy + 4);
+    }
+
+    // The war's two main fighters face each other across the road, each on a post in their color.
+    function drawFighters(war, zm) {
+      const z0 = z[war.edits[0].index];
+      const a = fog(zm - camZ) * (1 - smoothstep(NAMED * 0.75, NAMED, zm - camZ));
+      const reached = written(z0);
+      const inside = nowZ >= z0 - 40 && nowZ <= z[war.edits.at(-1).index] + 120;
+      war.fighters.slice(0, 2).forEach((user, k) => {
+        const sideSign = k ? 1 : -1;
+        const x = roadX(zm) + sideSign * (roadHalf(war.edits[0].index) + 70);
+        const foot = project(x, 0, zm);
+        const head = project(x, 90, zm);
+        const alpha = (reached ? 1 : 0.3) * a;
+        ctx.strokeStyle = hexAlpha(FIGHTER_COLORS[k], 0.6 * alpha);
+        ctx.lineWidth = Math.max(1, 2 * foot.s);
+        ctx.beginPath();
+        ctx.moveTo(foot.x, foot.y);
+        ctx.lineTo(head.x, head.y);
+        ctx.stroke();
+        const r = Math.max(4, Math.min(inside ? 15 : 12, 26 * head.s));
+        const cy = head.y - r;
+        ctx.fillStyle = hexAlpha(FIGHTER_COLORS[k], alpha);
+        ctx.beginPath();
+        ctx.arc(head.x, cy, r, 0, Math.PI * 2);
+        ctx.fill();
+        if (inside) {
+          ctx.strokeStyle = hexAlpha(FIGHTER_COLORS[k], 0.35 + 0.25 * Math.sin(now / 200 + k * Math.PI));
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(head.x, cy, r + 4, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        if (r >= 7) {
+          ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+          ctx.font = `600 ${Math.round(r * 0.8)}px Inter, system-ui, sans-serif`;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(initials(user, /^[\d.:a-f]+$/i.test(user) ? "anonymous" : "person"), head.x, cy + 0.5);
+          ctx.textBaseline = "alphabetic";
+        }
+        if (!reached || r < 8) return;
+        const name = shorten(censor(user));
+        ctx.font = "600 11px Inter, system-ui, sans-serif";
+        const w = ctx.measureText(name).width;
+        const lx = Math.max(4, Math.min(width - w - 4, head.x - w / 2));
+        ctx.fillStyle = `rgba(255,255,255,${0.85 * alpha})`;
+        ctx.beginPath();
+        ctx.roundRect(lx - 3, cy - r - 20, w + 6, 16, 4);
+        ctx.fill();
+        ctx.fillStyle = hexAlpha(FIGHTER_COLORS[k], alpha);
+        ctx.textAlign = "left";
+        ctx.fillText(name, lx, cy - r - 8);
+      });
     }
 
     function drawSign(sign) {
@@ -379,6 +476,13 @@ export function createStoryPath({ canvas, edits, wars, onPick }) {
     ctx.lineCap = "butt";
   }
 
+  function timeAtZ(wz) {
+    const i = lowerBound(z, wz);
+    if (i <= 0) return edits[0].time;
+    if (i >= edits.length) return edits.at(-1).time;
+    return edits[i - 1].time + ((edits[i].time - edits[i - 1].time) * (wz - z[i - 1])) / Math.max(1, z[i] - z[i - 1]);
+  }
+
   function zAt(time) {
     const i = lowerBound(edits, time, (e) => e.time);
     if (i <= 0) return 0;
@@ -401,10 +505,20 @@ export function createStoryPath({ canvas, edits, wars, onPick }) {
   canvas.addEventListener("mousemove", (event) => (canvas.style.cursor = signAt(event) ? "pointer" : ""));
 
   return {
-    // Moves the camera so `time` is just ahead of it; it glides there.
+    // Moves the camera so `time` is just ahead of it, easing there (or at once).
     setTime(time, { instant = false } = {}) {
-      targetZ = zAt(time) - BACK;
-      if (instant) camZ = targetZ;
+      if (instant) {
+        trip = null;
+        targetZ = camZ = zAt(time) - BACK;
+      } else trip = { from: targetZ, to: zAt(time) - BACK, t0: performance.now(), ms: 700, eased: true };
+    },
+    // Travels to `time` at an even pace, arriving in `ms`.
+    glide(time, ms) {
+      trip = { from: targetZ, to: zAt(time) - BACK, t0: performance.now(), ms: Math.max(1, ms), eased: false };
+    },
+    // Stops where it is, mid-trip.
+    freeze() {
+      trip = null;
     },
     setWar(war) {
       current = war;
