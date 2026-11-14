@@ -14,7 +14,8 @@ const RATES = [1, 1.25, 1.5, 2, 0.75];
 const RESUME_S = 3;
 const AHEAD = 3; // sentences made ahead of the one being said
 
-export function listenView({ root, bar, lesson, ask }) {
+// askBox: the chat beside the sheet, when there is one (learn-view.js); it takes the questions, so the bar has no Ask.
+export function listenView({ root, bar, lesson, ask, askBox = () => null }) {
   root.innerHTML = `<div class="listen-scroll"><div class="listen-transcript"></div></div>`;
   const scroller = root.firstElementChild;
   const transcript = root.querySelector(".listen-transcript");
@@ -38,6 +39,7 @@ export function listenView({ root, bar, lesson, ask }) {
   audio.preservesPitch = true;
   let hush = null; // ends the sentence being said
   let voiceMenu = false;
+  let held = false; // paused for a voice chat, to play on after it
 
   const listeners = [
     ["keydown", onKey],
@@ -57,7 +59,36 @@ export function listenView({ root, bar, lesson, ask }) {
   update();
   renderBar();
 
-  return { update, destroy };
+  return { update, destroy, ask: askFromSide, hold, release };
+
+  // A question typed in the chat beside the sheet: the lesson stops, the answer is read out, then the lesson goes on.
+  function askFromSide(question) {
+    if (!lesson.done || !sentences.length || phase === "waiting" || phase === "answering") return false;
+    clearTimeout(resumeTimer);
+    const resuming = phase === "resume" && turn;
+    turn = { wasPlaying: resuming || playing, at: resuming ? turn.at : Math.min(index, sentences.length - 1) };
+    stop();
+    sendAsk(question);
+    return true;
+  }
+
+  // A voice chat pauses the lesson and hands it back where it was.
+  function hold() {
+    clearTimeout(resumeTimer);
+    held = playing || phase === "resume";
+    if (phase !== "player") {
+      phase = "player";
+      turn = null;
+    }
+    stop();
+    renderBar();
+    paint();
+  }
+
+  function release() {
+    if (held) playFrom(index);
+    held = false;
+  }
 
   // The lesson grew or a question got more of its answer.
   function update() {
@@ -115,7 +146,8 @@ export function listenView({ root, bar, lesson, ask }) {
   }
 
   function renderTranscript() {
-    const turnsAfter = (ids) => lesson.followups.filter((t) => t.at !== null && ids.includes(t.at));
+    // With the chat beside the sheet the questions are there; otherwise each sits after the sentence it interrupted.
+    const turnsAfter = (ids) => (askBox() ? [] : lesson.followups.filter((t) => t.at !== null && ids.includes(t.at)));
     transcript.innerHTML = `
       <p class="listen-eyebrow">${lesson.done ? `Audio lesson · ${Math.max(1, Math.round(total() / 60))} min · ${chapters.length} chapters` : "Preparing the audio…"}</p>
       ${chapters
@@ -376,6 +408,9 @@ export function listenView({ root, bar, lesson, ask }) {
       input.value = [...e.results].map((r) => r[0].transcript).join("");
       if (e.results[e.results.length - 1].isFinal) bar.querySelector(".player-ask-row").requestSubmit();
     };
+    recognition.onerror = (e) => {
+      input.placeholder = e.error === "not-allowed" ? "The microphone is blocked. Type your question." : "Didn't catch that. Type your question.";
+    };
     recognition.onend = () => {
       recognition = null;
       button.classList.remove("is-listening");
@@ -429,7 +464,7 @@ export function listenView({ root, bar, lesson, ask }) {
             <button type="button" class="player-play" data-act="play" aria-label="${playing ? "Pause" : finished ? "Play again" : "Play"}" ${ready ? "" : "disabled"}>${playing ? ICONS.pause : ICONS.play}</button>
             <button type="button" class="player-skip" data-act="forward" aria-label="Forward ${SKIP_S} seconds" ${ready ? "" : "disabled"}>${ICONS.forward}</button>
           </div>
-          <button type="button" class="player-pill player-ask" data-act="ask" ${ready ? "" : "disabled"}>${ICONS.mic}Ask</button>
+          ${askBox() ? "<span></span>" : `<button type="button" class="player-pill player-ask" data-act="ask" ${ready ? "" : "disabled"}>${ICONS.mic}Ask</button>`}
         </div>
       </div>`;
     paint();
@@ -531,7 +566,9 @@ export function listenView({ root, bar, lesson, ask }) {
       seek(clamp(now() + (e.key === "ArrowLeft" ? -SKIP_S : SKIP_S), 0, total() - 0.01));
     } else if (e.key === "/" && phase === "player" && lesson.done) {
       e.preventDefault();
-      startAsk();
+      const box = askBox();
+      if (box) box.focus();
+      else startAsk();
     }
   }
 }

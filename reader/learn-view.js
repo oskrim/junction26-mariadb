@@ -3,11 +3,13 @@
 // terms a newcomer would not know. A term opens in place with what it means here, and can become a lesson of its
 // own; the lessons dived into form a trail at the top. Read shows the lesson as text, with a chat beside the sheet
 // that changes it: each message rewrites the lesson in place (shape "revise"), with a note of what changed and Undo.
-// Listen (learn-audio.js) reads it aloud and takes questions in the middle.
+// Listen (learn-audio.js) reads it aloud; there the chat takes questions, typed (answered aloud, then the lesson goes
+// on) or spoken with Talk, a live ElevenLabs voice chat about the lesson (voice.js) while the lesson waits.
 
 import { citeLinks, learn } from "./learn.js";
 import { stepsView } from "./steps.js";
 import { listenView } from "./learn-audio.js";
+import { startTalk } from "./voice.js";
 
 const W = 920;
 const EDGE = 16;
@@ -25,6 +27,9 @@ export function learnView({ article }) {
   let current = null;
   let mode = "read";
   let listen = null;
+  let talk = null; // the voice chat while it runs: { lesson, status, session }
+  let talkError = "";
+  let talkFrame = 0;
 
   el.close.addEventListener("click", close);
   el.modes.addEventListener("click", (e) => {
@@ -47,15 +52,17 @@ export function learnView({ article }) {
     e.preventDefault();
     const request = el.textarea.value.trim();
     if (!request || !current?.done || current.asking) return;
+    if (mode === "listen" && !listen?.ask(request)) return;
     el.textarea.value = "";
     grow();
-    revise(current, request);
+    if (mode === "read") revise(current, request);
   });
   el.edit.addEventListener("click", (e) => {
     const suggestion = e.target.closest("[data-suggest]");
     const undo = e.target.closest("[data-undo]");
     if (suggestion && current?.done && !current.asking) revise(current, suggestion.dataset.suggest);
     else if (undo) undoEdit(current, current.edits[Number(undo.dataset.undo)]);
+    else if (e.target.closest(".lesson-talk")) toggleTalk();
   });
   el.textarea.addEventListener("keydown", (e) => {
     if (e.key === "Escape") el.textarea.blur();
@@ -90,6 +97,7 @@ export function learnView({ article }) {
   }
 
   function close() {
+    endTalk();
     listen?.destroy();
     listen = null;
     el.sheet.hidden = el.scrim.hidden = el.edit.hidden = true;
@@ -129,7 +137,7 @@ export function learnView({ article }) {
     render(lesson);
     if (lesson === current) {
       renderChrome();
-      renderEdits();
+      renderSide();
       listen?.update();
     }
   }
@@ -141,7 +149,7 @@ export function learnView({ article }) {
     lesson.edits.push(edit);
     lesson.asking = true;
     lesson.page.classList.add("is-rewriting");
-    renderEdits();
+    renderSide();
     renderChrome();
     const { stream, attachment } = learn({ prompt: request, context: lesson.context, article, history: lesson.history, shape: "revise" });
     let raw = "";
@@ -151,7 +159,7 @@ export function learnView({ article }) {
       const { note, body } = splitNote(raw);
       if (note !== null && note !== edit.note) {
         edit.note = note;
-        renderEdits();
+        renderSide();
       }
       if (!body.trim() || /Sorry, the answer stopped/.test(body)) continue;
       if (!started) {
@@ -173,7 +181,7 @@ export function learnView({ article }) {
     lesson.asking = false;
     lesson.page.classList.remove("is-rewriting");
     render(lesson);
-    renderEdits();
+    renderSide();
     renderChrome();
     if (lesson === current) listen?.update();
   }
@@ -185,12 +193,16 @@ export function learnView({ article }) {
     // The next change starts from this version, so the history says so.
     lesson.history.push({ role: "user", text: `Undo that change: "${edit.request}".` }, { role: "ai", text: edit.before.text });
     render(lesson);
-    renderEdits();
+    renderSide();
     if (lesson === current) listen?.update();
   }
 
-  function renderEdits() {
+  // The chat beside the sheet: the changes in Read, the questions and the voice chat in Listen.
+  function renderSide() {
     if (!current) return;
+    el.edit.dataset.mode = mode;
+    el.editHead.textContent = mode === "read" ? "Change this lesson" : "Ask while you listen";
+    if (mode === "listen") return renderThread();
     const lesson = current;
     const turns = lesson.edits
       .map((edit, i) => {
@@ -211,6 +223,107 @@ export function learnView({ article }) {
     el.editLog.scrollTop = el.editLog.scrollHeight;
   }
 
+  function renderThread() {
+    const lesson = current;
+    el.editLog.innerHTML = lesson.followups.length
+      ? lesson.followups.map((t) => turnHtml(t, lesson)).join("")
+      : `<p class="lesson-edit-hint">Type a question, or press Talk and ask out loud. The lesson waits while you ask, then goes on.</p>`;
+    el.editLog.scrollTop = el.editLog.scrollHeight;
+    renderTalk();
+  }
+
+  // Talk: a live voice chat with the ElevenLabs agent about this lesson. The lesson pauses until it ends.
+  async function toggleTalk() {
+    if (talk) return endTalk();
+    const lesson = current;
+    if (!lesson?.done) return;
+    talk = { lesson, status: "connecting", session: null };
+    talkError = "";
+    listen?.hold();
+    renderTalk();
+    const me = talk;
+    try {
+      const session = await startTalk({
+        context: {
+          page_id: article.page_id,
+          title: lesson.parsed.title ?? article.title,
+          article: document.querySelector(".body")?.innerText.slice(0, 6000) ?? "",
+          answer: lesson.text.replace(/^Terms:[\s\S]*$/m, "").replace(CITES, "").replace(/[{}#>]/g, ""),
+          sources: (lesson.sources?.items ?? []).map((s) => ({ title: s.title, why: s.why, text: s.text })),
+        },
+        onStatus: (status, detail) => {
+          if (talk !== me) return;
+          if (status === "ended") finishTalk(detail);
+          else {
+            me.status = status;
+            renderTalk();
+          }
+        },
+        onMessage: (role, text) => talkTurn(lesson, role, text),
+      });
+      if (talk !== me) return session.stop();
+      me.session = session;
+      meter();
+    } catch (error) {
+      if (talk === me) finishTalk(error.message);
+    }
+  }
+
+  function endTalk() {
+    if (talk) finishTalk();
+  }
+
+  function finishTalk(error = "") {
+    const was = talk;
+    talk = null;
+    talkError = error;
+    cancelAnimationFrame(talkFrame);
+    was?.session?.stop();
+    renderTalk();
+    listen?.release();
+  }
+
+  // What is said in the voice chat goes into the thread: your words as the question, the agent's as the answer.
+  function talkTurn(lesson, role, text) {
+    const last = lesson.followups.at(-1);
+    if (role === "user") lesson.followups.push({ question: text, text: "", sources: null, done: false, at: null, voice: true });
+    else if (last?.voice && !last.done) Object.assign(last, { text, done: true });
+    else lesson.followups.push({ question: null, text, sources: null, done: true, at: null, voice: true });
+    if (lesson === current && mode === "listen") renderThread();
+  }
+
+  function renderTalk() {
+    const on = !!talk;
+    const label = !on ? "Talk" : talk.status === "connecting" ? "Connecting…" : "End";
+    const status = !on
+      ? talkError
+        ? `Voice chat stopped: ${talkError}`
+        : ""
+      : talk.status === "speaking"
+        ? "Speaking. Talk to interrupt."
+        : talk.status === "listening"
+          ? "Listening. Just talk."
+          : "";
+    el.talk.setAttribute("aria-pressed", String(on));
+    el.talk.classList.toggle("is-live", on && talk.status !== "connecting");
+    el.talk.classList.toggle("is-speaking", on && talk.status === "speaking");
+    el.talk.disabled = !current?.done;
+    el.talk.querySelector("span").textContent = label;
+    el.talkStatus.textContent = status;
+    el.talkStatus.classList.toggle("is-error", !on && !!talkError);
+  }
+
+  // The Talk button's ring follows the voice: the agent's while it speaks, yours while it listens.
+  function meter() {
+    cancelAnimationFrame(talkFrame);
+    const tick = () => {
+      if (!talk?.session) return;
+      el.talk.style.setProperty("--level", Math.min(1, talk.session.volume() * 2.5).toFixed(3));
+      talkFrame = requestAnimationFrame(tick);
+    };
+    talkFrame = requestAnimationFrame(tick);
+  }
+
   // A question during the lesson, typed under it in Read or asked in the middle of Listen (at: the sentence it
   // interrupted). Answers short, with the lesson as history.
   async function ask(lesson, question, at = null) {
@@ -218,14 +331,21 @@ export function learnView({ article }) {
     lesson.followups.push(turn);
     lesson.asking = true;
     const { stream, attachment } = learn({ prompt: question, context: lesson.context, article, history: lesson.history, shape: "reply" });
+    if (lesson === current) renderSide();
     for await (const piece of stream) {
       turn.text += piece;
-      if (lesson === current) listen?.update();
+      if (lesson === current) {
+        listen?.update();
+        renderSide();
+      }
     }
     turn.sources = await attachment;
     turn.done = true;
     lesson.asking = false;
-    if (lesson === current) listen?.update();
+    if (lesson === current) {
+      listen?.update();
+      renderSide();
+    }
     return turn;
   }
 
@@ -247,7 +367,7 @@ export function learnView({ article }) {
     current = lesson;
     for (const l of trail) l.page.hidden = l !== lesson;
     renderChrome();
-    renderEdits();
+    renderSide();
     if (mode === "listen") startListen();
     el.read.scrollTop = 0;
   }
@@ -256,12 +376,15 @@ export function learnView({ article }) {
     mode = next;
     el.sheet.dataset.mode = next;
     for (const b of el.modes.querySelectorAll("[data-mode]")) b.setAttribute("aria-pressed", String(b.dataset.mode === next));
+    if (next !== "listen") endTalk();
     if (!el.sheet.hidden) layout();
     if (next === "listen") startListen();
     else {
       listen?.destroy();
       listen = null;
     }
+    renderSide();
+    renderChrome();
   }
 
   function startListen() {
@@ -271,6 +394,7 @@ export function learnView({ article }) {
       bar: el.player,
       lesson: current,
       ask: (question, at) => ask(current, question, at),
+      askBox: () => (el.sheet.classList.contains("has-side") ? el.textarea : null),
     });
   }
 
@@ -283,7 +407,13 @@ export function learnView({ article }) {
         )}</button>`,
       )
       .join("");
-    el.textarea.placeholder = !current.done ? "The lesson is being written…" : current.asking ? "Rewriting the lesson…" : "Ask, or ask for a change…";
+    el.textarea.placeholder = !current.done
+      ? "The lesson is being written…"
+      : mode === "listen"
+        ? "Ask a question…"
+        : current.asking
+          ? "Rewriting the lesson…"
+          : "Ask, or ask for a change…";
   }
 
   function render(lesson) {
@@ -317,13 +447,13 @@ export function learnView({ article }) {
       }`;
   }
 
-  // The sheet is centred; in Read, the chat sits just left of it and the two are centred together.
+  // The sheet is centred; the chat sits just left of it and the two are centred together.
   // A narrow window keeps the question box under the lesson instead.
   function layout() {
     // The top bar scrolls away with the article; once it is gone the sheet starts at the top of the window.
     const top = Math.max(document.querySelector(".bar")?.getBoundingClientRect().bottom ?? 0, 0) + EDGE;
     const height = innerHeight - top - TRAY - 4;
-    const side = mode === "read" && innerWidth >= SIDE_MIN;
+    const side = innerWidth >= SIDE_MIN;
     const extra = side ? SIDE_W + SIDE_GAP : 0;
     const w = Math.min(W, innerWidth - EDGE * 2 - extra);
     const left = (innerWidth - w - extra) / 2 + extra;
@@ -428,8 +558,8 @@ function sourcesHtml(lesson) {
 }
 
 export function turnHtml(turn, lesson) {
-  return `<div class="lesson-turn${turn.done ? "" : " is-thinking"}">
-    <p class="lesson-turn-q">${escape(turn.question)}</p>
+  return `<div class="lesson-turn${turn.done ? "" : " is-thinking"}${turn.voice ? " is-voice" : ""}">
+    ${turn.question ? `<p class="lesson-turn-q">${escape(turn.question)}</p>` : ""}
     <div class="lesson-turn-a">${turn.text ? `<p>${prose(turn.text.trim(), lesson, turn.sources)}</p>` : `<span class="dots"><i></i><i></i><i></i></span>`}</div>
   </div>`;
 }
@@ -449,7 +579,13 @@ function build() {
   edit.className = "lesson-edit";
   edit.hidden = true;
   edit.setAttribute("aria-label", "Change this lesson");
-  edit.innerHTML = `<p class="lesson-edit-head">Change this lesson</p><div class="lesson-edit-log" aria-live="polite"></div>`;
+  edit.innerHTML = `<p class="lesson-edit-head">Change this lesson</p><div class="lesson-edit-log" aria-live="polite"></div>
+    <div class="lesson-talk-row">
+      <button type="button" class="lesson-talk" aria-pressed="false">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="2" width="5" height="8" rx="2.5" /><path d="M3 8a5 5 0 0 0 10 0M8 13v1.5" /></svg><span>Talk</span>
+      </button>
+      <span class="lesson-talk-status" role="status"></span>
+    </div>`;
 
   sheet.innerHTML = `
     <header class="lesson-head">
@@ -478,6 +614,9 @@ function build() {
     sheet,
     edit,
     editLog: edit.querySelector(".lesson-edit-log"),
+    editHead: edit.querySelector(".lesson-edit-head"),
+    talk: edit.querySelector(".lesson-talk"),
+    talkStatus: edit.querySelector(".lesson-talk-status"),
     foot: sheet.querySelector(".lesson-foot"),
     crumbs: sheet.querySelector(".lesson-crumbs"),
     modes: sheet.querySelector(".lesson-modes"),
