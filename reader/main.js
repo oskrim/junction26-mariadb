@@ -53,21 +53,39 @@ function renderToc(entries) {
     else groups.at(-1).children.push(entry);
   }
   const items = groups
-    .map(
-      (g) => `
-      <li data-id="${g.id}">
-        <a href="#${g.id}">${g.text}</a>
-        ${g.children.length ? `<ol>${g.children.map((c) => `<li data-id="${c.id}"><a href="#${c.id}">${c.text}</a></li>`).join("")}</ol>` : ""}
-      </li>`,
+    .map((g) =>
+      g.children.length
+        ? `
+      <li data-id="${g.id}" class="has-children">
+        <button type="button" class="toc-toggle" aria-expanded="false">
+          <span>${g.text}</span>
+          <svg viewBox="0 0 10 10" aria-hidden="true"><path d="M3.5 2 6.5 5 3.5 8" /></svg>
+        </button>
+        <div class="toc-sub"><ol>${g.children.map((c) => `<li data-id="${c.id}"><a href="#${c.id}">${c.text}</a></li>`).join("")}</ol></div>
+      </li>`
+        : `<li data-id="${g.id}"><a href="#${g.id}">${g.text}</a></li>`,
     )
     .join("");
   return `<p class="toc-label">Contents</p><ol><li data-id="top"><a href="#top">Introduction</a></li>${items}</ol>`;
 }
 
-// Marks the section being read: the last heading that has scrolled past the top of the window.
+// The section being read opens by itself as you scroll; sections with subsections also open and
+// close on click without moving the page. A click can close the auto-opened one until you scroll to another.
 function trackActiveSection(entries) {
   const headings = entries.map((e) => document.getElementById(e.id)).filter(Boolean);
+  const pinned = new Set();
+  let dismissed = null;
+  let readingId = null;
   let frame = 0;
+
+  const render = () => {
+    for (const li of toc.querySelectorAll("li.has-children")) {
+      const open = pinned.has(li.dataset.id) || (li.dataset.id === readingId && dismissed !== readingId);
+      li.classList.toggle("is-open", open);
+      li.querySelector(".toc-toggle").setAttribute("aria-expanded", String(open));
+    }
+  };
+
   const update = () => {
     frame = 0;
     let current = null;
@@ -76,12 +94,32 @@ function trackActiveSection(entries) {
       else break;
     }
     const activeId = current?.id ?? "top";
-    const parentId = current?.tagName === "H3" ? entries.slice(0, entries.findIndex((e) => e.id === activeId)).findLast((e) => e.level === 2)?.id : activeId;
+    const sectionId =
+      current?.tagName === "H3"
+        ? entries.slice(0, entries.findIndex((e) => e.id === activeId)).findLast((e) => e.level === 2)?.id
+        : activeId;
+    if (sectionId !== readingId) dismissed = null;
+    readingId = sectionId;
     for (const li of toc.querySelectorAll("li")) {
       li.classList.toggle("is-current", li.dataset.id === activeId);
-      li.classList.toggle("is-open", li.dataset.id === parentId);
+      li.classList.toggle("is-reading", li.dataset.id === sectionId);
     }
+    render();
   };
+
+  toc.addEventListener("click", (event) => {
+    const toggle = event.target.closest(".toc-toggle");
+    if (!toggle) return;
+    const id = toggle.parentElement.dataset.id;
+    if (toggle.parentElement.classList.contains("is-open")) {
+      pinned.delete(id);
+      if (id === readingId) dismissed = id;
+    } else {
+      pinned.add(id);
+      if (dismissed === id) dismissed = null;
+    }
+    render();
+  });
   addEventListener("scroll", () => (frame ||= requestAnimationFrame(update)), { passive: true });
   update();
 }
