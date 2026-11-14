@@ -12,6 +12,11 @@ const REFLIST = "<!--reflist-->";
 
 const HATNOTES = { main: "Main article", further: "Further information", "see also": "See also" };
 const CITATIONS = /^(cite\b.*|citation)$/;
+// Finnish citation templates have many named parameters too, but they are not infoboxes.
+const NOT_INFOBOX = /viite|lähde|cite|citation/;
+const IMAGE_FILE = /\.(jpe?g|png|svg|gif|tiff?|webp)$/i;
+// Sizes, map pins and coordinates only steer Wikipedia's own layout.
+const INFOBOX_SKIP = /koko|leveys|width|size|pushpin|label_position|koordinaatit|coord|^(nimi|virallinen[ _]nimi|koko-nimi)$|kuvateksti|caption|selite/;
 const FILE_OPTION =
   /^(thumb|thumbnail|pienoiskuva|oikea|vasen|keskitetty|frame|frameless|framed|border|right|left|center|centre|none|upright(=.*)?|\d*x?\d+px|(alt|link|class|lang|page)=.*)$/i;
 
@@ -22,6 +27,9 @@ export function renderWikitext(source, { fileUrl, renderMath }) {
   const refs = [];
   const refsByKey = new Map();
   let description = null;
+  const shownFiles = new Set();
+  // Only templates before the first heading can be infoboxes; later ones are tables, charts and the like.
+  let inLead = false;
 
   // Footnotes get their numbers at the end, in reading order; until then they are \u0005index\u0006 marks.
   function cite(key, body) {
@@ -48,7 +56,7 @@ export function renderWikitext(source, { fileUrl, renderMath }) {
     const pos = [];
     const named = {};
     for (const part of rest) {
-      const m = part.match(/^\s*([\w -]+?)\s*=([\s\S]*)$/);
+      const m = part.match(/^\s*([\p{L}\p{N}_ -]+?)\s*=([\s\S]*)$/u);
       if (m) named[m[1].toLowerCase()] = m[2].trim();
       else pos.push(part.trim());
     }
@@ -67,6 +75,7 @@ export function renderWikitext(source, { fileUrl, renderMath }) {
       return keepBlock(`<p class="hatnote">${HATNOTES[name]}: ${links}</p>`);
     }
     if (CITATIONS.test(name)) return keep(inline(citation(name, named)));
+    if (inLead && Object.keys(named).length >= 5 && !NOT_INFOBOX.test(name)) return keepBlock(infobox(named));
     switch (name) {
       case "math":
         return keep(`<span class="tmath">${inline(pos[0] ?? named[1] ?? "")}</span>`);
@@ -120,9 +129,41 @@ export function renderWikitext(source, { fileUrl, renderMath }) {
     return text;
   }
 
+  // Infobox templates live in Wikipedia's Lua modules, so every one is drawn the same way: its first
+  // image, then a row for each filled-in parameter.
+  function infobox(named) {
+    const images = Object.values(named).map(fileName).filter(Boolean);
+    const image = images[0];
+    if (image) shownFiles.add(fileKey(image));
+    const title = named.nimi || named["virallinen nimi"] || named.virallinen_nimi || named["koko-nimi"];
+    const caption = named.kuvateksti ?? named.caption ?? "";
+    const rows = Object.entries(named)
+      .filter(([key, value]) => !INFOBOX_SKIP.test(key) && !fileName(value))
+      .map(([key, value]) => [key, infoValue(value)])
+      .filter(([, value]) => stripTags(restore(value)).trim())
+      .map(([key, value]) => `<tr><th>${label(key)}</th><td>${value}</td></tr>`);
+    return (
+      `<aside class="infobox">` +
+      (title ? `<p class="infobox-title">${inline(title)}</p>` : "") +
+      (image ? `<img src="${attr(fileUrl(image))}" alt="" loading="lazy">` : "") +
+      (caption ? `<p class="infobox-caption">${inline(caption)}</p>` : "") +
+      (rows.length ? `<table>${rows.join("")}</table>` : "") +
+      `</aside>`
+    );
+  }
+
+  // Small flags and icons inside values are dropped; lists keep their bullets.
+  function infoValue(value) {
+    const lines = replaceFiles(value, () => "").split("\n").map((l) => l.trim()).filter(Boolean);
+    if (lines.length && lines.every((l) => l.startsWith("*")))
+      return `<ul>${lines.map((l) => `<li>${inline(l.replace(/^\*+\s*/, ""))}</li>`).join("")}</ul>`;
+    return inline(lines.join("<br>"));
+  }
+
   function figure(inner) {
     const parts = splitParams(inner);
     const name = parts[0].replace(/^(file|image|tiedosto|kuva):/i, "").trim();
+    if (shownFiles.has(fileKey(name))) return "";
     const caption = parts.slice(1).filter((p) => !FILE_OPTION.test(p.trim())).at(-1) ?? "";
     const alt = parts.find((p) => /^\s*alt=/.test(p))?.replace(/^\s*alt=/, "") ?? stripTags(restore(inline(caption)));
     return keepBlock(
@@ -151,8 +192,12 @@ export function renderWikitext(source, { fileUrl, renderMath }) {
   text = text.replace(/<ref([^>]*?)(?:\/>|>([\s\S]*?)<\/ref>)/g, (_, attrs, body) =>
     cite(refName(attrs), body ?? null),
   );
-  text = expandTemplates(text);
-  text = replaceFiles(text, figure);
+  const firstHeading = text.search(/^==/m);
+  const leadEnd = firstHeading === -1 ? text.length : firstHeading;
+  inLead = true;
+  const lead = expandTemplates(text.slice(0, leadEnd));
+  inLead = false;
+  text = replaceFiles(lead + expandTemplates(text.slice(leadEnd)), figure);
 
   const toc = [];
   const html = [];
@@ -237,7 +282,7 @@ export function renderWikitext(source, { fileUrl, renderMath }) {
 function inline(s) {
   s = s.replace(/<\/?(span|nowiki|abbr|div|center|font|big|blockquote|poem)\b[^>]*>/gi, "");
   s = s.replace(/&(?![a-zA-Z]+;|#\d+;)/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  s = s.replace(/&lt;(\/?)(sub|sup|br|i|b|small|em|strong|s|u)\s*\/?&gt;/gi, "<$1$2>");
+  s = s.replace(/&lt;(\/?)(sub|sup|br|i|b|small|em|strong|s|u)\s*\/?\s*&gt;/gi, "<$1$2>");
   s = s.replace(/\[\[:?([^[\]|]+)(?:\|([^[\]]*))?\]\]([a-z]*)/g, (_, target, label, trail) => {
     if (/^(category|luokka):/i.test(target)) return "";
     // Older versions end with links to the same article in other languages, such as [[de:Quantencomputer]].
@@ -334,6 +379,17 @@ function replaceFiles(text, fn) {
   }
   return out + text.slice(i);
 }
+
+// An infobox names its image either bare ("Flag.svg") or as a file link ("[[Kuva:Flag.svg|125px]]").
+function fileName(value) {
+  const name = value.replace(/^\[\[(file|image|tiedosto|kuva):/i, "").split("|")[0].replace(/\]\]$/, "").trim();
+  return IMAGE_FILE.test(name) && !/[\n[\]{}]/.test(name) ? name : null;
+}
+
+const fileKey = (name) => name.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
+
+// Numbered parameters (osapuoli1, osapuoli2) repeat one field, so the number is left off.
+const label = (key) => key.replace(/[_-]/g, " ").replace(/\s*\d+$/, "").replace(/^./, (c) => c.toUpperCase());
 
 function refName(attrs) {
   return attrs.match(/name\s*=\s*"?([^"]+?)"?\s*$/)?.[1].trim() ?? null;

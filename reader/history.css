@@ -626,6 +626,11 @@ body[data-view="history"] .bar {
   color: var(--ink-3);
 }
 
+.panel-doc .infobox {
+  width: 38%;
+  margin: 0.3em 0 16px 20px;
+}
+
 .panel-doc .math-block {
   overflow-x: auto;
 }

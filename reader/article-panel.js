@@ -116,7 +116,7 @@ function marked(block, className) {
 // Changed paragraphs are shown as plain text with the removed words struck and the new ones marked.
 function wordDiff(prev, next) {
   const el = element(next);
-  if (el.querySelector(".katex, img")) {
+  if (el.matches(".infobox") || el.querySelector(".katex, img")) {
     el.classList.add("is-changed");
     return el;
   }
