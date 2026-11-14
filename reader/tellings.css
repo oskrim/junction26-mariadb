@@ -1,0 +1,265 @@
+/* Other tellings (tellings.js): the line under the title, the margin notes and the paragraphs they open. */
+
+/* Under the title */
+
+.ot-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  margin: 10px 0 0;
+  font-family: var(--sans);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-3);
+}
+
+.ot-line.is-more {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--rule);
+  font-size: 14px;
+  color: var(--ink-2);
+}
+
+.ot-badge {
+  font-family: var(--serif);
+  font-size: 22px;
+  line-height: 1;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.ot-lang,
+.ot-panel-more {
+  color: var(--link);
+  text-decoration: none;
+}
+
+.ot-lang:hover,
+.ot-panel-more:hover {
+  text-decoration: underline;
+}
+
+.ot-where {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--link);
+  cursor: pointer;
+}
+
+.ot-where:hover {
+  text-decoration: underline;
+}
+
+/* In the heading: a chip beside the edit-war marks, tinted so it reads before them */
+
+.ot-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 12px;
+  padding: 2px 10px 2px 3px;
+  border: 1px solid #c9d8f0;
+  border-radius: 999px;
+  background: #eef3fb;
+  font: 500 12px/1.5 var(--sans);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  color: var(--link);
+  vertical-align: 0.2em;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.ot-mark + .war-marks {
+  margin-left: 6px;
+}
+
+.ot-mark:hover {
+  border-color: #a9c1e8;
+  background: #e2ebf8;
+}
+
+.ot-mark.is-open {
+  border-color: var(--link);
+  background: var(--link);
+  color: #fff;
+}
+
+.ot-mark:focus-visible,
+.ot-card button:focus-visible {
+  outline: 2px solid var(--link);
+  outline-offset: 2px;
+}
+
+.ot-mark:focus:not(:focus-visible),
+.ot-card button:focus:not(:focus-visible) {
+  outline: none;
+}
+
+.ot-code {
+  display: inline-grid;
+  place-items: center;
+  min-width: 22px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--link);
+  font: 600 10px/1 var(--sans);
+  letter-spacing: 0.04em;
+  color: #fff;
+}
+
+.ot-mark.is-open .ot-code {
+  background: #fff;
+  color: var(--link);
+}
+
+.war-mode .ot-mark {
+  visibility: hidden;
+}
+
+/* The other language's paragraphs: a card under the section */
+
+.ot-card {
+  clear: both;
+  margin: 4px 0 2.2em;
+  padding: 20px 24px 18px;
+  border: 1px solid var(--rule);
+  border-radius: 14px;
+  background: var(--paper);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 10px 30px -12px rgba(0, 0, 0, 0.12);
+  font-family: var(--sans);
+  animation: ot-in 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes ot-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+
+.ot-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ot-card-source {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12.5px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--ink-3);
+  text-decoration: none;
+}
+
+.ot-card-source:hover {
+  color: var(--link);
+}
+
+.ot-card-close {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin: -4px -8px 0 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+
+.ot-card-close:hover {
+  background: #f1f2f4;
+  color: var(--ink);
+}
+
+.ot-card-close svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}
+
+.body .ot-card-title {
+  margin: 14px 0 0;
+  font: 400 22px/1.25 var(--serif);
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+
+.ot-card-stats {
+  margin: 4px 0 0 !important;
+  font-size: 13px;
+  color: var(--ink-3);
+}
+
+.ot-card-text {
+  position: relative;
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--rule);
+  font: 15px/1.65 var(--serif);
+  color: var(--ink);
+}
+
+.ot-card-text p {
+  margin: 0 0 0.9em;
+}
+
+.ot-card-text.is-collapsed .is-more {
+  display: none;
+}
+
+/* The second paragraph fades out while there are more to show */
+.ot-card-text.is-collapsed {
+  max-height: 22em;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, #000 70%, transparent);
+  mask-image: linear-gradient(to bottom, #000 70%, transparent);
+}
+
+.ot-card-sub {
+  margin: 1.1em 0 0.35em !important;
+  font: 600 11px/1.4 var(--sans);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.ot-card-p:first-child .ot-card-sub {
+  margin-top: 0 !important;
+}
+
+.ot-card-all {
+  margin-top: 4px;
+  padding: 7px 14px;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  background: var(--paper);
+  font: 500 13px var(--sans);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.ot-card-all:hover {
+  background: #f8f9fa;
+}
+
+.ot-card-how {
+  margin: 16px 0 0 !important;
+  padding-top: 12px;
+  border-top: 1px solid var(--rule);
+  font-size: 12px;
+  color: var(--ink-3);
+}

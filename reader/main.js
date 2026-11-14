@@ -48,6 +48,7 @@ if (!version || !summary) {
   document.body.classList.add("is-ready");
   trackActiveSection(doc.toc);
   import("./war-inline.js").then((m) => m.addWarMarkers({ body, id }));
+  import("./tellings.js").then((m) => m.addTellings({ head, body, id }));
   // The article rewrites itself from its first version, with a timeline of its edits and wars at the bottom.
   const start = head.querySelector(".hp-start");
   start.addEventListener("click", async () => {

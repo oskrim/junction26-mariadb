@@ -30,6 +30,10 @@ export const now = () => Math.floor(Date.now() / 60000) * 60;
 
 export const getArticle = (id, at) => get(`/api/article?id=${id}&at=${at}`);
 
+// The article in Finnish, Swedish and English Wikipedia: { languages: [{ lang, name, title, url, words }],
+// sections: [{ section, fi_words, others: { sv|en: { words, paragraphs: [{ section, text }] } } }] }.
+export const getTellings = (id) => get(`/api/tellings?id=${id}`);
+
 // Previews asked for within PREVIEW_WAIT ms go out as one /api/previews request: Explore asks for ~20 at once.
 const PREVIEW_WAIT = 10;
 const PREVIEW_BATCH = 100;

@@ -404,6 +404,41 @@ search the exact-title bonus puts "Talvisota" first anyway, but not "Lapuanliike
 looks better; the switch waits for a check of hybrid search on the full corpus. A lite-model question instead of the large one agrees on 4-10 of the top 10 and is
 also sensible; the large one is slightly better on the natural questions.
 
+## Other tellings: Finnish, Swedish and English side by side
+
+`server/tellings.py` compares an article with its Swedish and English versions in S (linked by `wikidata_id`).
+The reader shows it in the Article view (`reader/tellings.js`): a line under the title when another language is
+much longer ("Swedish Wikipedia has 5× more on this"), and a chip in each section heading that another language
+tells at 2× the length or more ("EN 2.3× more in English"), which opens those paragraphs in a card.
+
+It only adds three tables and only reads `s_article`:
+
+| Table | What it holds | Filled by |
+|---|---|---|
+| `article_language` | each S article's title, address and words (outside tables), per language | `tellings.py languages`, every S article, ~4 s |
+| `passage` | the fi, sv and en texts split into paragraphs, each with a bge-m3 vector (`VECTOR INDEX`) | `tellings.py build <wikidata ids>` |
+| `passage_match` | each sv and en paragraph's closest Finnish paragraph of the same article, and the cosine distance | `build`, with the passages |
+
+```bash
+DB_NAME=wiki uv run --with pymysql python server/tellings.py languages
+DB_NAME=wiki uv run --with torch --with transformers --with pymysql python server/tellings.py build Q130924 Q139549
+DB_NAME=wiki uv run --with pymysql python server/tellings.py show Q139549     # the matches, in the terminal
+```
+
+- `GET /api/tellings?id=<Finnish page id>` returns the languages and, for built articles, the matches per Finnish
+  section. Without the tables it returns empty lists, so the reader shows nothing.
+- Matching compares one article's paragraphs directly (`VEC_DISTANCE_COSINE` over the rows found by the `article`
+  key), not through the vector index, which would search every article and filter afterwards.
+- The distance says which Finnish paragraph is about the same thing, not whether it says the same facts: the
+  Winter War in English had 127 of 145 paragraphs farther than 0.35 from any Finnish one although both cover the
+  same ground. So the reader counts words per section (reliable) and does not claim "only told in English".
+  Finding missing facts and conflicts (Poltava: Finnish says Peter had 45,000 men, English 75,000–80,000) needs
+  an LLM pass over the matched pairs: not built yet; it needs `GEMINI_API_KEY`.
+- Built so far on the local database only: Kalevala, Zachris Topelius, Kesäolympialaiset 1952, Pultavan taistelu,
+  Narvan taistelu, Suomen sisällissota, Talvisota, Kustaa III, Viikinkien hyökkäykset Englantiin (~1,800
+  paragraphs, ~10 min on a laptop CPU). All 7,256 Finnish articles with a pair would be roughly 400–600k
+  paragraphs: hours on a CPU, minutes on the box's GPU.
+
 ## Scale
 
 Measured on the cloud box (22 vCPU, 117 GB RAM, 32 GB buffer pool), database `wiki_full`, 14 November 2026.
