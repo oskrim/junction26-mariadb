@@ -317,19 +317,16 @@ export function learnView({ article }) {
       }`;
   }
 
-  // The sheet is centred; in Read, the chat sits just left of it, and the sheet moves right when there is no room.
+  // The sheet is centred; in Read, the chat sits just left of it and the two are centred together.
   // A narrow window keeps the question box under the lesson instead.
   function layout() {
     // The top bar scrolls away with the article; once it is gone the sheet starts at the top of the window.
     const top = Math.max(document.querySelector(".bar")?.getBoundingClientRect().bottom ?? 0, 0) + EDGE;
     const height = innerHeight - top - TRAY - 4;
-    let w = Math.min(W, innerWidth - EDGE * 2);
-    let left = (innerWidth - w) / 2;
     const side = mode === "read" && innerWidth >= SIDE_MIN;
-    if (side && left < EDGE + SIDE_W + SIDE_GAP) {
-      left = EDGE + SIDE_W + SIDE_GAP;
-      w = Math.min(W, innerWidth - left - EDGE);
-    }
+    const extra = side ? SIDE_W + SIDE_GAP : 0;
+    const w = Math.min(W, innerWidth - EDGE * 2 - extra);
+    const left = (innerWidth - w - extra) / 2 + extra;
     Object.assign(el.sheet.style, { left: `${left}px`, top: `${top}px`, width: `${w}px`, height: `${height}px` });
     el.sheet.classList.toggle("has-side", side);
     el.edit.hidden = !side || el.sheet.hidden;
