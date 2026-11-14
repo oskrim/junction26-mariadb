@@ -105,6 +105,9 @@ export function startHistoryPlay({ id, body, onClose }) {
   };
   requestAnimationFrame(placeNote);
   addEventListener("resize", placeNote);
+  // The layout widens the contents column as playback starts; measure again once it has.
+  document.querySelector(".layout").addEventListener("transitionend", placeNote);
+  setTimeout(placeNote, 600);
   // Under the top bar until it scrolls away.
   const onPageScroll = () => side.style.setProperty("--page-y", `${Math.min(60, scrollY)}px`);
   onPageScroll();
@@ -159,6 +162,7 @@ export function startHistoryPlay({ id, body, onClose }) {
 
     // Clicks and drags on the strip are handled by scrub(), not the strip's own click.
     minimap = createMinimap({ root: $(".hp-map"), edits, wars, onPick: () => {} });
+    colorStrip(wars);
     scrub();
     // The strip takes its zoomed width first, so the swords are spaced out at that width.
     moveMarker(edits[0].time, 0);
@@ -176,6 +180,41 @@ export function startHistoryPlay({ id, body, onClose }) {
     play(0);
   }
 
+  // Where the middle of `time`'s month falls on the strip, from 0 to 1, as the strip draws its bars.
+  const monthOf = (time) => {
+    const d = new Date(time);
+    return d.getUTCFullYear() * 12 + d.getUTCMonth();
+  };
+  const monthCentre = (time) => {
+    const first = monthOf(edits[0].time);
+    return (monthOf(time) - first + 0.5) / (monthOf(edits.at(-1).time) - first + 1);
+  };
+
+  // The strip's bars here: a bar per month as tall as it was busy, green when the article grew that month
+  // and red when it shrank, and each war's month in blue.
+  function colorStrip(wars) {
+    const first = monthOf(edits[0].time);
+    const months = monthOf(edits.at(-1).time) - first + 1;
+    const counts = new Array(months).fill(0);
+    const net = new Array(months).fill(0);
+    for (const e of edits) {
+      counts[monthOf(e.time) - first]++;
+      net[monthOf(e.time) - first] += e.delta;
+    }
+    const max = Math.max(...counts);
+    const bars = counts
+      .map((c, i) => {
+        if (!c) return "";
+        const h = 8 + 72 * Math.sqrt(c / max);
+        return `<rect x="${i + 0.15}" y="${100 - h}" width="0.7" height="${h}" fill="${net[i] >= 0 ? "#8cc4a2" : "#e6a0a0"}"/>`;
+      })
+      .join("");
+    const marks = wars
+      .map((w) => `<rect x="${monthOf(w.start) - first + 0.2}" y="0" width="0.6" height="100" fill="${w.kind === "dispute" ? "#3366cc" : "#9db5e6"}"/>`)
+      .join("");
+    $(".hp-map .minimap-svg").innerHTML = bars + marks;
+  }
+
   function drawSwords(wars) {
     const start = edits[0].time;
     const span = edits.at(-1).time - start;
@@ -183,7 +222,8 @@ export function startHistoryPlay({ id, body, onClose }) {
     const width = row.clientWidth || 800;
     // Wars a few months apart would overlap, so each run of close ones spreads out around its middle.
     const GAP = 17;
-    const want = wars.map((w) => ((w.start - start) / span) * width);
+    // Each sword stands over its month's bar.
+    const want = wars.map((w) => monthCentre(w.start) * width);
     const runs = [];
     want.forEach((x, k) => {
       const last = runs.at(-1);
@@ -223,7 +263,7 @@ export function startHistoryPlay({ id, body, onClose }) {
       for (let k = i + 1; k <= i + 5 && k < frames.length; k++) load(frames[k]);
       const time = frames[i].edit.time;
       // A war starts only once the marker and the road have arrived at it.
-      if (frames[i].war && i > from) {
+      if (frames[i].war) {
         if (travel?.time !== time) travelTo(time, MIN_TRIP / rate);
         if (!(await wait(Math.max(0, travel.end - performance.now()), token))) return;
       }
@@ -1028,6 +1068,7 @@ export function startHistoryPlay({ id, body, onClose }) {
     body.replaceChildren(...saved.body);
     path?.stop();
     removeEventListener("resize", placeNote);
+    document.querySelector(".layout").removeEventListener("transitionend", placeNote);
     removeEventListener("scroll", onPageScroll);
     side.remove();
     document.body.classList.remove("hp-mode");
