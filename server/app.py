@@ -6,12 +6,12 @@ import difflib
 import html
 import json
 import os
-import queue
 import re
 import time
 from datetime import datetime, timezone
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from socketserver import ForkingMixIn
 from urllib.parse import parse_qs, quote, urlparse
 
 import pymysql
@@ -37,36 +37,12 @@ def connect():
     con = pymysql.connect(
         host=os.environ.get("DB_HOST", "127.0.0.1"), port=int(os.environ.get("DB_PORT", 3309)),
         user=os.environ.get("DB_USER", "wiki"), password=os.environ.get("DB_PASSWORD", "wiki"), database="wiki",
-        charset="utf8mb4", cursorclass=pymysql.cursors.DictCursor, autocommit=True,
+        charset="utf8mb4", cursorclass=pymysql.cursors.DictCursor,
         # The server's certificate is self-signed, so the connection is encrypted but not verified.
         ssl={"verify_mode": False} if os.environ.get("DB_SSL") == "1" else None,
     )
     con.cursor().execute("SET time_zone = '+00:00'")
     return con
-
-
-# Connections kept open between requests: opening one takes ~30 ms, more than most queries.
-IDLE = queue.SimpleQueue()
-IDLE_MAX = 16
-
-
-def borrow():
-    try:
-        con = IDLE.get_nowait()
-    except queue.Empty:
-        return connect()
-    try:
-        con.ping(reconnect=False)
-    except pymysql.Error:  # closed by the server; dropping it closes the socket
-        return connect()
-    return con
-
-
-def give_back(con):
-    if IDLE.qsize() < IDLE_MAX:
-        IDLE.put(con)
-    else:
-        con.close()
 
 
 def number(params, name, default=None, kind=int):
@@ -247,6 +223,14 @@ ROUTES = {"/api/articles": articles, "/api/article": article, "/api/history": hi
 POST_ROUTES = {"/api/ask": ask.serve, "/api/learn": learn.serve}
 
 
+class Server(ForkingMixIn, HTTPServer):
+    """A process per request: the History view sends ~90 requests at once, and threads would share one core."""
+    # The proxy opens a connection per request. The default backlog of 5 drops the rest of a burst, and the
+    # client's TCP retries back off for up to a minute.
+    request_queue_size = 256
+    max_children = 64
+
+
 class Handler(BaseHTTPRequestHandler):
     status = "-"
 
@@ -285,12 +269,14 @@ class Handler(BaseHTTPRequestHandler):
         route = ROUTES.get(url.path)
         if not route:
             return self.send(404, "application/json", b'{"error": "not found"}')
-        con = borrow()
         try:
-            status, result = 200, route(con.cursor(), parse_qs(url.query))
+            con = connect()
+            try:
+                status, result = 200, route(con.cursor(), parse_qs(url.query))
+            finally:
+                con.close()
         except BadRequest as error:
             status, result = 400, {"error": str(error)}
-        give_back(con)
         self.send(status, "application/json", json.dumps(result, ensure_ascii=False, default=str).encode())
 
     def send(self, status, kind, body):
@@ -306,7 +292,4 @@ class Handler(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8010))
     print(f"http://127.0.0.1:{port}")
-    # The proxy opens a connection per request, ~90 at once for the History view. The default backlog of 5
-    # drops the rest, and the client's TCP retries back off for up to a minute.
-    ThreadingHTTPServer.request_queue_size = 256
-    ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
+    Server(("127.0.0.1", port), Handler).serve_forever()
