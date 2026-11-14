@@ -1056,6 +1056,16 @@ html.qm-following ::selection {
   animation: rise 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
+/* In the article and in Explore (whose details panel is on the right) the chat tray and its history
+   list sit on the left. */
+body[data-view="article"] .chat-tray,
+body[data-view="article"] .chat-history,
+body[data-view="explore"] .chat-tray,
+body[data-view="explore"] .chat-history {
+  right: auto;
+  left: 12px;
+}
+
 .chat-history ul {
   margin: 0;
   padding: 0;

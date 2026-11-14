@@ -707,13 +707,6 @@ body[data-view="explore"] {
   color: rgb(32 33 34 / 0.35);
 }
 
-/* In Explore the details panel is on the right, so the chat tray and its history list go to the left. */
-body[data-view="explore"] .chat-tray,
-body[data-view="explore"] .chat-history {
-  right: auto;
-  left: 12px;
-}
-
 /* Back: top left of the map, away from the panel (right) and the chat tray (bottom left). */
 .ex-back {
   position: absolute;
