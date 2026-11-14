@@ -27,7 +27,8 @@ export function setUpSearch(box, { onFind = null } = {}) {
 
   function render() {
     const query = input.value.trim();
-    list.hidden = !query;
+    // Results that arrive after the box was left (Enter opened Find, or Escape) stay hidden.
+    list.hidden = !query || document.activeElement !== input;
     list.innerHTML =
       (results.length
         ? results
@@ -67,6 +68,8 @@ export function setUpSearch(box, { onFind = null } = {}) {
   function submit() {
     const query = input.value.trim();
     if (active < 0 && onFind && query) {
+      clearTimeout(timer);
+      request++;
       list.hidden = true;
       input.blur();
       onFind(query);
