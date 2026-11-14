@@ -5,6 +5,7 @@ import * as THREE from "./vendor/three.module.min.js";
 import { MeshoptDecoder } from "./vendor/meshopt_decoder.module.js";
 
 const RADIUS = 0.57; // outer radius of the model, in its own units
+const GAP = 0.004; // half the groove between two pieces, in model units
 
 const VERT = /* glsl */ `
   uniform vec3 uDir;
@@ -12,9 +13,11 @@ const VERT = /* glsl */ `
   void main(){
     vP = position;
     vR = normalMatrix * position;
-    // shrink the piece a hair around its own middle so a groove opens between neighbours
+    // pull every point of the piece the same small distance toward its middle, so an even groove opens
+    // between neighbours: the seams are these real gaps, drawn exactly where the pieces meet
     vec3 c = uDir * ${(RADIUS - 0.012).toFixed(3)};
-    vec3 p = c + (position - c) * 0.996;
+    vec3 off = position - c;
+    vec3 p = position - normalize(off) * min(${GAP.toFixed(4)}, length(off) * 0.5);
     vec4 mv = modelViewMatrix * vec4(p, 1.);
     vView = mv.xyz;
     gl_Position = projectionMatrix * mv;
@@ -42,11 +45,10 @@ const FRAG = /* glsl */ `
       col *= mix(0.84, 1., smoothstep(0., 0.6, facing));
       col += pow(max(dot(reflect(-L, N), V), 0.), 10.) * 0.04;
       vec2 uv = vec2(atan(vP.y, vP.x) / (2. * PI) + 0.5, acos(clamp(vP.z / r, -1., 1.)) / PI);
-      // one grey channel: 0–0.39 is a seam between pieces, 0.39–1 is a letter
+      // one grey channel: 0–0.39 is a seam between pieces, 0.39–1 is a letter. Only the letters are printed:
+      // the seams come from the pieces' own cut edges, where they really are, not from the flat image
       float t = texture2D(uLetters, uv).r;
-      float seam = clamp(t / 0.39, 0., 1.);
       float ink = clamp((t - 0.39) / 0.61, 0., 1.);
-      col = mix(col, col * 0.58, seam * (1. - ink));
       col = mix(col, vec3(0.12, 0.12, 0.13), ink * mix(0.55, 0.95, smoothstep(0.05, 0.5, facing)));
     } else if (r < ${(RADIUS - 0.022).toFixed(3)}) {
       // inside of the shell, seen through the open top
@@ -56,7 +58,7 @@ const FRAG = /* glsl */ `
       // the cut edges of each piece, darker toward the inside like a groove
       float wrap = clamp(dot(Nf, L) * 0.5 + 0.5, 0., 1.);
       float depth = smoothstep(${(RADIUS - 0.025).toFixed(3)}, ${RADIUS.toFixed(3)}, r);
-      col = mix(vec3(0.3), vec3(0.82), wrap) * mix(0.7, 1., depth);
+      col = mix(vec3(0.2), vec3(0.58), wrap) * mix(0.7, 1., depth);
     }
     col += uHover * 0.03;
     gl_FragColor = vec4(col, 1.);

@@ -76,7 +76,7 @@ export const getChange = (revId) => get(`/api/change?rev=${revId}`);
 
 // The loaded articles whose title, then text, contains q: [{ page_id, title, snippet, match }], where match
 // is q's [start, end) in snippet (code points), or null when the snippet is the article's first sentence.
-export const searchArticles = (q) => get(`/api/search?q=${encodeURIComponent(q)}&limit=8`);
+export const searchArticles = (q, limit = 8) => get(`/api/search?q=${encodeURIComponent(q)}&limit=${limit}`);
 
 // Not an API request: turns a [[File:...]] name from the article text into its upload.wikimedia.org
 // thumbnail, 330 px wide (a standard width). Special:FilePath would cost two redirects. Mirrors

@@ -7,7 +7,8 @@ import "./cite-tip.js";
 
 // Chats. Every request from the menu starts a new chat. Open chats are tabs in the tray at the
 // bottom right; closed ones move to History. One window shows the active chat, either floating
-// beside where the request came from (drag it by the header) or docked to the right as a side panel.
+// beside where the request came from (drag it by the header) or, dragged to the right edge, docked there
+// as a side panel.
 
 const W = 480;
 const EDGE = 16;
@@ -21,9 +22,10 @@ function newChatX() {
   return left ? 20 : innerWidth - 20 - Math.min(W, innerWidth - EDGE * 2);
 }
 
-// Panels on the right start 20px below the top bar, like Explore's details panel.
+// Panels start 20px below the top bar, like Explore's details panel. The bar scrolls away with the article, so
+// once it is gone they start 20px below the top of the window.
 function topLine() {
-  return (document.querySelector(".bar")?.getBoundingClientRect().bottom ?? 0) + 21;
+  return Math.max(document.querySelector(".bar")?.getBoundingClientRect().bottom ?? 0, 0) + 21;
 }
 
 export function chatPanel({ article, onClose }) {
@@ -38,7 +40,6 @@ export function chatPanel({ article, onClose }) {
 
   el.close.addEventListener("click", () => closeChat(active));
   el.minimise.addEventListener("click", hide);
-  el.dock.addEventListener("click", () => setDocked(!docked));
   // An empty chat is reused rather than stacking up more blank tabs.
   el.newChat.addEventListener("click", () => show(chats.find((c) => c.turn === 0 && !c.busy) ?? create({ title: "New chat" })));
   el.historyButton.addEventListener("click", () => toggleHistory());
@@ -79,6 +80,17 @@ export function chatPanel({ article, onClose }) {
   });
   el.textarea.addEventListener("input", grow);
   addEventListener("resize", () => !el.panel.hidden && layout());
+  // The top bar slides in and out of view while scrolling near the top; the panel stays clear of it.
+  let topSeen = topLine();
+  addEventListener(
+    "scroll",
+    () => {
+      if (el.panel.hidden || topLine() === topSeen) return;
+      topSeen = topLine();
+      layout();
+    },
+    { passive: true },
+  );
   dragByHeader();
   renderTray();
 
@@ -155,48 +167,57 @@ export function chatPanel({ article, onClose }) {
       scrollDown(chat.log);
     };
 
-    const { stream, attachment } = (mode === "learn" ? learn : respond)({ mode, prompt, context, article, turn: chat.turn, history: (chat.history ??= []), onStep });
-    chat.turn++;
     let text = "";
-    for await (const piece of stream) {
-      text += piece;
-      steps.fold();
+    // However the answer ends, the chat takes the next message: a broken stream must not leave it busy for good.
+    try {
+      const { stream, attachment } = (mode === "learn" ? learn : respond)({ mode, prompt, context, article, turn: chat.turn, history: (chat.history ??= []), onStep });
+      chat.turn++;
+      for await (const piece of stream) {
+        text += piece;
+        steps.fold();
+        reply.classList.remove("is-thinking");
+        body.innerHTML = paragraphs(text);
+        scrollDown(chat.log);
+      }
+      reply.classList.add("is-done");
+      const shown = await attachment;
+      if (shown?.type === "sources" || shown?.type === "quotes") body.innerHTML = citeLinks(body.innerHTML, shown);
+      if (shown) {
+        reply.insertAdjacentHTML("beforeend", renderAttachment(shown));
+        reply.querySelectorAll("[data-model]").forEach(mountModel);
+        scrollDown(chat.log);
+      }
+      if (mode === "learn" && text.trim()) {
+        voiceBar(reply, {
+          article,
+          autoplay: true,
+          context: {
+            answer: text,
+            article: document.querySelector(".body")?.innerText.slice(0, 6000) ?? "",
+            sources: (shown?.items ?? []).map((s) => ({ title: s.title, why: s.why, text: s.text })),
+          },
+          say: (role, spoken) => {
+            chat.log.insertAdjacentHTML(
+              "beforeend",
+              role === "user"
+                ? `<div class="msg msg-user msg-voice"><p class="msg-bubble">${escape(spoken)}</p></div>`
+                : `<div class="msg msg-ai msg-voice is-done"><div class="msg-text">${paragraphs(spoken)}</div></div>`,
+            );
+            (chat.history ??= []).push({ role: role === "user" ? "user" : "ai", text: spoken });
+            scrollDown(chat.log, true);
+          },
+        });
+        scrollDown(chat.log);
+      }
+    } catch (error) {
+      console.error("chat answer failed", error);
       reply.classList.remove("is-thinking");
-      body.innerHTML = paragraphs(text);
-      scrollDown(chat.log);
+      reply.classList.add("is-done");
+      body.innerHTML = paragraphs(`${text}${text ? "\n\n" : ""}Sorry, the answer stopped. Try asking again.`);
+    } finally {
+      chat.busy = false;
+      renderTray();
     }
-    reply.classList.add("is-done");
-    const shown = await attachment;
-    if (shown?.type === "sources" || shown?.type === "quotes") body.innerHTML = citeLinks(body.innerHTML, shown);
-    if (shown) {
-      reply.insertAdjacentHTML("beforeend", renderAttachment(shown));
-      reply.querySelectorAll("[data-model]").forEach(mountModel);
-      scrollDown(chat.log);
-    }
-    if (mode === "learn" && text.trim()) {
-      voiceBar(reply, {
-        article,
-        autoplay: true,
-        context: {
-          answer: text,
-          article: document.querySelector(".body")?.innerText.slice(0, 6000) ?? "",
-          sources: (shown?.items ?? []).map((s) => ({ title: s.title, why: s.why, text: s.text })),
-        },
-        say: (role, spoken) => {
-          chat.log.insertAdjacentHTML(
-            "beforeend",
-            role === "user"
-              ? `<div class="msg msg-user msg-voice"><p class="msg-bubble">${escape(spoken)}</p></div>`
-              : `<div class="msg msg-ai msg-voice is-done"><div class="msg-text">${paragraphs(spoken)}</div></div>`,
-          );
-          (chat.history ??= []).push({ role: role === "user" ? "user" : "ai", text: spoken });
-          scrollDown(chat.log, true);
-        },
-      });
-      scrollDown(chat.log);
-    }
-    chat.busy = false;
-    renderTray();
   }
 
   // Past chats arrive as plain messages; their log is built the first time they're opened.
@@ -218,6 +239,8 @@ export function chatPanel({ article, onClose }) {
 
   function renderTray() {
     const open = !el.panel.hidden;
+    // While an answer is still coming, the send button rests: the chat takes the next message after it.
+    el.panel.classList.toggle("is-busy", Boolean(active?.busy));
     el.tabs.innerHTML = chats
       .map(
         (c) => `
@@ -266,7 +289,6 @@ export function chatPanel({ article, onClose }) {
 
   function layout() {
     el.panel.classList.toggle("is-docked", docked);
-    el.dock.setAttribute("aria-label", docked ? "Float" : "Dock to side");
     if (docked) {
       const w = Math.min(SIDE_W, innerWidth - 24);
       const top = topLine();
@@ -428,10 +450,6 @@ function build() {
       <h2 class="chat-title">New chat</h2>
       <div class="chat-tools">
         <button type="button" class="chat-tool" data-act="minimise" aria-label="Minimise"><svg viewBox="0 0 16 16"><path d="M4 8.5h8" /></svg></button>
-        <button type="button" class="chat-tool" data-act="dock" aria-label="Dock to side">
-          <svg class="icon-dock" viewBox="0 0 16 16"><rect x="2.5" y="3" width="11" height="10" rx="2" /><path d="M9.5 3v10" /></svg>
-          <svg class="icon-float" viewBox="0 0 16 16"><rect x="2.5" y="3" width="11" height="10" rx="2" /><rect x="7.5" y="7.5" width="4" height="3" rx="0.8" /></svg>
-        </button>
         <button type="button" class="chat-tool" data-act="close" aria-label="Close"><svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" /></svg></button>
       </div>
     </header>
@@ -439,7 +457,6 @@ function build() {
     <form class="chat-compose">
       <textarea rows="1" placeholder="Ask a follow-up…" aria-label="Message"></textarea>
       <div class="chat-compose-row">
-        <button type="button" class="chat-tool" aria-label="Add"><svg viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9" /></svg></button>
         <button type="submit" class="chat-send" aria-label="Send"><svg viewBox="0 0 16 16"><path d="M8 13V3.5M4 7.5l4-4 4 4" /></svg></button>
       </div>
     </form>`;
@@ -468,7 +485,6 @@ function build() {
     title: panel.querySelector(".chat-title"),
     close: panel.querySelector('[data-act="close"]'),
     minimise: panel.querySelector('[data-act="minimise"]'),
-    dock: panel.querySelector('[data-act="dock"]'),
     logs: panel.querySelector(".chat-logs"),
     compose: panel.querySelector(".chat-compose"),
     textarea: panel.querySelector("textarea"),

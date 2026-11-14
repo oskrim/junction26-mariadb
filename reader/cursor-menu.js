@@ -23,7 +23,7 @@ const MODES = [
     id: "find",
     label: "Find",
     key: "f",
-    placeholder: "Find in this article's history…",
+    placeholder: "Find articles: a name, a word or an idea…",
     fallback: "Where else does this appear?",
     icon: `<circle cx="7" cy="7" r="4" /><path d="M10 10l3.5 3.5" />`,
   },
@@ -137,7 +137,8 @@ export function cursorMenu({ root, onSubmit }) {
     e.preventDefault();
     const mode = chosen;
     const from = el.bar.getBoundingClientRect();
-    onSubmit({ mode: mode.id, label: mode.label, prompt: el.input.value.trim() || mode.fallback, context: paint?.text ?? null, from });
+    const typed = el.input.value.trim();
+    onSubmit({ mode: mode.id, label: mode.label, prompt: typed || mode.fallback, typed, context: paint?.text ?? null, from });
     close({ keepPaint: true });
   });
 
@@ -328,6 +329,8 @@ export function cursorMenu({ root, onSubmit }) {
       rect.setAttribute("rx", Math.min(w, h) / 2);
       el.buttons[i].style.transform = `translate(${b.x.v - widths[i] / 2}px, ${b.y.v - BLOB / 2}px)`;
       el.buttons[i].classList.toggle("is-out", b.phase === "out");
+      // The crisp pill takes over from the liquid in the same frame, so only one shadow is ever drawn.
+      el.buttons[i].classList.toggle("is-crisp", crisp);
     });
 
     el.bar.style.transform = `translate(${bar.x}px, ${bar.y}px)`;
@@ -361,10 +364,10 @@ function build() {
           <feComposite in2="ring-a" operator="in" result="ring" />
           <feGaussianBlur in="shape" stdDeviation="3" />
           <feOffset dy="2" result="s2-o" />
-          <feFlood flood-color="#000" flood-opacity="0.06" />
+          <feFlood flood-color="#000" flood-opacity="0.05" />
           <feComposite in2="s2-o" operator="in" result="s2" />
           <feGaussianBlur in="shape" stdDeviation="16" />
-          <feOffset dy="6" result="s3-o" />
+          <feOffset dy="8" result="s3-o" />
           <feFlood flood-color="#000" flood-opacity="0.09" />
           <feComposite in2="s3-o" operator="in" result="s3" />
           <feMerge>

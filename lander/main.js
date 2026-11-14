@@ -62,7 +62,7 @@ renderLang();
 // ── box grows only when the text wraps
 function grow() {
   q.style.height = "auto";
-  q.style.height = `${Math.max(q.scrollHeight, 42)}px`;
+  q.style.height = `${Math.max(q.scrollHeight, 36)}px`;
   send.disabled = !q.value.trim();
 }
 

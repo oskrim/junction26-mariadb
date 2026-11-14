@@ -125,8 +125,6 @@ html.qm-following ::selection {
   border: 0;
   border-radius: 999px;
   background: transparent;
-  box-shadow: none;
-  transition: background-color 120ms ease, box-shadow 120ms ease;
   color: var(--ink);
   font: 500 13px/1 var(--sans);
   white-space: nowrap;
@@ -172,10 +170,10 @@ html.qm-following ::selection {
   font: 500 11px/1 var(--sans);
 }
 
-.qm-btn.is-out {
+/* Its liquid shape has the same shadow (the qm-goo filter), so the swap does not show. */
+.qm-btn.is-crisp {
   background: var(--liquid);
   box-shadow: var(--shadow-float);
-  transition-delay: calc(var(--i) * 40ms + 110ms);
 }
 
 .qm-btn.is-out > * {
@@ -184,9 +182,8 @@ html.qm-following ::selection {
   transition-delay: calc(var(--i) * 40ms + 110ms);
 }
 
-.qm[data-state="pinned"] .qm-btn.is-out:hover {
+.qm[data-state="pinned"] .qm-btn.is-crisp:hover {
   background: #f7f8fa;
-  transition-delay: 0ms;
 }
 
 /* Prompt bar: the chosen blob stretches to this shape; the bar fades in on top of it. */
@@ -291,14 +288,6 @@ html.qm-following ::selection {
   box-shadow: 0 0 0 2px var(--link), 0 8px 32px rgba(0, 0, 0, 0.12);
 }
 
-.chat .icon-float,
-.chat.is-docked .icon-dock {
-  display: none;
-}
-
-.chat.is-docked .icon-float {
-  display: block;
-}
 
 .chat-title {
   margin: 0;
@@ -846,6 +835,11 @@ html.qm-following ::selection {
 
 .chat-send:hover {
   background: var(--chip);
+}
+
+.chat.is-busy .chat-send {
+  opacity: 0.35;
+  pointer-events: none;
 }
 
 .chat-log[hidden] {

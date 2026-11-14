@@ -62,24 +62,37 @@ a {
   text-decoration: none;
 }
 
+/* The top bar's search: a white pill with a hairline ring, like the Find palette and the home page's box. */
 .search {
   display: flex;
   align-items: center;
-  gap: 8px;
-  width: 360px;
-  height: 34px;
-  padding: 0 12px;
-  border: 1px solid var(--rule);
+  gap: 9px;
+  width: 380px;
+  height: 36px;
+  padding: 0 7px 0 13px;
   border-radius: 999px;
-  color: var(--ink-3);
+  background: #fff;
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 0.08), 0 1px 2px rgb(0 0 0 / 0.04);
+  color: var(--ink-2);
+  cursor: text;
+  transition: box-shadow 160ms ease;
+}
+
+.search:hover {
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 0.12), 0 1px 2px rgb(0 0 0 / 0.04);
+}
+
+.search:focus-within {
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 0.14), 0 6px 20px rgb(0 0 0 / 0.07);
 }
 
 .search svg {
-  width: 14px;
-  height: 14px;
+  flex: none;
+  width: 16px;
+  height: 16px;
   fill: none;
   stroke: currentColor;
-  stroke-width: 1.4;
+  stroke-width: 1.5;
   stroke-linecap: round;
 }
 
@@ -97,6 +110,63 @@ a {
   color: var(--ink-3);
 }
 
+.search input::-webkit-search-cancel-button {
+  appearance: none;
+}
+
+/* "/" focuses the box; the hint steps aside while typing. */
+.search-key {
+  flex: none;
+  display: grid;
+  place-items: center;
+  min-width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  box-shadow: inset 0 0 0 1px #e1e2e4;
+  color: var(--ink-3);
+  font: 500 12px/1 var(--sans);
+}
+
+.search:focus-within .search-key,
+.search.has-text .search-key {
+  display: none;
+}
+
+/* With words in the box, an arrow says Enter searches; it does the same as Enter. */
+.search-go {
+  flex: none;
+  display: none;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--ink);
+  color: #fff;
+  cursor: pointer;
+  transition: transform 120ms ease, background 120ms ease;
+}
+
+.search-go:hover {
+  background: #000;
+}
+
+.search-go:active {
+  transform: scale(0.94);
+}
+
+.search.has-text .search-go {
+  display: grid;
+}
+
+.search-go svg {
+  width: 13px;
+  height: 13px;
+  stroke-width: 1.8;
+  stroke-linejoin: round;
+}
+
 .search {
   position: relative;
 }
@@ -109,26 +179,66 @@ a {
   width: 360px;
   max-width: calc(100vw - 32px);
   margin: 0;
-  padding: 4px;
+  padding: 6px;
   list-style: none;
   background: var(--paper);
-  border: 1px solid var(--rule);
-  border-radius: 8px;
-  box-shadow: 0 16px 40px -16px rgb(32 33 34 / 0.24), 0 2px 6px rgb(32 33 34 / 0.05);
+  border-radius: 16px;
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 0.07), 0 4px 12px rgb(0 0 0 / 0.04), 0 24px 64px rgb(0 0 0 / 0.12);
   font-family: var(--sans);
 }
 
+/* Rows like the Find palette's (find-view.css): a title and one grey line, the marked one grey. */
 .search-results li {
-  display: grid;
-  gap: 2px;
-  padding: 8px 10px;
-  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 10px;
+  border-radius: 10px;
   cursor: pointer;
 }
 
 .search-results li:hover,
 .search-results li[aria-selected="true"] {
-  background: #f0f1f3;
+  background: #f3f3f3;
+}
+
+.search-text {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+/* An article's picture, or its first letter until there is one (pictures.js). Find uses the same tiles. */
+.pic {
+  position: relative;
+  flex: none;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: hsl(var(--hue) 30% 94%);
+  color: hsl(var(--hue) 25% 45%);
+  font-family: var(--serif);
+}
+
+.pic img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  transition: opacity 200ms ease;
+}
+
+.pic.has-image img {
+  opacity: 1;
+}
+
+.search-pic {
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  font-size: 15px;
 }
 
 .search-title {
@@ -138,13 +248,37 @@ a {
 }
 
 .search-snippet {
-  display: -webkit-box;
   overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  font-size: 12px;
-  line-height: 1.4;
+  font-size: 12.5px;
+  line-height: 1.35;
+  color: var(--ink-3);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.search-snippet b {
   color: var(--ink-2);
+}
+
+.search-results .search-all {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 4px;
+  border-top: 1px solid #f0f0f0;
+  border-radius: 0 0 10px 10px;
+  color: var(--ink-2);
+  font-size: 13px;
+}
+
+.search-all kbd {
+  display: grid;
+  place-items: center;
+  min-width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  box-shadow: inset 0 0 0 1px #e1e2e4;
+  font: 500 12px/1 var(--sans);
 }
 
 .search-results .search-none {
@@ -753,6 +887,10 @@ sup.ref a:hover {
 
   .search {
     width: 160px;
+  }
+
+  .search-key {
+    display: none;
   }
 
   .head {
