@@ -370,7 +370,7 @@ body[data-view="explore"] {
 }
 
 .ex-panel-media {
-  height: 190px;
+  height: 160px;
   background: #eceef1;
 }
 
@@ -654,4 +654,31 @@ body[data-view="explore"] {
 .ex-card.is-leaving {
   opacity: 0 !important;
   pointer-events: none;
+}
+
+/* Summary in the panel: four lines, with a button for the rest */
+
+.ex-extract.is-clamped {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+}
+
+.ex-more {
+  margin-top: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: 500 13px var(--sans);
+  color: var(--link);
+  cursor: pointer;
+}
+
+.ex-more:hover {
+  color: var(--link-hover);
+}
+
+.ex-more[hidden] {
+  display: none;
 }

@@ -699,7 +699,7 @@ export async function mountExplore(root, { id }) {
         <h3>${node.title}</h3>
         ${isCenter ? `<p class="ex-sub">${summary}</p>` : `<p class="ex-relation">${relation(n)}</p>`}
         ${added ? `<p class="ex-added">Added ${added} of its linked articles around it. Click one to keep going.</p>` : ""}
-        ${p?.extract ? `<p class="ex-extract">${p.extract}</p>` : ""}
+        ${p?.extract ? `<p class="ex-extract is-clamped">${p.extract}</p><button class="ex-more" type="button" hidden>Show more</button>` : ""}
         <dl class="ex-stats">
           <div><dt>Versions</dt><dd>${article.versions.toLocaleString("en-US")}</dd></div>
           <div><dt>Written</dt><dd>${new Date(article.first * 1000).getUTCFullYear()}</dd></div>
@@ -713,6 +713,16 @@ export async function mountExplore(root, { id }) {
     panel.classList.add("is-open");
     const close = panel.querySelector(".ex-close");
     if (close) close.onclick = deselect;
+    // Long summaries start at four lines, so the numbers and buttons stay in view.
+    const extract = panel.querySelector(".ex-extract");
+    const more = panel.querySelector(".ex-more");
+    if (extract && extract.scrollHeight > extract.clientHeight + 2) {
+      more.hidden = false;
+      more.onclick = () => {
+        const open = extract.classList.toggle("is-clamped") === false;
+        more.textContent = open ? "Show less" : "Show more";
+      };
+    }
     const recenter = panel.querySelector("[data-act=center]");
     if (recenter) recenter.onclick = () => exploreFrom(n);
     const { version } = await getArticle(n, now);
