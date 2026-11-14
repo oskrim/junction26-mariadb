@@ -15,6 +15,11 @@ const GAP = 12;
 const TRAY = 60;
 const SIDE_W = 420;
 
+// Panels on the right start 20px below the top bar, like Explore's details panel.
+function topLine() {
+  return (document.querySelector(".bar")?.getBoundingClientRect().bottom ?? 0) + 21;
+}
+
 export function chatPanel({ article, onClose }) {
   const el = build();
   document.body.append(el.panel, el.tray, el.history);
@@ -94,7 +99,7 @@ export function chatPanel({ article, onClose }) {
     el.title.textContent = chat.title;
     const wasHidden = el.panel.hidden;
     el.panel.hidden = false;
-    if (!docked && (from || !place)) place = from ? spotNear(from, avoid) : spotNear(el.tray.getBoundingClientRect());
+    if (!docked && (from || !place)) place = from ? spotNear(from, avoid) : { x: innerWidth - 20 - floatSize().w, y: topLine() };
     layout();
     if (!docked && from) growFrom(from);
     else if (wasHidden) popIn();
@@ -255,7 +260,8 @@ export function chatPanel({ article, onClose }) {
     el.dock.setAttribute("aria-label", docked ? "Float" : "Dock to side");
     if (docked) {
       const w = Math.min(SIDE_W, innerWidth - 24);
-      Object.assign(el.panel.style, { left: `${innerWidth - 12 - w}px`, top: "12px", width: `${w}px`, height: `${innerHeight - 12 - TRAY}px` });
+      const top = topLine();
+      Object.assign(el.panel.style, { left: `${innerWidth - 20 - w}px`, top: `${top}px`, width: `${w}px`, height: `${innerHeight - top - TRAY}px` });
     } else {
       const { w, h } = floatSize();
       const x = clamp(place.x, EDGE, innerWidth - EDGE - w);
