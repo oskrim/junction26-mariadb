@@ -18,7 +18,7 @@ const ROAD = 30; // half the road's width once the article is at its longest
 const KERB = 26; // gap between the road's edge and the blocks
 const BLOCK_W = 46;
 const BLOCK_D = 56;
-const STEP_Z = 520; // road between two stops; twice that inside a war, so the fight has room
+const STEP_Z = 520; // road between two stops; a little more inside a war, so the fight has room
 const SWORD = 150; // swords sign height above the road
 const GRID = 340; // floor grid spacing
 
@@ -30,7 +30,7 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
   const inWar = new Map();
   for (const war of wars) for (const e of war.edits) inWar.set(e.index, war);
   const stopZ = [0];
-  for (let k = 1; k < stops.length; k++) stopZ.push(stopZ[k - 1] + (inWar.has(stops[k]) ? 2 : 1) * STEP_Z);
+  for (let k = 1; k < stops.length; k++) stopZ.push(stopZ[k - 1] + (inWar.has(stops[k]) ? 1.3 : 1) * STEP_Z);
   const z = new Float64Array(edits.length);
   for (let k = 0; k < stops.length; k++) {
     const from = k ? stops[k - 1] : 0;
@@ -59,7 +59,8 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
       from: to,
       z0: stopZ[k] - BLOCK_D / 2,
       z1: stopZ[k] + BLOCK_D / 2,
-      side: k % 2 ? 1 : -1,
+      // In a war each fighter keeps to their own side of the road.
+      side: [-1, 1][inWar.get(to)?.fighters.indexOf(e.user)] ?? (k % 2 ? 1 : -1),
       changed,
       h: Math.min(260, 14 + 1.5 * Math.sqrt(changed)),
       color: reverts ? [0, 62, 58] : net < -100 ? [0, 45, 78] : userColor(e.user, e.kind),
@@ -521,6 +522,12 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
 }
 
 // Each named editor keeps one soft color; anonymous editors are grey and bots a cool grey.
+// The editor's color as CSS, as their disc on the road shows it: for the text cursor that types for them.
+export function editorColor(user, kind) {
+  const [h, sat, light] = userColor(user, kind);
+  return `hsl(${h} ${Math.max(sat, 10)}% ${Math.max(18, light - 30)}%)`;
+}
+
 function userColor(user, kind) {
   if (kind === "anonymous") return [210, 4, 70];
   if (kind === "bot") return [210, 14, 64];

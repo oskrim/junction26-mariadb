@@ -5,7 +5,8 @@ import { formatDate } from "./history-cards.js";
 import { analyzeHistory, findEditWars, parseRowStart, pickMilestones } from "./history-model.js";
 import { loadMath } from "./math.js";
 import { createMinimap } from "./minimap.js";
-import { createStoryPath } from "./story-path.js";
+import { createStoryPath, editorColor } from "./story-path.js";
+import { FIGHTER_COLORS } from "./timeline3d.js";
 import { closeWar, playWar, warHeading } from "./war-inline.js";
 import { renderWikitext } from "./wikitext.js";
 
@@ -15,7 +16,12 @@ const PAUSE = `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 3h2.4v1
 const AGAIN = `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8a4.5 4.5 0 1 0 1.4-3.3M4.5 2v3h3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 // Milliseconds at 1×: the pause after each version, longer where a war starts; a paragraph opening or
 // closing; and how long a changed paragraph shows its new words.
-const STEP = 500;
+const STEP = 300;
+const ROUND_HOLD = 1400;
+// Rounds of a war shown at most, and how fast ordinary versions and war rounds play, at 1×.
+const ROUNDS = 10;
+const FAST = 2;
+const SLOW = 0.75;
 const WAR_HOLD = 2600;
 const GROW = 700;
 const SHUT = 420;
@@ -81,6 +87,8 @@ export function startHistoryPlay({ id, body, onClose }) {
   let playing = true;
   let looping = false;
   let speed = 1;
+  // Playback speed for the version on screen: the article's ordinary growth goes quickly, edit wars slowly.
+  let rate = 1;
   let run = 0;
   let closed = false;
   let shown = null;
@@ -100,13 +108,15 @@ export function startHistoryPlay({ id, body, onClose }) {
     edits = analyzeHistory(await getHistory(id));
     const wars = findEditWars(edits);
     const picked = new Map(pickMilestones(edits, wars).map((e) => [e.index, { edit: e }]));
-    // Each war gets three stops: just before it, so the next stop shows only the contested edit and the
-    // page goes to where the fight is; the contested edit; and how it ended.
+    // Each war is played round by round: a stop just before it, so the first round shows only the
+    // contested edit and the page goes to where the fight is; then up to ROUNDS of its edits that were
+    // undone or undid, evenly picked, ending with how it ended.
     for (const war of wars) {
       const start = edits[war.edits[0].index];
       if (start.index > 0) picked.set(start.index - 1, { edit: edits[start.index - 1] });
-      picked.set(start.index, { edit: start, war });
-      picked.set(war.edits.at(-1).index, { edit: war.edits.at(-1), ended: war });
+      const moves = war.edits.filter((e, k) => !k || k === war.edits.length - 1 || e.revertsTo !== null || e.undoneBy !== null);
+      const rounds = moves.length <= ROUNDS ? moves : Array.from({ length: ROUNDS }, (_, k) => moves[Math.round((k * (moves.length - 1)) / (ROUNDS - 1))]);
+      rounds.forEach((e, k) => picked.set(e.index, { edit: e, round: war, n: k + 1, of: rounds.length, ...(k ? {} : { war }) }));
     }
     picked.set(edits.length - 1, { edit: edits.at(-1) });
     frames = [...picked.values()].sort((a, b) => a.edit.index - b.edit.index);
@@ -175,14 +185,14 @@ export function startHistoryPlay({ id, body, onClose }) {
     const token = ++run;
     looping = true;
     for (let i = from; i < frames.length; i++) {
-      for (let k = i + 1; k <= i + 3 && k < frames.length; k++) load(frames[k]);
+      for (let k = i + 1; k <= i + 5 && k < frames.length; k++) load(frames[k]);
       const time = frames[i].edit.time;
-      const hold = (frames[i].war ? WAR_HOLD : STEP) / speed;
+      const hold = () => (frames[i].war ? WAR_HOLD : frames[i].round ? ROUND_HOLD : STEP) / rate;
       // While a version is written, the marker and the road travel to it: as soon as it knows how long
       // its writing will take, the trip starts, timed to arrive as the writing and the pause after it end.
-      await show(i, token, true, (ms) => travelTo(time, ms + hold));
+      await show(i, token, true, (ms) => travelTo(time, ms + hold()));
       if (token !== run) return;
-      if (travel?.time !== time) travelTo(time, hold);
+      if (travel?.time !== time) travelTo(time, hold());
       const waited = await wait(Math.max(0, travel.end - performance.now()), token);
       if (!waited) return;
     }
@@ -269,8 +279,26 @@ export function startHistoryPlay({ id, body, onClose }) {
     $(".hp-date").textContent = formatDate(parseRowStart(version.row_start));
     $(".hp-who").innerHTML = `${escape(censor(version.user))} <span>· version ${(frame.edit.index + 1).toLocaleString("en-US")} of ${edits.length.toLocaleString("en-US")}</span>`;
     if (!frame.war && announced && (frame.edit.time > announced.end || frame.edit.time < announced.start)) announce(null);
+    rate = speed * (frame.round ? SLOW : FAST);
+    showRound(frame);
+    // In a war the fighters type in their own colors, and an undo says so.
+    const fighter = frame.round?.fighters.indexOf(frame.edit.user) ?? -1;
+    typist = {
+      name: `${censor(version.user)}${frame.round && frame.edit.revertsTo !== null ? " · undo" : ""}`,
+      color: fighter === 0 || fighter === 1 ? FIGHTER_COLORS[fighter] : editorColor(frame.edit.user, frame.edit.kind),
+    };
     await render(version, renderMath, token, animate, onPlan);
-    if (frame.war && token === run && !closed) announce(frame.war);
+    if (token !== run || closed) return;
+    if (frame.war) announce(frame.war);
+    showRound(frame);
+  }
+
+  // The war note counts the rounds as they are played.
+  function showRound(frame) {
+    if (!frame.round || announced !== frame.round) return;
+    const round = $(".hp-war-round");
+    if (round) round.textContent = `round ${frame.n} of ${frame.of}`;
+    if (frame.n > 1) $(".hp-war b").textContent = frame.round.kind === "dispute" ? "Edit war" : "Vandalism fought off";
   }
 
   function moveMarker(time, ms, easing = "linear") {
@@ -382,6 +410,8 @@ export function startHistoryPlay({ id, body, onClose }) {
   // change at the same time as the last one, so a version never takes too long.
   // The paragraph the last version's visit went to: where a fight that breaks out is marked.
   let visited = null;
+  // Who the cursor types for: the version's editor, named on the cursor in their color from the road.
+  let typist = null;
 
   async function render(version, renderMath, token, animate, onPlan) {
     visited = null;
@@ -394,7 +424,7 @@ export function startHistoryPlay({ id, body, onClose }) {
     // A version that replaced most of the article fades over instead.
     if (!shown || (changed > 8 && changed > blocks.length * 0.6)) {
       const swap = () => body.replaceChildren(...blocks.map((b) => b.el));
-      onPlan(500 / speed);
+      onPlan(500 / rate);
       if (animate && shown) await fadeOver(swap);
       else swap();
       shown = blocks;
@@ -453,7 +483,7 @@ export function startHistoryPlay({ id, body, onClose }) {
     const ordered = places.filter((p) => visits.has(p));
     // About how long the visit will take, so the road can be timed to it.
     const visitMs = (p) => 500 + (typeable(p) ? Math.min(QUOTA, typingLetters(p)) * PER_LETTER + SETTLE : GROW);
-    onPlan((animate ? ordered.reduce((sum, p) => sum + visitMs(p), 0) : 0) / speed);
+    onPlan((animate ? ordered.reduce((sum, p) => sum + visitMs(p), 0) : 0) / rate);
     for (const place of places) if (!visits.has(place)) applyQuietly(place, animate && !place.quiet);
     for (const place of ordered) {
       if (!animate || token !== run || closed) {
@@ -479,7 +509,7 @@ export function startHistoryPlay({ id, body, onClose }) {
   // A place the page doesn't visit changes where it is: new paragraphs open, changed ones are swapped
   // with a soft highlight, cut ones close. Without `animated`, all at once.
   function applyQuietly(place, animated) {
-    const ms = (n) => (animated ? n / speed : 0);
+    const ms = (n) => (animated ? n / rate : 0);
     for (const el of place.adds) {
       el.hidden = false;
       for (const k of Object.keys(CLOSED)) el.style[k] = "";
@@ -502,14 +532,14 @@ export function startHistoryPlay({ id, body, onClose }) {
   // the old words a letter at a time and typing the new ones, one change after another. Paragraphs then
   // settle into the article's own text, links and all.
   async function applyTyped(place, token) {
-    for (const el of place.removes) await openUp(el, el.offsetHeight, SHUT / speed, 0).then(() => el.remove());
+    for (const el of place.removes) await openUp(el, el.offsetHeight, SHUT / rate, 0).then(() => el.remove());
     const jobs = [];
     for (const el of place.adds) {
       for (const k of Object.keys(CLOSED)) el.style[k] = "";
       el.hidden = false;
       if (!prose(el)) {
         el.classList.add("hp-added");
-        await openUp(el, 0, GROW / speed);
+        await openUp(el, 0, GROW / rate);
         continue;
       }
       const draft = blank(el);
@@ -537,14 +567,14 @@ export function startHistoryPlay({ id, body, onClose }) {
       job.draft.replaceWith(job.next);
       job.next.classList.add("hp-added");
       job.draft = null;
-      openUp(job.next, 0, GROW / speed);
+      openUp(job.next, 0, GROW / rate);
     }
-    if (jobs.length) await wait(SETTLE / speed, token);
+    if (jobs.length) await wait(SETTLE / rate, token);
     for (const { draft, next } of jobs) {
       if (!draft?.isConnected) continue;
       const from = draft.offsetHeight;
       draft.replaceWith(next);
-      openUp(next, from, SHUT / speed);
+      openUp(next, from, SHUT / rate);
     }
   }
 
@@ -553,6 +583,13 @@ export function startHistoryPlay({ id, body, onClose }) {
   function typeInto(el, ops, quota, token) {
     const caret = document.createElement("span");
     caret.className = "hp-caret";
+    if (typist) {
+      caret.style.setProperty("--c", typist.color);
+      const tag = document.createElement("span");
+      tag.className = "hp-caret-name";
+      tag.textContent = typist.name;
+      caret.append(tag);
+    }
     const parts = [];
     for (const op of ops) {
       if (op.keep) {
@@ -584,7 +621,7 @@ export function startHistoryPlay({ id, body, onClose }) {
           finish();
           return resolve();
         }
-        if (playing) budget += (now - last) * speed;
+        if (playing) budget += (now - last) * rate;
         last = now;
         if (quota.left <= 0) {
           finish(k);
@@ -655,7 +692,7 @@ export function startHistoryPlay({ id, body, onClose }) {
       return;
     }
     const from = scrollY;
-    const duration = (380 + Math.min(620, distance * 0.35)) / speed;
+    const duration = (380 + Math.min(620, distance * 0.35)) / rate;
     const t0 = performance.now();
     await new Promise((resolve) => {
       const step = (now) => {
@@ -674,7 +711,7 @@ export function startHistoryPlay({ id, body, onClose }) {
   async function fadeOver(change) {
     const column = document.querySelector(".layout .column");
     // A second fade can cancel this one; the change still happens.
-    const fade = (from, to, ms) => column.animate([{ opacity: from }, { opacity: to }], { duration: ms / speed, fill: "forwards" }).finished.catch(() => {});
+    const fade = (from, to, ms) => column.animate([{ opacity: from }, { opacity: to }], { duration: ms / rate, fill: "forwards" }).finished.catch(() => {});
     await fade(1, 0.08, 180);
     change();
     await fade(0.08, 1, 320);
@@ -696,7 +733,7 @@ export function startHistoryPlay({ id, body, onClose }) {
     note.innerHTML = `
       <span class="hp-war-icon">${SWORDS}</span>
       <span><b>${war.kind === "dispute" ? "Edit war breaks out" : "Vandalism fought off"}</b>
-        ${war.section ? `over “${escape(war.section)}”` : ""} · ${escape(a)} vs ${escape(b)} · ${war.reverts} reverts</span>
+        ${war.section ? `over “${escape(war.section)}”` : ""} · ${escape(a)} vs ${escape(b)} · <span class="hp-war-round"></span></span>
       ${heading ? `<button type="button" class="hp-watch">Watch the fight</button>` : ""}`;
     note.hidden = false;
     note.classList.remove("is-new");

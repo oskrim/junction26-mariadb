@@ -423,8 +423,8 @@ def search(cur, params):
     if not words(q):
         return []
     try:
-        query_vector = vector.embed(q)
-        cur.execute(vector.hybrid_sql(), {"q": q, "boolean": boolean_query(q), "vector": query_vector, "limit": limit})
+        query = vector.embed(q)
+        cur.execute(vector.hybrid_sql(query.space), {"q": q, "boolean": boolean_query(q), "vector": query.vector, "limit": limit})
         ranked = [{**r, "by": by(r)} for r in cur.fetchall()]
     except vector.Unavailable as error:
         print(f"search: keywords only: {error}", flush=True)
@@ -451,8 +451,7 @@ def search(cur, params):
 def by(scored):
     """What found a hybrid search result: its words, its meaning, or both."""
     lexical = scored["exact"] or scored["title_score"] or scored["body_score"]
-    meaning = scored["cosine"] > vector.COSINE_FLOOR
-    return "both" if lexical and meaning else "keyword" if lexical else "meaning"
+    return "both" if lexical and scored["meaning"] else "keyword" if lexical else "meaning"
 
 
 ROUTES = {"/api/articles": articles, "/api/article": article, "/api/history": history, "/api/change": change,

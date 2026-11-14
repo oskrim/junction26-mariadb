@@ -524,14 +524,36 @@
 }
 
 /* Typing: a cursor deletes old words and types new ones */
+/* The cursor, in the editor's color, with their name on a tag above it */
 .hp-caret {
+  position: relative;
   display: inline-block;
   width: 2px;
   height: 1.1em;
   margin: 0 1px -0.18em;
+}
+
+.hp-caret::before {
+  content: "";
+  position: absolute;
+  inset: 0;
   border-radius: 1px;
-  background: var(--ink);
+  background: var(--c, var(--ink));
   animation: hp-blink 0.9s steps(1) infinite;
+}
+
+.hp-caret-name {
+  position: absolute;
+  bottom: calc(100% + 2px);
+  left: -1px;
+  padding: 1px 6px 2px;
+  border-radius: 4px 4px 4px 0;
+  background: var(--c, var(--ink));
+  font: 600 11px/1.3 var(--sans);
+  color: #fff;
+  white-space: nowrap;
+  pointer-events: none;
+  user-select: none;
 }
 
 @keyframes hp-blink {

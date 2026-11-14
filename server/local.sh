@@ -5,8 +5,11 @@
 #     server/local.sh                  # first run downloads ~450 MB and loads all of M (~20-30 min)
 #     ARTICLES=200 server/local.sh     # a quicker partial load; run again later without it to load the rest
 #     L=1 server/local.sh              # also the rest of Finnish Wikipedia (L, ~500 MB download, ~15 min)
-#     VECTORS=1 server/local.sh        # also the vectors the cloud box computed, and bge-m3 for the questions;
-#                                      # run again later to pick up newer ones
+#     VECTORS=1 server/local.sh        # also the Voyage article vectors from the cloud box (with L=1 the L
+#                                      # articles' too); run again later to pick up newer ones
+#
+# Search by meaning needs the Voyage key (Secret Manager voyage-api-key-global, read with gcloud, or
+# VOYAGE_API_KEY): with it, questions are embedded with Voyage; without it, search, Ask and Learn use keywords.
 #
 # Safe to run again: downloads, loaded articles and the database are kept, so later runs start the app
 # in seconds. Ask, Find and Learn need GEMINI_API_KEY in your environment; without it the other views work.
@@ -22,12 +25,12 @@ sha256_check() {  # in the current directory, against SHA256SUMS
   if command -v sha256sum >/dev/null; then sha256sum -c --quiet SHA256SUMS; else shasum -a 256 -c --quiet SHA256SUMS; fi
 }
 
-# The vectors the cloud box computed for the articles S has none for: the M articles' file, and with L=1 the L
-# articles' (~2.3 GB). A file is downloaded again only when its checksum in SHA256SUMS changed.
+# The Voyage vectors of the M articles, and with L=1 the L articles' (~4.5 GB). A file is downloaded again only
+# when its checksum in SHA256SUMS changed.
 download_vectors() {
   local dir=$WIKI_DATA/exports name
-  local names=(vectors-bge-m3-extra-fi.parquet)
-  if [ "${L:-}" = 1 ]; then names+=(vectors-bge-m3-l-fi.parquet); fi
+  local names=(vectors-voyage-4-lite-m-fi.parquet)
+  if [ "${L:-}" = 1 ]; then names+=(vectors-voyage-4-lite-l-fi.parquet); fi
   mkdir -p "$dir"
   curl -fsSL "$EXPORTS/SHA256SUMS" -o "$dir/SHA256SUMS.all"
   for name in "${names[@]}"; do
@@ -58,30 +61,31 @@ download s-2026-10
 download m-2026-10
 
 if [ "${L:-}" = 1 ]; then download l-2026-10; fi
-if [ "${VECTORS:-}" = 1 ]; then download_vectors; fi
+
+if [ -z "${VOYAGE_API_KEY:-}" ] && command -v gcloud >/dev/null; then
+  VOYAGE_API_KEY=$(gcloud secrets versions access latest --project nimble-valve-390508 --secret voyage-api-key-global 2>/dev/null || true)
+fi
+if [ -n "${VOYAGE_API_KEY:-}" ]; then
+  export VOYAGE_API_KEY VECTOR_MODEL=voyage
+  if [ "${VECTORS:-}" = 1 ]; then download_vectors; fi
+else
+  export VECTOR_MODEL=none
+  echo "local: no Voyage key, so search, Ask and Learn use keywords only"
+fi
 
 # DB_CACHE (default 2G) is MariaDB's buffer pool: a bigger one makes the load and the queries much faster.
 docker compose -f server/compose.yml up -d --wait
 
-uv run -q --with pymysql --with pyarrow python -u server/load.py s --vectors
+uv run -q --with pymysql --with pyarrow python -u server/load.py s
 uv run -q --with pymysql --with pyarrow python -u server/load.py m --articles "${ARTICLES:-all}"
 if [ "${L:-}" = 1 ]; then uv run -q --with pymysql --with pyarrow python -u server/load.py l; fi
+if [ "$VECTOR_MODEL" = voyage ] && [ "${VECTORS:-}" = 1 ]; then
+  uv run -q --with pymysql --with pyarrow python -u server/voyage.py import
+fi
 
 if [ -z "${GEMINI_API_KEY:-}" ] && command -v gcloud >/dev/null; then
   GEMINI_API_KEY=$(gcloud secrets versions access latest --project nimble-valve-390508 --secret google-aistudio-api-key 2>/dev/null || true)
   export GEMINI_API_KEY
 fi
-if [ "${VECTORS:-}" = 1 ]; then
-  # Questions are embedded with the same model as the articles: ~2 GB of model the first time, on the CPU here.
-  export EMBED_PORT=${EMBED_PORT:-8020}
-  export EMBED_URL=http://127.0.0.1:$EMBED_PORT
-  uv run -q --with torch --with transformers python -u server/embed.py serve > "$WIKI_DATA/embed.log" 2>&1 &
-  embed_pid=$!
-  trap 'kill $embed_pid 2>/dev/null || true' EXIT
-  echo "local: bge-m3 for the questions on $EMBED_URL (log: $WIKI_DATA/embed.log); search uses keywords until it is up"
-  echo "local: http://127.0.0.1:$PORT"
-  uv run -q --with pymysql python server/app.py
-else
-  echo "local: http://127.0.0.1:$PORT"
-  exec uv run -q --with pymysql python server/app.py
-fi
+echo "local: http://127.0.0.1:$PORT"
+exec uv run -q --with pymysql python server/app.py

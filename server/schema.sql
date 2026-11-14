@@ -95,3 +95,14 @@ CREATE TABLE IF NOT EXISTS article_vector (
   PRIMARY KEY (lang, page_id),
   VECTOR INDEX (embedding) M=16 DISTANCE=cosine
 );
+
+-- One voyage-4-lite vector per Finnish article (server/voyage.py), from the same text as article_vector's, at the
+-- model's full 2048 dimensions. tokens is the article's share of its request's token count, by text length.
+CREATE TABLE IF NOT EXISTS article_vector_voyage (
+  page_id   INT UNSIGNED NOT NULL,
+  model     VARCHAR(50)  NOT NULL,
+  tokens    INT          NOT NULL,
+  embedding VECTOR(2048) NOT NULL,
+  PRIMARY KEY (page_id),
+  VECTOR INDEX (embedding) M=16 DISTANCE=cosine
+);
