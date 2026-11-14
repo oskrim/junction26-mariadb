@@ -88,6 +88,46 @@ const SUMMARY = {
   4790: "The Olympic Games are a sports event held every four years, where athletes from many countries compete.",
 };
 
+// Lead image of each page, straight from Wikimedia Commons (same shape as the reader's previews).
+const THUMBS = {
+  13: { url: "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/e1/FullMoon2010.jpg/330px-FullMoon2010.jpg", width: 330, height: 314 },
+  219: { url: "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/2d/Meteosat-12-fci-march-equinox-2025-noon.jpg/330px-Meteosat-12-fci-march-equinox-2025-noon.jpg", width: 330, height: 330 },
+  487: { url: "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/28/Albert_Einstein_Head_cleaned.jpg/330px-Albert_Einstein_Head_cleaned.jpg", width: 330, height: 408 },
+  512: { url: "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/55/Photosynthesis_en.svg/330px-Photosynthesis_en.svg.png", width: 330, height: 330 },
+  618: { url: "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/48/Augustine_volcano_Jan_24_2006_-_Cyrus_Read.jpg/330px-Augustine_volcano_Jan_24_2006_-_Cyrus_Read.jpg", width: 330, height: 248 },
+  744: { url: "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/bc/Flag_of_Finland.svg/330px-Flag_of_Finland.svg.png", width: 330, height: 202 },
+  802: { url: "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/3f/Internet_map_1024_-_transparent%2C_inverted.png/330px-Internet_map_1024_-_transparent%2C_inverted.png", width: 330, height: 330 },
+  911: { url: "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/17/Ancient_Egypt_map-en.svg/330px-Ancient_Egypt_map-en.svg.png", width: 330, height: 674 },
+  1187: { url: "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/ce/Alan_turing_header.jpg/330px-Alan_turing_header.jpg", width: 330, height: 440 },
+  1304: { url: "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/e0/Change_in_Average_Temperature_With_Fahrenheit.svg/330px-Change_in_Average_Temperature_With_Fahrenheit.svg.png", width: 330, height: 297 },
+  1452: { url: "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/11/The_Lone_Pollinator.jpg/330px-The_Lone_Pollinator.jpg", width: 330, height: 220 },
+  1620: { url: "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/15/Mt._Everest_from_Gokyo_Ri_November_5%2C_2012.jpg/330px-Mt._Everest_from_Gokyo_Ri_November_5%2C_2012.jpg", width: 330, height: 220 },
+  1778: { url: "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/7b/The_Sounds_of_Earth_-_GPN-2000-001976.jpg/330px-The_Sounds_of_Earth_-_GPN-2000-001976.jpg", width: 330, height: 330 },
+  1903: { url: "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/4f/Black_hole_-_Messier_87_crop_max_res.jpg/330px-Black_hole_-_Messier_87_crop_max_res.jpg", width: 330, height: 330 },
+  2051: { url: "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/6f/ChessSet.jpg/330px-ChessSet.jpg", width: 330, height: 304 },
+  2290: { url: "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/e4/Latte_and_dark_coffee.jpg/330px-Latte_and_dark_coffee.jpg", width: 330, height: 206 },
+  2417: { url: "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/00/Hul_-_Mantellisaurus_atherfieldensis_-_2.jpg/330px-Hul_-_Mantellisaurus_atherfieldensis_-_2.jpg", width: 330, height: 220 },
+  2633: { url: "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/16/Francesco_Melzi_-_Portrait_of_Leonardo_%28colour_correction%29.png/330px-Francesco_Melzi_-_Portrait_of_Leonardo_%28colour_correction%29.png", width: 330, height: 473 },
+  2818: { url: "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b9/IBM_Quantum_Computer_Demo_at_ITUWTSA_2024%2C_Delhi_2.jpg/330px-IBM_Quantum_Computer_Demo_at_ITUWTSA_2024%2C_Delhi_2.jpg", width: 330, height: 440 },
+  3006: { url: "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5c/Double-alaskan-rainbow.jpg/330px-Double-alaskan-rainbow.jpg", width: 330, height: 173 },
+  3120: { url: "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b3/Moon_Soft_Landings.svg/330px-Moon_Soft_Landings.svg.png", width: 330, height: 330 },
+  3141: { url: "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/41/A_Man_on_the_Moon%2C_AS11-40-5903_%28cropped%29.jpg/330px-A_Man_on_the_Moon%2C_AS11-40-5903_%28cropped%29.jpg", width: 330, height: 334 },
+  3307: null,
+  3415: null,
+  3522: null,
+  3610: { url: "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/50/Sauna_2.jpg/330px-Sauna_2.jpg", width: 330, height: 494 },
+  3788: { url: "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/bd/Enigma_%28crittografia%29_-_Museo_scienza_e_tecnologia_Milano.jpg/330px-Enigma_%28crittografia%29_-_Museo_scienza_e_tecnologia_Milano.jpg", width: 330, height: 360 },
+  3801: { url: "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/10/Bundesarchiv_Bild_101I-646-5188-17%2C_Flugzeuge_Junkers_Ju_87.jpg/330px-Bundesarchiv_Bild_101I-646-5188-17%2C_Flugzeuge_Junkers_Ju_87.jpg", width: 330, height: 225 },
+  3956: { url: "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/0c/ENIAC-changing_a_tube_%28cropped%29.jpg/330px-ENIAC-changing_a_tube_%28cropped%29.jpg", width: 330, height: 257 },
+  4102: { url: "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/cc/Runny_hunny.jpg/330px-Runny_hunny.jpg", width: 330, height: 501 },
+  4233: { url: "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/eb/Tide_overview.svg/330px-Tide_overview.svg.png", width: 330, height: 272 },
+  4318: { url: "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/14/UGC_1810_and_UGC_1813_in_Arp_273_%28captured_by_the_Hubble_Space_Telescope%29.jpg/330px-UGC_1810_and_UGC_1813_in_Arp_273_%28captured_by_the_Hubble_Space_Telescope%29.jpg", width: 330, height: 334 },
+  4470: { url: "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/ec/Mona_Lisa%2C_by_Leonardo_da_Vinci%2C_from_C2RMF_retouched.jpg/330px-Mona_Lisa%2C_by_Leonardo_da_Vinci%2C_from_C2RMF_retouched.jpg", width: 330, height: 492 },
+  4529: { url: "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/22/Da_Vinci_Vitruve_Luc_Viatour.jpg/330px-Da_Vinci_Vitruve_Luc_Viatour.jpg", width: 330, height: 449 },
+  4688: { url: "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/94/Tyrannosaurus_Rex_Holotype.jpg/330px-Tyrannosaurus_Rex_Holotype.jpg", width: 330, height: 219 },
+  4790: { url: "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5c/Olympic_rings_without_rims.svg/330px-Olympic_rings_without_rims.svg.png", width: 330, height: 152 },
+};
+
 // Opening lines used for the drifting background text, written in Simple English style.
 export const SNIPPETS = [
   "The Moon is Earth's only natural satellite. It is the fifth largest moon in the Solar System.",
@@ -185,7 +225,7 @@ export async function suggestPages(text) {
     .filter((x) => x.s >= 0)
     .sort((x, y) => x.s - y.s || y.a.versions - x.a.versions)
     .slice(0, 6)
-    .map((x) => ({ ...x.a, summary: SUMMARY[x.a.page_id] }));
+    .map((x) => ({ ...x.a, summary: SUMMARY[x.a.page_id], thumbnail: THUMBS[x.a.page_id] ?? null }));
 }
 
 export async function searchPages(text) {
@@ -209,6 +249,6 @@ export async function searchPages(text) {
     return { a, s: hits / Math.max(stems.length, 1) };
   }).filter((x) => x.s > 0).sort((x, y) => y.s - x.s || y.a.versions - x.a.versions);
 
-  const pack = (x) => ({ ...x.a, summary: SUMMARY[x.a.page_id] });
+  const pack = (x) => ({ ...x.a, summary: SUMMARY[x.a.page_id], thumbnail: THUMBS[x.a.page_id] ?? null });
   return { terms, pages: byTitle.slice(0, 4).map(pack), related: byText.slice(0, 5).map(pack) };
 }

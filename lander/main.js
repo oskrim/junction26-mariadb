@@ -13,6 +13,10 @@ const suggest = $("suggest"), results = $("results"), examples = $("examples"), 
 const esc = (t) => t.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 const year = (a) => new Date(a.first * 1000).getUTCFullYear();
 const edits = (a) => `${a.versions.toLocaleString("en")} edits`;
+// the page's lead picture, or a quiet letter tile when it has none
+const thumb = (a, cls) => a.thumbnail
+  ? `<img class="${cls}" src="${a.thumbnail.url}" alt="" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'${cls}',textContent:'${esc(a.title[0])}'}))">`
+  : `<span class="${cls}">${esc(a.title[0])}</span>`;
 
 // ── language
 const LANGS = [
@@ -72,7 +76,7 @@ function renderSuggest(text, pages) {
   options = [...pages.map((a) => ({ kind: "page", a })), { kind: "search" }];
   suggest.innerHTML = pages.map((a, i) => `
       <a class="opt" id="opt-${i}" role="option" href="${pageUrl(a)}" data-i="${i}">
-        <span class="opt-icon">${esc(a.title[0])}</span>
+        ${thumb(a, "opt-icon")}
         <span class="opt-body"><span class="opt-title">${highlightTitle(a.title, text)}</span><span class="opt-sub">${esc(a.summary)}</span></span>
         <span class="opt-meta">${edits(a)}</span>
       </a>`).join("") + `
@@ -156,8 +160,12 @@ function markTerms(text, terms) {
 }
 function hitHTML(a, terms, i) {
   return `<a class="hit" href="${pageUrl(a)}" data-id="${a.page_id}" style="animation-delay:${i * 50}ms">
-      <span class="hit-top"><span class="hit-title">${esc(a.title)}</span><span class="hit-meta">${edits(a)} · since ${year(a)}</span></span>
-      <p class="hit-text">${markTerms(a.summary, terms)}</p>
+      ${thumb(a, "thumb")}
+      <span>
+        <span class="hit-title">${esc(a.title)}</span>
+        <p class="hit-text">${markTerms(a.summary, terms)}</p>
+        <span class="hit-meta">${edits(a)} · since ${year(a)}</span>
+      </span>
     </a>`;
 }
 let found = new Map();
