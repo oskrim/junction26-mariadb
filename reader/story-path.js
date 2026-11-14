@@ -203,9 +203,13 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
       from = Math.max(from, camZ + NEAR);
       to = Math.min(to, camZ + FAR);
       if (to <= from) return;
-      const stepLen = Math.max(8, (to - from) / 60);
+      // Points on a fixed grid in the world, plus the two ends, so edges don't crawl as the camera moves.
+      const GRID_Z = 12;
+      const zs = [from];
+      for (let g = Math.floor(from / GRID_Z + 1) * GRID_Z; g < to; g += GRID_Z) zs.push(g);
+      zs.push(to);
       const l0 = [], l1 = [], r0 = [], r1 = [], sh = [];
-      for (let wz = from; wz <= to + 0.1; wz += stepLen) {
+      for (const wz of zs) {
         const cx = centerX(wz);
         const hw = half(wz);
         l0.push(project(cx - hw, 0, wz));
@@ -277,42 +281,8 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
       // A road stays as strong once walked as while it was being walked.
       road(stopZ[b.k], done ? 0.9 : walking ? 0.25 : 0.1);
       if (walking) road(Math.min(stopZ[b.k], nowZ), 0.9);
-      if (done || walking) twigs(b, a);
     }
 
-    // Every edit along a side road grows a short bar as it is walked, standing on the road: up for text
-    // added, down for text cut, as long as the change was big.
-    function twigs(b, a) {
-      const [h, sat, light] = b.color;
-      for (let i = stops[b.k - 1] + 1; i <= stops[b.k]; i++) {
-        const wz = z[i];
-        if (wz > nowZ || wz < camZ + NEAR || wz > camZ + FAR) continue;
-        const e = edits[i];
-        if (Math.abs(e.delta) < 20) continue;
-        const grow = Math.min(1, (nowZ - wz) / 260) * smoothstep(NEAR, NEAR + 500, wz - camZ);
-        const len = (8 + 9 * Math.log10(1 + Math.abs(e.delta))) * grow;
-        // Standing on the road: up for text added, down through it for text cut.
-        const up = e.delta > 0 ? 1 : -1;
-        const cx = roadX(wz) + branchOffset(b, wz);
-        const p0 = project(cx, LANE_H, wz);
-        const p1 = project(cx, LANE_H + up * len * 1.4, wz);
-        const w = Math.max(1.5, Math.min(5, 7 * p0.s));
-        ctx.lineCap = "round";
-        // A darker edge beside it, then its face.
-        ctx.lineWidth = w;
-        ctx.strokeStyle = e.delta > 0 ? `hsla(${h},${sat}%,${light - 25}%,${0.8 * a})` : `rgba(170,60,60,${0.6 * a})`;
-        ctx.beginPath();
-        ctx.moveTo(p0.x + w * 0.45, p0.y);
-        ctx.lineTo(p1.x + w * 0.45, p1.y);
-        ctx.stroke();
-        ctx.strokeStyle = e.delta > 0 ? `hsla(${h},${sat}%,${light - 5}%,${0.95 * a})` : `rgba(226,140,140,${0.85 * a})`;
-        ctx.beginPath();
-        ctx.moveTo(p0.x, p0.y);
-        ctx.lineTo(p1.x, p1.y);
-        ctx.stroke();
-        ctx.lineCap = "butt";
-      }
-    }
 
     // Editors and swords signs stand up from the floor, so they are drawn far to near. An editor stands
     // at the far point of their detour, or walks it while their version is being written.
