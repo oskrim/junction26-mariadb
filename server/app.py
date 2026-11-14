@@ -17,7 +17,6 @@ from urllib.parse import parse_qs, quote, urlparse
 import pymysql
 
 import ask
-import learn
 
 READER = Path(__file__).resolve().parent.parent / "reader"
 TYPES = {".html": "text/html", ".js": "text/javascript", ".json": "application/json", ".css": "text/css",
@@ -244,7 +243,7 @@ def search(cur, params):
 ROUTES = {"/api/articles": articles, "/api/article": article, "/api/history": history, "/api/change": change,
           "/api/graph": graph, "/api/topics": topics, "/api/preview": preview, "/api/search": search}
 # POST handlers write their own response, so they can stream.
-POST_ROUTES = {"/api/ask": ask.serve, "/api/learn": learn.serve}
+POST_ROUTES = {"/api/ask": ask.serve}
 
 
 class Handler(BaseHTTPRequestHandler):
