@@ -32,7 +32,7 @@ docker compose -f server/compose.yml up -d --wait
 docker compose -f server/compose.yml exec -T mariadb \
   mariadb -uroot -p"${DB_ROOT_PASSWORD:-wiki}" -e "SET GLOBAL innodb_buffer_pool_size = ${DB_CACHE:-2147483648}"
 
-uv run -q --with pymysql --with pyarrow python -u server/load.py s
+uv run -q --with pymysql --with pyarrow python -u server/load.py s --vectors
 uv run -q --with pymysql --with pyarrow python -u server/load.py m --articles "${ARTICLES:-all}"
 
 if [ -z "${GEMINI_API_KEY:-}" ] && command -v gcloud >/dev/null; then

@@ -19,6 +19,7 @@ import pymysql
 
 import ask
 import learn
+import vector
 
 READER = Path(__file__).resolve().parent.parent / "reader"
 LANDER = Path(__file__).resolve().parent.parent / "lander"
@@ -347,21 +348,44 @@ def fold(text):
     return "".join(c for c in unicodedata.normalize("NFKD", text.lower()) if not unicodedata.combining(c))
 
 
-def search(cur, params):
-    """Current M articles whose title, then clean text, contains q (any case or accent).
+SEARCH_CANDIDATES = 50  # articles each ranking gives to the fusion
+
+
+def keyword_ranking(q):
+    """SQL ranking the articles whose title, then clean text, contains q (any case or accent), and its parameters.
 
     The text searched is the article's S Markdown (Finnish), or its wikitext when it has none."""
+    like = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+    sql = """SELECT s.page_id, ROW_NUMBER() OVER (ORDER BY s.title LIKE %s DESC, s.title) AS keyword_rank
+             FROM m_article_stats s JOIN m_search x USING (page_id)
+             WHERE s.title LIKE %s OR INSTR(x.text, %s) > 0
+             ORDER BY keyword_rank LIMIT %s"""
+    return sql, (like, like, fold(q).encode(), SEARCH_CANDIDATES)
+
+
+def search(cur, params):
+    """Articles that match q by keyword or by meaning, fused by rank in one statement (vector.hybrid_sql).
+
+    Without the embedding service, the keyword ranking alone."""
     q = params.get("q", [""])[0].strip()
     if not q:
         raise BadRequest("q is required")
-    like = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
     limit = number(params, "limit", 20)
-    cur.execute("""SELECT s.page_id, s.title FROM m_article_stats s JOIN m_search x USING (page_id)
-                   WHERE s.title LIKE %s OR INSTR(x.text, %s) > 0
-                   ORDER BY s.title LIKE %s DESC, s.title LIMIT %s""", (like, fold(q).encode(), like, limit))
-    found = cur.fetchall()
-    if not found:
+    keyword_sql, keyword_args = keyword_ranking(q)
+    try:
+        query_vector = vector.embed(q)
+        cur.execute(f"SET mhnsw_ef_search = {vector.EF_SEARCH}")
+        cur.execute(vector.hybrid_sql(keyword_sql), (*keyword_args, query_vector, SEARCH_CANDIDATES, limit))
+    except vector.Unavailable as error:
+        print(f"search: keywords only: {error}", flush=True)
+        cur.execute(f"SELECT page_id, keyword_rank, NULL AS vector_rank FROM ({keyword_sql}) k "
+                    "ORDER BY keyword_rank LIMIT %s", (*keyword_args, limit))
+    ranked = cur.fetchall()
+    if not ranked:
         return []
+    cur.execute("SELECT page_id, title FROM m_article_stats WHERE page_id IN %s", ([r["page_id"] for r in ranked],))
+    titles = {r["page_id"]: r["title"] for r in cur.fetchall()}
+    found = [{**r, "title": titles[r["page_id"]]} for r in ranked]
     # Text by primary key; IF reads the M wikitext only for articles without S text.
     cur.execute("""SELECT a.page_id, s.page_id IS NOT NULL AS clean, IF(s.page_id IS NULL, a.text, s.text) AS text
                    FROM m_article a LEFT JOIN s_article s ON s.lang = 'fi' AND s.page_id = a.page_id
@@ -371,7 +395,8 @@ def search(cur, params):
     for r in found:
         t = texts[r["page_id"]]
         text, match = snippet(prose(t["text"]) if t["clean"] else unwiki(t["text"]), q)
-        results.append({"page_id": r["page_id"], "title": r["title"], "snippet": text, "match": match})
+        results.append({"page_id": r["page_id"], "title": r["title"], "snippet": text, "match": match,
+                        "by": "both" if r["keyword_rank"] and r["vector_rank"] else "keyword" if r["keyword_rank"] else "meaning"})
     return results
 
 

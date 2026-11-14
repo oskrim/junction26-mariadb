@@ -35,17 +35,33 @@ main() {
 
   # The loaders and the app use the database named by DB_NAME in the env file.
   if [ -f server/load.py ]; then
-    uv run --with pymysql --with pyarrow python server/load.py s
+    uv run --with pymysql --with pyarrow python server/load.py s --vectors
     uv run --with pymysql --with pyarrow python server/load.py m --articles 20
   else
     echo "deploy: server/load.py is not on main yet; skipping loaders"
   fi
+
+  restart_embed_if_changed
 
   if [ -f server/app.py ]; then
     systemctl restart wiki-app
     smoke_test
   else
     echo "deploy: server/app.py is not on main yet; skipping app"
+  fi
+}
+
+# The query embedding service takes ~25 s to load the model, so it restarts only when its code changed.
+restart_embed_if_changed() {
+  local sum
+  if ! systemctl cat wiki-embed >/dev/null 2>&1; then
+    echo "deploy: no wiki-embed unit (bootstrap.sh writes it); vector search is off"
+    return 0
+  fi
+  sum=$(sha256sum server/embed.py | cut -d' ' -f1)
+  if [ "$sum" != "$(cat /run/wiki-embed.sha 2>/dev/null)" ] || ! systemctl is-active --quiet wiki-embed; then
+    systemctl restart wiki-embed
+    echo "$sum" > /run/wiki-embed.sha
   fi
 }
 
@@ -73,6 +89,8 @@ ensure_db_users() {
     sql+="GRANT ALL PRIVILEGES ON wiki.* TO '${user}'@'%';"
     sql+="GRANT ALL PRIVILEGES ON \`${db}\`.* TO '${user}'@'%';"
   done
+  # The vector index's graph cache (default 16 MB) must hold the index for fast searches; set per server start.
+  sql+="SET GLOBAL mhnsw_max_cache_size = 4294967296;"
   printf '%s' "$sql" | "$@" exec -T mariadb sh -c 'mariadb -uroot -p"$MARIADB_ROOT_PASSWORD"'
   local have_ssl
   have_ssl=$("$@" exec -T mariadb sh -c 'mariadb -uroot -p"$MARIADB_ROOT_PASSWORD" -N -e "SELECT @@have_ssl"')
