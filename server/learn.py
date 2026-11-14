@@ -5,8 +5,11 @@
    meaning (article_vector) that it does not link to, as of `at`.
 2. One fast Gemini call picks the 3 to 6 linked articles that matter for the question.
 3. The relevant part of each pick: its first 4,000 characters, or its lead plus a window around the focus term.
-4. One streamed Gemini call writes the explanation, citing the picks as [1], [2], ..., and after it, held back
-   from the reader, one quote per cited source.
+4. Up to MAX_ROUNDS - 1 more rounds, one hop further out each time: the candidates are the articles the last
+   round's picks link to, and the articles nearest by meaning to what is still missing. One fast Gemini call
+   reads what has been gathered, says whether it is enough, and if not names the gap and picks 1 to 4 more.
+5. One streamed Gemini call writes the explanation, citing everything read as [1], [2], ..., and after it, held
+   back from the reader, one quote per cited source.
 
 `shape` sets what is written: a chat answer (default), "lesson" (the Learn view: a title, a one-line goal, 3 or 4
 sections and the terms a newcomer would not know, explained from the sources) or "reply" (a short answer to a
@@ -40,6 +43,11 @@ READ_CHARS = 20_000
 SECTION_CHARS = 4_000
 SECTION_LEAD = 1_200
 MIN_PICKS, MAX_PICKS = 3, 6
+MAX_ROUNDS = 3  # the first pick from the article's own links, then up to two hops further out
+MORE_PICKS = 4  # at most this many more articles per later round
+MAX_SOURCES = 12
+HOP_CANDIDATES = 200  # links of the last round's picks offered in a later round
+DIGEST_CHARS = 700  # of each article read, shown when deciding whether more is needed
 RELATED = 10  # candidates found by meaning, next to the linked ones
 NARROW_W = 700
 MAX_HISTORY = 8
@@ -78,10 +86,6 @@ otherwise have to click through.
 PLAIN = "No Markdown: no headings, bold or asterisks."
 LESSON_LAYOUT = "No Markdown other than the lesson layout: no bold or asterisks."
 
-NARROW_SHAPE = "The reader is on a narrow screen: write about 4 sentences in one paragraph."
-WIDE_SHAPE = ("The reader is on a wide screen: write 2 short paragraphs of 2 or 3 sentences each, then 3 "
-              "key points of at most 20 words each. Separate paragraphs with a blank line. Start each key point "
-              "with \"• \" and put a blank line between key points.")
 LESSON_SHAPE = """Write a short lesson that answers the question, in exactly this plain-text layout:
 # the topic, 2 to 6 words
 > one sentence: what the reader will understand by the end
@@ -96,6 +100,33 @@ REPLY_SHAPE = ("The reader stopped the lesson to ask this. Answer like a tutor i
                "that also reads well aloud, and tie it back to the lesson.")
 SHAPES = {"lesson": LESSON_SHAPE, "reply": REPLY_SHAPE}
 
+MORE_RULES = f"""You help a reader understand something by deciding whether to read further Wikipedia articles.
+You get the reader's question, the article they are on, what has been read so far (numbered, with its start),
+and a list of further candidate articles, each with its lead: articles the ones already read link to, and
+articles close in meaning to what is missing.
+First name the language the question is written in. Then decide:
+- enough: true when what has been read already explains the answer well to a smart non-expert: the causes,
+  the background, the terms it needs. Then give no picks.
+- gap: when not enough, what is still unexplained, in one short phrase in the question's language.
+- picks: when not enough, the 1 to {MORE_PICKS} candidates that fill the gap best, each with n (its number in the
+  candidate list), why (at most 10 words, in the question's language) and focus (one word or name to look for
+  inside it, in Finnish). Never pick an article that repeats what has been read."""
+
+MORE_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {"language": {"type": "STRING"}, "enough": {"type": "BOOLEAN"}, "gap": {"type": "STRING"},
+                   "picks": RANK_SCHEMA["properties"]["picks"]},
+    "required": ["language", "enough", "gap", "picks"],
+    "propertyOrdering": ["language", "enough", "gap", "picks"],
+}
+
+NARROW_SHAPE = ("The reader is on a narrow screen: write 2 short paragraphs of 3 or 4 sentences each, "
+                "separated by a blank line.")
+WIDE_SHAPE = ("The reader is on a wide screen and wants to understand this in depth: write 3 or 4 paragraphs of "
+              "3 to 5 sentences each that build on each other (what it is, the background and causes, how it "
+              "unfolded or works, why it matters), then 4 key points of at most 25 words each. Separate paragraphs "
+              "with a blank line. Start each key point with \"• \" and put a blank line between key points.")
+
 
 def serve(handler, database):
     """Handles one POST /api/learn on a BaseHTTPRequestHandler."""
@@ -108,8 +139,9 @@ def serve(handler, database):
     with Progress(handler) as progress:
         cur = database().cursor()
         here = read_version(cur, progress, request)
-        candidates = linked_articles(cur, progress, request["page_id"], request["at"])
-        candidates += related_articles(cur, progress, request, {c["page_id"] for c in candidates})
+        candidates = linked_articles(cur, progress, [request["page_id"]], request["at"])
+        candidates += related_articles(cur, progress, request, request["prompt"], {c["page_id"] for c in candidates})
+        explored = len(candidates)
         timings["db_ms"] = ms(started)
         if candidates:
             picks = rank(progress, request, here, candidates)
@@ -117,11 +149,32 @@ def serve(handler, database):
             progress.finish("No linked articles at that moment, so the explanation uses this article alone")
             picks = []
         timings["rank_ms"] = ms(started)
-        sources = []
-        for c, why, focus in picks:
-            progress.step(f"Reading {c['title']}")
-            sources.append({**c, "why": why, "section": section(c["text"], focus)})
-        progress.step("Writing the explanation")
+        sources, seen, gap = [], {here["title"]} | {c["title"] for c, _, _ in picks}, request["prompt"]
+
+        def read(picks):
+            for c, why, focus in picks:
+                progress.step(f"Reading {c['title']}")
+                sources.append({**c, "why": why, "section": section(c["text"], focus)})
+
+        for round_ in range(2, MAX_ROUNDS + 1):
+            read(picks)
+            if not picks or len(sources) >= MAX_SOURCES:
+                picks = []
+                break
+            label = f"Going deeper, round {round_} of {MAX_ROUNDS}"
+            progress.step(f"{label}: following the links of what was just read")
+            hop = linked_articles(cur, progress, [c["page_id"] for c, _, _ in picks if c["page_id"]], request["at"],
+                                  skip=seen, limit=HOP_CANDIDATES, quiet=True)
+            progress.finish(f"{label}: {len(hop):,} articles one link further")
+            hop += related_articles(cur, progress, request, gap, {s["page_id"] for s in sources if s["page_id"]},
+                                    skip=seen | {c["title"] for c in hop})
+            explored += len(hop)
+            gap, picks = more(progress, request, here, sources, hop, label)
+            picks = picks[:MAX_SOURCES - len(sources)]
+            seen |= {c["title"] for c, _, _ in picks}
+        read(picks)
+        timings["rounds_ms"] = ms(started)
+        progress.step(f"Writing the explanation from {len(sources)} articles")
         quotes = {}
         for kind, value in until_quotes(write(progress, request, here, sources)):
             if kind == "quotes":
@@ -133,7 +186,7 @@ def serve(handler, database):
             event(handler, "message", value)
         timings["total_ms"] = ms(started)
         event(handler, "sources", {
-            "type": "sources", "explored": len(candidates),
+            "type": "sources", "explored": explored,
             "here": {"title": here["title"], "page_id": request["page_id"], "quote": quotes.get(0)},
             "items": [{"n": i + 1, "title": s["title"], "why": s["why"], "page_id": s["page_id"], "url": s["url"],
                        "quote": quotes.get(i + 1)} for i, s in enumerate(sources)]})
@@ -159,21 +212,27 @@ def parse(handler):
             "narrow": width < NARROW_W, "history": history, "shape": shape}
 
 
-def linked_articles(cur, progress, page_id, at):
-    """The articles page_id links to at `at`, each as {title, page_id, url, text, lead}, in link order."""
+def linked_articles(cur, progress, page_ids, at, skip=(), limit=None, quiet=False):
+    """The articles page_ids link to at `at`, each as {title, page_id, url, text, lead}, in link order: the first
+    `limit` of them whose titles are not in skip. quiet: no steps of its own (the caller shows one)."""
+    if not page_ids:
+        return []
     stamp = at.strftime("%Y-%m-%d %H:%M:%S.%f")
-    progress.step(f"Reading the articles this one links to (as of {day(at)})")
-    cur.execute("SELECT dst FROM m_link FOR SYSTEM_TIME AS OF TIMESTAMP %s WHERE src = %s", (stamp, page_id))
-    titles = [r["dst"] for r in cur.fetchall()]
+    if not quiet:
+        progress.step(f"Reading the articles this one links to (as of {day(at)})")
+    cur.execute("SELECT src, dst FROM m_link FOR SYSTEM_TIME AS OF TIMESTAMP %s WHERE src IN %s", (stamp, page_ids))
+    rows = sorted(cur.fetchall(), key=lambda r: page_ids.index(r["src"]))  # each source's links in turn
+    titles = list(dict.fromkeys(r["dst"] for r in rows if r["dst"] not in skip))[:limit]
     if not titles:
         return []
     label = f"Reading the {len(titles):,} articles this one links to (as of {day(at)})"
-    progress.update(label)
+    if not quiet:
+        progress.update(label)
     found = {}
     # Titles are not indexed, so both tables are scanned for keys only and text is read by primary key.
     cur.execute("SELECT page_id, title FROM m_article WHERE title IN %s", (titles,))
     for i, row in enumerate(cur.fetchall()):
-        if i and i % 25 == 0:
+        if i and i % 25 == 0 and not quiet:
             progress.update(f"{label}: {i} read")
         cur.execute("""SELECT title, text FROM m_article FOR SYSTEM_TIME AS OF TIMESTAMP %s
                        WHERE page_id = %s ORDER BY row_start DESC LIMIT 1""", (stamp, row["page_id"]))
@@ -191,29 +250,33 @@ def linked_articles(cur, progress, page_id, at):
             found[row["title"]] = {"title": row["title"], "page_id": None, "url": row["url"],
                                    "text": markdown_plain(row["text"])[:READ_CHARS]}
     candidates = [{**found[t], "lead": found[t]["text"][:LEAD_CHARS]} for t in titles if t in found and found[t]["text"]]
-    progress.finish(f"Read {len(candidates):,} of the {len(titles):,} articles this one links to (as of {day(at)})")
+    if not quiet:
+        progress.finish(f"Read {len(candidates):,} of the {len(titles):,} articles this one links to (as of {day(at)})")
     return candidates
 
 
-def related_articles(cur, progress, request, linked):
-    """Up to RELATED articles nearest to the question by meaning, as of `at`, other than this one and the linked ones."""
-    label = "Finding related articles by meaning"
+def related_articles(cur, progress, request, query, linked, skip=()):
+    """Up to RELATED articles nearest to query by meaning, as of `at`: not this one, not the linked ones (page ids),
+    and none whose title is in skip."""
+    label = "Finding related articles by meaning" + ("" if query == request["prompt"] else f" to “{query}”")
     progress.step(label)
     try:
-        question = vector.embed(request["prompt"])
+        vec = vector.embed(query)
     except vector.Unavailable:
         progress.finish(f"{label}: skipped, the embedding service is not answering")
         return []
     stamp = request["at"].strftime("%Y-%m-%d %H:%M:%S.%f")
     found = []
-    for page_id, _ in vector.nearest(cur, question, RELATED, exclude={request["page_id"], *linked}):
+    for page_id, _ in vector.nearest(cur, vec, RELATED * 2, exclude={request["page_id"], *linked}):
         cur.execute("""SELECT title, text FROM m_article FOR SYSTEM_TIME AS OF TIMESTAMP %s
                        WHERE page_id = %s ORDER BY row_start DESC LIMIT 1""", (stamp, page_id))
         version = cur.fetchone()
-        text = version and wikitext_plain(version["text"])[:READ_CHARS]
+        text = version and version["title"] not in skip and wikitext_plain(version["text"])[:READ_CHARS]
         if text:
             found.append({"title": version["title"], "page_id": page_id, "url": wiki_url(version["title"]),
                           "text": text, "lead": text[:LEAD_CHARS]})
+        if len(found) == RELATED:
+            break
     progress.finish(f"{label}: {len(found)} of {vector_count(cur):,}")
     return found
 
@@ -224,17 +287,48 @@ def rank(progress, request, here, candidates):
             f"Question: {request['prompt']}\nWrite each \"why\" in the language of this question.")
     progress.step("Choosing the relevant ones…")
     reply = generate_json(RANK_RULES, [{"role": "user", "parts": [{"text": text}]}], RANK_SCHEMA)
+    picks = numbered(reply, candidates)
+    if not picks:
+        progress.finish("None of the linked articles helps with this question, so the explanation uses this article alone")
+        return []
+    picks = picks[:MAX_PICKS]
+    progress.finish(f"Chose {len(picks)}: " + "; ".join(f"{c['title']} — {why.rstrip('.')}" for c, why, _ in picks))
+    return picks
+
+
+def more(progress, request, here, sources, candidates, label):
+    """(gap, picks) for one later round: what is still missing and the candidates to read for it, or ("", [])
+    when what has been read is enough or nothing further helps."""
+    if not candidates:
+        progress.step(f"{label}: nothing further to follow")
+        progress.finish()
+        return "", []
+    read = "\n\n".join(f"[{i + 1}] {s['title']}: {s['section'][:DIGEST_CHARS]}" for i, s in enumerate(sources))
+    listing = "\n\n".join(f"{i + 1}. {c['title']}: {c['lead']}" for i, c in enumerate(candidates))
+    text = (f"{reader_block(request, here, 1_000)}\n\nRead so far:\n{read}\n\nFurther candidates:\n{listing}\n\n"
+            f"Question: {request['prompt']}\nWrite the gap and each \"why\" in the language of this question.")
+    progress.step(f"{label}: is anything still missing?")
+    reply = generate_json(MORE_RULES, [{"role": "user", "parts": [{"text": text}]}], MORE_SCHEMA)
+    if reply.get("enough"):
+        progress.finish(f"{label}: what has been read explains it")
+        return "", []
+    picks = numbered(reply, candidates)[:MORE_PICKS]
+    gap = str(reply.get("gap") or "").strip()
+    if not picks:
+        progress.finish(f"{label}: still missing {gap or 'something'}, but none of the {len(candidates)} further articles helps")
+        return "", []
+    progress.finish(f"{label}: still missing {gap}; chose " + "; ".join(f"{c['title']} — {why.rstrip('.')}" for c, why, _ in picks))
+    return gap, picks
+
+
+def numbered(reply, candidates):
+    """The (candidate, why, focus) picks of a ranking reply, each candidate once, in the reply's order."""
     picks, seen = [], set()
     for p in reply.get("picks", []):
         n = p.get("n")
         if isinstance(n, int) and 1 <= n <= len(candidates) and n not in seen:
             seen.add(n)
             picks.append((candidates[n - 1], str(p.get("why") or ""), str(p.get("focus") or "")))
-    if not picks:
-        progress.finish("None of the linked articles helps with this question, so the explanation uses this article alone")
-        return []
-    picks = picks[:MAX_PICKS]
-    progress.finish(f"Chose {len(picks)}: " + "; ".join(f"{c['title']} — {why.rstrip('.')}" for c, why, _ in picks))
     return picks
 
 
