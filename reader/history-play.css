@@ -231,25 +231,6 @@
 
 
 
-/* The marker's handle */
-.hp-map .minimap-now::after {
-  content: "";
-  position: absolute;
-  bottom: -4px;
-  left: 50%;
-  width: 8px;
-  height: 8px;
-  translate: -50% 0;
-  border: 1.5px solid var(--paper);
-  border-radius: 50%;
-  background: var(--ink);
-  transition: scale 0.15s ease;
-}
-
-.hp-map:hover .minimap-now::after {
-  scale: 1.25;
-}
-
 /* The date under the pointer */
 .hp-hover {
   position: absolute;
@@ -270,7 +251,7 @@
   opacity: 1;
 }
 
-/* The playhead: a slim line exactly over the bars, ending in a small dot on the baseline */
+/* The playhead: a slim line exactly over the bars */
 .hp-map .minimap-now {
   top: auto;
   bottom: 20px;
