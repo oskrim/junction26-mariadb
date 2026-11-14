@@ -13,7 +13,6 @@ TIMEOUT_S = 5
 # Candidates one index search looks at (default 20). With M=16, 80 found 100% of the exact top 10 in MariaDB's
 # RAG starter.
 EF_SEARCH = 80
-RRF_K = 60  # reciprocal rank fusion: an article scores 1 / (RRF_K + rank) in each list it is in
 
 
 class Unavailable(Exception):
@@ -58,29 +57,43 @@ def count(cur):
     return cur.fetchone()["n"]
 
 
-SHORT_QUERY_WORDS = 2  # a query of this many words or fewer is usually a name: its title matches lead
-SHORT_QUERY_VECTOR_WEIGHT = 0.25
+# Hybrid search: a linear sum of saturated scores. Each raw MATCH score x becomes x / (kappa + x), 0.5 at x = kappa;
+# the kappas are about the median MATCH score of the top 50 candidates over the example queries in server/README.md.
+KAPPA_TITLE, KAPPA_BODY = 30, 80
+TITLE_WEIGHT = 2  # a word in the title says more than the same word in the text
+EXACT_BONUS = 3  # more than every other term together: the article titled as the query comes first
+VECTOR_WEIGHT, COSINE_FLOOR = 4, 0.4  # bge-m3 gives unrelated texts a cosine of about 0.4
+HYBRID_CANDIDATES = 50  # from each of the title, text and vector searches
 
 
-def vector_weight(word_count):
-    """How much the vector rank counts next to the keyword rank (1). For a name, the vectors mostly add the articles
-    the keywords miss; for a question in words, and across languages, they count as much as the keywords."""
-    return SHORT_QUERY_VECTOR_WEIGHT if word_count <= SHORT_QUERY_WORDS else 1.0
+def hybrid_sql():
+    """One statement: the candidates from the title and text FULLTEXT searches and the vector index, each scored
 
+        TITLE_WEIGHT * sat(title MATCH) + sat(text MATCH) + EXACT_BONUS * (title = q)
+          + VECTOR_WEIGHT * max(0, cosine - COSINE_FLOOR)
 
-def hybrid_sql(keyword_sql):
-    """One statement that fuses a keyword ranking and the vector ranking with weighted reciprocal rank fusion.
-
-    keyword_sql selects page_id and a keyword_rank (1 = best) and takes its own parameters; then come (vector,
-    candidates, vector weight, query, limit). Each article scores 1 / (RRF_K + rank) in the keyword list plus
-    weight / (RRF_K + rank) in the vector list. The article titled as the query (in any case or accent) comes
-    first; equal scores go to the article nearer by meaning."""
-    return f"""WITH keyword AS ({keyword_sql}),
-     meaning AS (SELECT page_id, ROW_NUMBER() OVER (ORDER BY distance) AS vector_rank FROM ({NEAREST}) v)
-SELECT page_id, MIN(keyword_rank) AS keyword_rank, MIN(vector_rank) AS vector_rank,
-       SUM(IF(keyword_rank IS NULL, %s, 1) / ({RRF_K} + IFNULL(keyword_rank, vector_rank))) AS score,
-       MAX(title = %s) AS exact
-FROM (SELECT page_id, keyword_rank, NULL AS vector_rank FROM keyword
-      UNION ALL SELECT page_id, NULL, vector_rank FROM meaning) ranks
-JOIN m_article_stats USING (page_id)
-GROUP BY page_id ORDER BY exact DESC, score DESC, vector_rank IS NULL, vector_rank, page_id LIMIT %s"""
+    Parameters by name: q (the query), boolean (its FULLTEXT boolean form), vector, limit."""
+    n = HYBRID_CANDIDATES
+    return f"""WITH candidates AS (
+  (SELECT page_id FROM m_article_stats WHERE title = %(q)s)
+  UNION
+  (SELECT page_id FROM m_article_stats WHERE MATCH (title) AGAINST (%(boolean)s IN BOOLEAN MODE)
+   ORDER BY MATCH (title) AGAINST (%(boolean)s IN BOOLEAN MODE) DESC, CHAR_LENGTH(title) LIMIT {n})
+  UNION
+  (SELECT page_id FROM m_search WHERE MATCH (text) AGAINST (%(boolean)s IN BOOLEAN MODE)
+   ORDER BY MATCH (text) AGAINST (%(boolean)s IN BOOLEAN MODE) DESC LIMIT {n})
+  UNION
+  (SELECT page_id FROM (SELECT page_id, VEC_DISTANCE_COSINE(embedding, VEC_FromText(%(vector)s)) AS distance
+                        FROM article_vector WHERE lang = 'fi' ORDER BY distance LIMIT {n}) nearest)),
+scored AS (
+  SELECT c.page_id, s.title = %(q)s AS exact,
+         MATCH (s.title) AGAINST (%(boolean)s IN BOOLEAN MODE) AS title_score,
+         IFNULL(MATCH (x.text) AGAINST (%(boolean)s IN BOOLEAN MODE), 0) AS body_score,
+         IFNULL(1 - VEC_DISTANCE_COSINE(v.embedding, VEC_FromText(%(vector)s)), 0) AS cosine
+  FROM candidates c JOIN m_article_stats s USING (page_id)
+  LEFT JOIN m_search x USING (page_id)
+  LEFT JOIN article_vector v ON v.lang = 'fi' AND v.page_id = c.page_id)
+SELECT page_id, exact, title_score, body_score, cosine,
+       {TITLE_WEIGHT} * title_score / ({KAPPA_TITLE} + title_score) + body_score / ({KAPPA_BODY} + body_score)
+         + {EXACT_BONUS} * exact + {VECTOR_WEIGHT} * GREATEST(0, cosine - {COSINE_FLOOR}) AS score
+FROM scored ORDER BY score DESC, page_id LIMIT %(limit)s"""
