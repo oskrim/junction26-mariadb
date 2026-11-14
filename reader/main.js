@@ -28,6 +28,8 @@ if (!version || !summary) {
       Last edited ${formatDate(version.row_start)} by ${version.user}
       <span aria-hidden="true">·</span>
       ${summary.versions.toLocaleString("en-US")} versions since ${new Date(summary.first * 1000).getUTCFullYear()}
+      <span aria-hidden="true">·</span>
+      <a class="meta-link" href="./history.html?id=${id}">View history</a>
     </p>`;
   body.innerHTML = doc.html;
   toc.innerHTML = renderToc(doc.toc);

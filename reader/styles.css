@@ -243,6 +243,15 @@ a {
   margin: 0 6px;
 }
 
+.meta-link {
+  color: var(--link);
+  text-decoration: none;
+}
+
+.meta-link:hover {
+  text-decoration: underline;
+}
+
 /* Reading column */
 
 .body {

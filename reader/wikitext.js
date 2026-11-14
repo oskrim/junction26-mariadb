@@ -339,3 +339,18 @@ function stripTags(s) {
 function attr(s) {
   return s.replace(/&(?![a-zA-Z]+;|#\d+;)/g, "&amp;").replace(/"/g, "&quot;");
 }
+
+// Short plain-text version of a wiki markup fragment, for previews of what an edit changed.
+export function plainText(s) {
+  return s
+    .replace(/<ref[^>]*\/>|<ref[^>]*>[\s\S]*?(<\/ref>|$)/g, "")
+    .replace(/\{\{[^{}]*\}\}/g, "")
+    .replace(/\{\{[\s\S]*$|^[\s\S]*?\}\}/g, "")
+    .replace(/\|\s*[\w-]+\s*=\s*[^|]*/g, "")
+    .replace(/\[\[(?:[^[\]|]*\|)?([^[\]]*)\]\]/g, "$1")
+    .replace(/\[https?:\/\/\S+\s([^\]]+)\]/g, "$1")
+    .replace(/\[?https?:\/\/(?:www\.)?([^/\s\]|]+)[^\s\]]*\]?/g, "link to $1")
+    .replace(/<[^>]+>|'{2,}|^[*#:;=\s]+|=+\s*$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}

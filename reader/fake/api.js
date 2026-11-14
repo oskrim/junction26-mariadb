@@ -34,6 +34,8 @@ const LOCAL_FILES = {
   "BQP complexity class diagram.svg": "bqp-complexity-class-diagram.png",
 };
 
+const HISTORIES = { 4011: "./history.json" };
+
 // Opening lines and lead image of each article this page links to, keyed by link target.
 const PREVIEWS = await fetch(new URL("./previews.json", import.meta.url)).then((r) => r.json());
 
@@ -72,6 +74,25 @@ export async function getArticle(id, at) {
 export async function getPreview(title) {
   await delay(60);
   return PREVIEWS[title] ?? null;
+}
+
+// Not in app.py yet. Every saved version of an article, oldest first, without the text:
+// SELECT rev_id, user, comment, row_start, CHAR_LENGTH(text) AS chars, sha1
+// FROM article FOR SYSTEM_TIME ALL WHERE page_id = %s ORDER BY row_start
+export async function getHistory(id) {
+  await delay(200);
+  const file = HISTORIES[id];
+  if (!file) return [];
+  return fetch(new URL(file, import.meta.url)).then((r) => r.json());
+}
+
+let changes = null;
+
+// Not in app.py yet. The text one edit added and removed, as { added: string[], removed: string[] } of wiki markup.
+// A real version can diff /api/article at the edit's row_start against the second before it.
+export async function getChange(revId) {
+  changes ??= fetch(new URL("./changes.json", import.meta.url)).then((r) => r.json());
+  return (await changes)[revId] ?? null;
 }
 
 // Not an API request: turns a [[File:...]] name from the article text into an image URL.
