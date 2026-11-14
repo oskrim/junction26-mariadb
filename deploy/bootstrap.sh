@@ -38,6 +38,7 @@ setup_firewall() {
   ufw default allow outgoing
   local port
   for port in 22 80 443 3306; do ufw allow "$port/tcp"; done
+  ufw allow 443/udp  # HTTP/3: Caddy serves QUIC on it
   ufw --force enable
 }
 
