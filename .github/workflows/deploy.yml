@@ -24,4 +24,4 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -T 15 -t ed25519 "$DEPLOY_HOST" > ~/.ssh/known_hosts
           ssh -o IdentitiesOnly=yes -o ServerAliveInterval=30 "root@$DEPLOY_HOST" \
-            'bash /srv/junction26-mariadb/deploy/deploy.sh'
+            'cd /srv/junction26-mariadb && git fetch -q origin && git reset -q --hard origin/main && bash deploy/deploy.sh'
