@@ -2,6 +2,7 @@ import { PAST_CHATS, respond } from "./assistant.js";
 import { citeLinks, learn, sourcesHtml } from "./learn.js";
 import { modelHtml, mountModel } from "./model3d.js";
 import { stepsView } from "./steps.js";
+import "./cite-tip.js";
 
 // Chats. Every request from the menu starts a new chat. Open chats are tabs in the tray at the
 // bottom right; closed ones move to History. One window shows the active chat, either floating
@@ -154,7 +155,7 @@ export function chatPanel({ article, onClose }) {
     }
     reply.classList.add("is-done");
     const shown = await attachment;
-    if (shown?.type === "sources") body.innerHTML = citeLinks(body.innerHTML, shown);
+    if (shown?.type === "sources" || shown?.type === "quotes") body.innerHTML = citeLinks(body.innerHTML, shown);
     if (shown) {
       reply.insertAdjacentHTML("beforeend", renderAttachment(shown));
       reply.querySelectorAll("[data-model]").forEach(mountModel);
