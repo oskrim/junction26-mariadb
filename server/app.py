@@ -18,6 +18,7 @@ from urllib.parse import parse_qs, quote, urlparse
 import pymysql
 
 import ask
+import bm25
 import learn
 import vector
 
@@ -48,6 +49,7 @@ def connect():
     con.cursor().execute("SET time_zone = '+00:00'")
     # Candidates one vector index search looks at (default 20); see vector.EF_SEARCH.
     con.cursor().execute(f"SET mhnsw_ef_search = {vector.EF_SEARCH}")
+    con.cursor().execute(bm25.session_sql())
     return con
 
 
@@ -359,12 +361,6 @@ def stem(word):
     return word if len(word) < STEM_FROM or word.isdigit() else word[:-2]
 
 
-def boolean_query(q):
-    """q as a FULLTEXT boolean query: every word is required, as itself or as any word that starts with
-    its stem. The exact word counts more than the inflected forms."""
-    return " ".join(f"+({w} {stem(w)}*)" if stem(w) != w else f"+{w}*" for w in words(q))
-
-
 def find(text, q):
     """Where q, else the first word that starts with the stem of one of its words, is in text, as
     [start, end); None if neither is (any case or accent)."""
@@ -383,54 +379,25 @@ def fold(text):
 
 
 MAX_WORDS = 8
-STEM_FROM = 7  # words this long or longer are also searched by their stem
-SEARCH_CANDIDATES = 50  # articles each ranking gives to the fusion
-
-
-def keyword_ranking(q):
-    """SQL ranking the articles that match q with the FULLTEXT indexes, and its parameters: the article titled q
-    first, then the other title matches, then the text matches. Title matches are ordered by how well their text
-    matches, then shortest title first. MATCH ... AGAINST scores by how often the words occur in a row and how
-    rare they are overall.
-
-    The text is an article's S Markdown (Finnish), else its current m_article text: wikitext for M articles,
-    Markdown for the rest of Finnish Wikipedia (L)."""
-    query = boolean_query(q)
-    # The exact title by its own key: hundreds of titles can match as well as it does ("... (talvisota)").
-    sql = """SELECT page_id, ROW_NUMBER() OVER (ORDER BY MAX(exact) DESC, MAX(in_title) DESC, MAX(text_score) DESC,
-                                                       MIN(title_length), page_id) AS keyword_rank
-             FROM ((SELECT page_id, 1 AS exact, 1 AS in_title, 0 AS text_score, 0 AS title_length
-                    FROM m_article_stats WHERE title = %s)
-                   UNION ALL
-                   (SELECT page_id, 0, 1, 0, CHAR_LENGTH(title) FROM m_article_stats
-                    WHERE MATCH (title) AGAINST (%s IN BOOLEAN MODE)
-                    ORDER BY MATCH (title) AGAINST (%s IN BOOLEAN MODE) DESC, CHAR_LENGTH(title) LIMIT %s)
-                   UNION ALL
-                   (SELECT page_id, 0, 0, MATCH (text) AGAINST (%s IN BOOLEAN MODE), 255 FROM m_search
-                    WHERE MATCH (text) AGAINST (%s IN BOOLEAN MODE) ORDER BY 4 DESC LIMIT %s)) hits
-             GROUP BY page_id ORDER BY keyword_rank LIMIT %s"""
-    return sql, (q, query, query, SEARCH_CANDIDATES, query, query, SEARCH_CANDIDATES, SEARCH_CANDIDATES)
-
-
+STEM_FROM = 7  # in snippets, words this long or longer are also found by their stem
 def search(cur, params):
-    """Articles that match q by keyword or by meaning, scored in one statement (vector.hybrid_sql).
+    """Articles that match q by BM25 or by meaning, scored by vector.hybrid.
 
-    Without the embedding service, the keyword ranking alone."""
+    Without the embedding service, the BM25 ranking alone."""
     q = params.get("q", [""])[0].strip()
     if not q:
         raise BadRequest("q is required")
     limit = number(params, "limit", 20)
     if not words(q):
         return []
+    # The words written together too: Finnish compounds are often searched apart ("Lapuan liike" for Lapuanliike).
+    ids = bm25.term_ids(cur, " ".join(words(q)) + (" " + "".join(words(q)) if len(words(q)) > 1 else ""))
     try:
         query = vector.embed(q)
-        cur.execute(vector.hybrid_sql(query.space), {"q": q, "boolean": boolean_query(q), "vector": query.vector, "limit": limit})
-        ranked = [{**r, "by": by(r)} for r in cur.fetchall()]
+        ranked = [{**r, "by": by(r)} for r in vector.hybrid(cur, q, ids, query, limit)]
     except vector.Unavailable as error:
         print(f"search: keywords only: {error}", flush=True)
-        keyword_sql, keyword_args = keyword_ranking(q)
-        cur.execute(f"SELECT page_id FROM ({keyword_sql}) k ORDER BY keyword_rank LIMIT %s", (*keyword_args, limit))
-        ranked = [{**r, "by": "keyword"} for r in cur.fetchall()]
+        ranked = [{"page_id": p, "by": "keyword"} for p in list(vector.lexical_ranking(cur, q, ids, limit))[:limit]]
     if not ranked:
         return []
     # Text by primary key; IF reads the m_article text only for articles without S text.
@@ -450,7 +417,7 @@ def search(cur, params):
 
 def by(scored):
     """What found a hybrid search result: its words, its meaning, or both."""
-    lexical = scored["exact"] or scored["title_score"] or scored["body_score"]
+    lexical = scored["exact"] or scored["body"] or scored["title"]
     return "both" if lexical and scored["meaning"] else "keyword" if lexical else "meaning"
 
 

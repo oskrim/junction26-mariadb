@@ -39,6 +39,8 @@ main() {
   if [ -f server/load.py ]; then
     uv run --with pymysql --with pyarrow python server/load.py s --vectors
     uv run --with pymysql --with pyarrow python server/load.py m --articles 20
+    # Search needs the BM25 index; it is built again only when articles were added (~6 min for wiki_full).
+    uv run --with pymysql --with pyarrow --with numpy --with snowballstemmer --with PyStemmer python server/load.py bm25
   else
     echo "deploy: server/load.py is not on main yet; skipping loaders"
   fi

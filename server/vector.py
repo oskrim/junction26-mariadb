@@ -13,6 +13,7 @@ from typing import NamedTuple
 import urllib.error
 import urllib.request
 
+import bm25
 import voyage
 
 EMBED_URL = os.environ.get("EMBED_URL", "http://127.0.0.1:8020")
@@ -98,42 +99,56 @@ def count(cur):
     return cur.fetchone()["n"]
 
 
-# Hybrid search: a linear sum of saturated scores. Each raw MATCH score x becomes x / (kappa + x), 0.5 at x = kappa;
-# the kappas are about the median MATCH score of the top 50 candidates over the example queries in server/README.md.
-KAPPA_TITLE, KAPPA_BODY = 30, 80
-TITLE_WEIGHT = 2  # a word in the title says more than the same word in the text
+# Hybrid search: a linear sum of saturated scores (server/README.md). Each raw BM25 score x becomes x / (kappa + x),
+# 0.5 at x = kappa: about the median BM25 score of the top 50 articles over the example queries in server/README.md.
+KAPPA_BODY, KAPPA_TITLE = 10, 8
 EXACT_BONUS = 3  # more than every other term together: the article titled as the query comes first
-HYBRID_CANDIDATES = 50  # from each of the title, text and vector searches
+LEXICAL_CANDIDATES = 200  # from the BM25 index
+HYBRID_CANDIDATES = 50  # from the vector index
 
 
-def hybrid_sql(space):
-    """One statement: the candidates from the title and text FULLTEXT searches and the vector index, each scored
+def lexical(body, title, exact):
+    """The lexical score of an article from its BM25 scores in its text and its title, and whether its title is
+    the query."""
+    return body / (KAPPA_BODY + body) + title / (KAPPA_TITLE + title) + EXACT_BONUS * exact
 
-        TITLE_WEIGHT * sat(title MATCH) + sat(text MATCH) + EXACT_BONUS * (title = q)
-          + space.weight * max(0, cosine - space.floor)
 
-    with meaning = cosine > space.floor. Parameters by name: q (the query), boolean (its FULLTEXT boolean form), vector, limit."""
-    n = HYBRID_CANDIDATES
-    return f"""WITH candidates AS (
-  (SELECT page_id FROM m_article_stats WHERE title = %(q)s)
-  UNION
-  (SELECT page_id FROM m_article_stats WHERE MATCH (title) AGAINST (%(boolean)s IN BOOLEAN MODE)
-   ORDER BY MATCH (title) AGAINST (%(boolean)s IN BOOLEAN MODE) DESC, CHAR_LENGTH(title) LIMIT {n})
-  UNION
-  (SELECT page_id FROM m_search WHERE MATCH (text) AGAINST (%(boolean)s IN BOOLEAN MODE)
-   ORDER BY MATCH (text) AGAINST (%(boolean)s IN BOOLEAN MODE) DESC LIMIT {n})
-  UNION
-  (SELECT page_id FROM (SELECT page_id, VEC_DISTANCE_COSINE(embedding, VEC_FromText(%(vector)s)) AS distance
-                        FROM {space.table} WHERE {space.rows} ORDER BY distance LIMIT {n}) nearest)),
-scored AS (
-  SELECT c.page_id, s.title = %(q)s AS exact,
-         MATCH (s.title) AGAINST (%(boolean)s IN BOOLEAN MODE) AS title_score,
-         IFNULL(MATCH (x.text) AGAINST (%(boolean)s IN BOOLEAN MODE), 0) AS body_score,
-         IFNULL(1 - VEC_DISTANCE_COSINE(v.embedding, VEC_FromText(%(vector)s)), 0) AS cosine
-  FROM candidates c JOIN m_article_stats s USING (page_id)
-  LEFT JOIN m_search x USING (page_id)
-  LEFT JOIN {space.table} v ON v.page_id = c.page_id AND {space.rows})
-SELECT page_id, exact, title_score, body_score, cosine, cosine > {space.floor} AS meaning,
-       {TITLE_WEIGHT} * title_score / ({KAPPA_TITLE} + title_score) + body_score / ({KAPPA_BODY} + body_score)
-         + {EXACT_BONUS} * exact + {space.weight} * GREATEST(0, cosine - {space.floor}) AS score
-FROM scored ORDER BY score DESC, page_id LIMIT %(limit)s"""
+def lexical_ranking(cur, q, ids, limit):
+    """{page_id: (bm25_body, bm25_title, exact)} of the article titled q (any case or accent, or with q's words
+    written together) and the limit articles with the highest lexical score for the terms ids, best first."""
+    cur.execute("SELECT page_id FROM m_article_stats WHERE title IN %s", ([q, "".join(q.split())],))
+    exact = [r["page_id"] for r in cur.fetchall()]
+    found = {p: (b, t, True) for p, (b, t) in bm25.scores(cur, ids, exact).items()}
+    found.update((p, (0.0, 0.0, True)) for p in exact if p not in found)
+    for page_id, body, title in bm25.ranking(cur, ids, KAPPA_BODY, KAPPA_TITLE, limit):
+        found.setdefault(page_id, (body, title, False))
+    return found
+
+
+def hybrid(cur, q, ids, query, limit):
+    """The limit best of the lexical top LEXICAL_CANDIDATES and the vector top HYBRID_CANDIDATES, each scored
+
+        lexical(bm25_body, bm25_title, exact) + space.weight * max(0, cosine - space.floor)
+
+    as [{page_id, body, title, exact, cosine, meaning, score}], with meaning = cosine > space.floor. ids are q's
+    bm25_term ids, query its Query."""
+    space = query.space
+    found = lexical_ranking(cur, q, ids, LEXICAL_CANDIDATES)
+    cur.execute(f"""SELECT v.page_id, 1 - v.distance AS cosine FROM ({NEAREST.format(table=space.table, rows=space.rows)}) v
+                    JOIN m_article_stats s USING (page_id)""", (query.vector, HYBRID_CANDIDATES))
+    cosines = {r["page_id"]: r["cosine"] for r in cur.fetchall()}
+    found.update((p, (b, t, False)) for p, (b, t) in bm25.scores(cur, ids, [p for p in cosines if p not in found]).items())
+    lexical_only = [p for p in found if p not in cosines]
+    if lexical_only:
+        cur.execute(f"""SELECT page_id, 1 - VEC_DISTANCE_COSINE(embedding, VEC_FromText(%s)) AS cosine
+                        FROM {space.table} WHERE {space.rows} AND page_id IN %s""", (query.vector, lexical_only))
+        cosines.update((r["page_id"], r["cosine"]) for r in cur.fetchall())
+    scored = []
+    for page_id in found.keys() | cosines.keys():
+        body, title, exact = found.get(page_id, (0.0, 0.0, False))
+        cosine = cosines.get(page_id, 0.0)
+        score = lexical(body, title, exact) + space.weight * max(0.0, cosine - space.floor)
+        scored.append({"page_id": page_id, "body": body, "title": title, "exact": exact, "cosine": cosine,
+                       "meaning": cosine > space.floor, "score": score})
+    scored.sort(key=lambda r: (-r["score"], r["page_id"]))
+    return scored[:limit]

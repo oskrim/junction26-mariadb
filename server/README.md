@@ -28,6 +28,8 @@ The datasets are in `~/datasets/mariadb-wikipedia`. Set `WIKI_DATA` to use anoth
 ```bash
 uv run --with pymysql --with pyarrow python server/load.py s   # S: fi, sv, en articles and categories (~3 s)
 uv run --with pymysql --with pyarrow python server/load.py m   # M: 20 articles with every version (~50 s)
+uv run --with pymysql --with pyarrow --with numpy --with snowballstemmer --with PyStemmer \
+  python server/load.py bm25                                   # the search index (seconds; ~6 min with L)
 ```
 
 The M slice is "Suomen sisällissota" (page 1150) and the 19 most-edited articles that it links to.
@@ -41,7 +43,7 @@ You can run the loader again. It skips the articles that are already loaded.
 ## 3. Run the app
 
 ```bash
-uv run --with pymysql python server/app.py
+uv run --with pymysql --with snowballstemmer --with PyStemmer python server/app.py
 ```
 
 Open <http://127.0.0.1:8010>. Set `PORT` to use another port.

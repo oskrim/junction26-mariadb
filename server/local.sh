@@ -79,6 +79,8 @@ docker compose -f server/compose.yml up -d --wait
 uv run -q --with pymysql --with pyarrow python -u server/load.py s
 uv run -q --with pymysql --with pyarrow python -u server/load.py m --articles "${ARTICLES:-all}"
 if [ "${L:-}" = 1 ]; then uv run -q --with pymysql --with pyarrow python -u server/load.py l; fi
+# The BM25 index search uses, built again when articles were added (~6 min with L).
+uv run -q --with pymysql --with pyarrow --with numpy --with snowballstemmer --with PyStemmer python -u server/load.py bm25
 if [ "$VECTOR_MODEL" = voyage ] && [ "${VECTORS:-}" = 1 ]; then
   uv run -q --with pymysql --with pyarrow python -u server/voyage.py import
 fi
@@ -88,4 +90,4 @@ if [ -z "${GEMINI_API_KEY:-}" ] && command -v gcloud >/dev/null; then
   export GEMINI_API_KEY
 fi
 echo "local: http://127.0.0.1:$PORT"
-exec uv run -q --with pymysql python server/app.py
+exec uv run -q --with pymysql --with snowballstemmer --with PyStemmer python server/app.py
