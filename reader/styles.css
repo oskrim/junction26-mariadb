@@ -1,10 +1,11 @@
 :root {
-  --paper: #f9f6f0;
-  --ink: #1f1d1a;
-  --ink-2: #57524a;
-  --ink-3: #8b8478;
-  --rule: #d8d1c4;
-  --underline: #c5bcab;
+  --paper: #ffffff;
+  --ink: #202122;
+  --ink-2: #54595d;
+  --ink-3: #8a8f94;
+  --rule: #dadde3;
+  --link: #3366cc;
+  --link-hover: #2a4b8d;
 
   --serif: "Source Serif 4", Georgia, serif;
   --sans: "Inter", system-ui, sans-serif;
@@ -302,17 +303,20 @@ a {
 .body a.wl,
 .body a.ext,
 .figure figcaption a,
-.references a {
-  text-decoration: underline;
-  text-decoration-color: var(--underline);
-  text-decoration-thickness: 1px;
-  text-underline-offset: 0.18em;
-  transition: text-decoration-color 0.15s;
+.references a,
+.popover a {
+  color: var(--link);
+  text-decoration: none;
 }
 
 .body a.wl:hover,
-.body a.ext:hover {
-  text-decoration-color: var(--ink);
+.body a.ext:hover,
+.figure figcaption a:hover,
+.references a:hover,
+.popover a:hover {
+  color: var(--link-hover);
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
 }
 
 .body ul,
@@ -352,7 +356,8 @@ a {
 }
 
 .hatnote a {
-  color: var(--ink-2);
+  color: var(--link);
+  text-decoration: none;
 }
 
 .math-block {
@@ -387,12 +392,12 @@ sup.ref {
 
 sup.ref a {
   padding: 0 1px;
-  color: var(--ink-3);
+  color: var(--link);
   text-decoration: none;
 }
 
 sup.ref a:hover {
-  color: var(--ink);
+  color: var(--link-hover);
 }
 
 .popover {
@@ -401,10 +406,10 @@ sup.ref a:hover {
   width: max-content;
   max-width: 360px;
   padding: 14px 16px;
-  background: #fffdf9;
+  background: var(--paper);
   border: 1px solid var(--rule);
   border-radius: 6px;
-  box-shadow: 0 12px 32px -12px rgb(60 48 30 / 0.22);
+  box-shadow: 0 12px 32px -12px rgb(32 33 34 / 0.18);
   font-size: 14.5px;
   line-height: 1.5;
   color: var(--ink-2);
