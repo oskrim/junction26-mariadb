@@ -5,7 +5,7 @@ import { formatDate } from "./history-cards.js";
 import { analyzeHistory, findEditWars, parseRowStart, pickMilestones } from "./history-model.js";
 import { loadMath } from "./math.js";
 import { createMinimap } from "./minimap.js";
-import { createStoryPath } from "./story-path.js";
+import { createStoryPath, editorColor } from "./story-path.js";
 import { closeWar, playWar, warHeading } from "./war-inline.js";
 import { renderWikitext } from "./wikitext.js";
 
@@ -269,6 +269,7 @@ export function startHistoryPlay({ id, body, onClose }) {
     $(".hp-date").textContent = formatDate(parseRowStart(version.row_start));
     $(".hp-who").innerHTML = `${escape(censor(version.user))} <span>· version ${(frame.edit.index + 1).toLocaleString("en-US")} of ${edits.length.toLocaleString("en-US")}</span>`;
     if (!frame.war && announced && (frame.edit.time > announced.end || frame.edit.time < announced.start)) announce(null);
+    typist = { name: censor(version.user), color: editorColor(frame.edit.user, frame.edit.kind) };
     await render(version, renderMath, token, animate, onPlan);
     if (frame.war && token === run && !closed) announce(frame.war);
   }
@@ -382,6 +383,8 @@ export function startHistoryPlay({ id, body, onClose }) {
   // change at the same time as the last one, so a version never takes too long.
   // The paragraph the last version's visit went to: where a fight that breaks out is marked.
   let visited = null;
+  // Who the cursor types for: the version's editor, named on the cursor in their color from the road.
+  let typist = null;
 
   async function render(version, renderMath, token, animate, onPlan) {
     visited = null;
@@ -553,6 +556,13 @@ export function startHistoryPlay({ id, body, onClose }) {
   function typeInto(el, ops, quota, token) {
     const caret = document.createElement("span");
     caret.className = "hp-caret";
+    if (typist) {
+      caret.style.setProperty("--c", typist.color);
+      const tag = document.createElement("span");
+      tag.className = "hp-caret-name";
+      tag.textContent = typist.name;
+      caret.append(tag);
+    }
     const parts = [];
     for (const op of ops) {
       if (op.keep) {

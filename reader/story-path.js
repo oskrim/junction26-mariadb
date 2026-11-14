@@ -521,6 +521,12 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
 }
 
 // Each named editor keeps one soft color; anonymous editors are grey and bots a cool grey.
+// The editor's color as CSS, as their disc on the road shows it: for the text cursor that types for them.
+export function editorColor(user, kind) {
+  const [h, sat, light] = userColor(user, kind);
+  return `hsl(${h} ${Math.max(sat, 10)}% ${Math.max(18, light - 30)}%)`;
+}
+
 function userColor(user, kind) {
   if (kind === "anonymous") return [210, 4, 70];
   if (kind === "bot") return [210, 14, 64];
