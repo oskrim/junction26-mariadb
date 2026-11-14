@@ -103,6 +103,8 @@ export async function mountExplore(root, { id }) {
   let branchSize = 0;
   let moving = false;
   let settleUntil = 0;
+  let fitDist = DIST;
+  const away = new Map();
   let summary = "";
   let shownId = null;
 
@@ -146,11 +148,19 @@ export async function mountExplore(root, { id }) {
     }
     const further = [...via.keys()]
       .sort((a, b) => via.get(b) - via.get(a) || nodes.get(b).chars - nodes.get(a).chars)
-      .slice(0, MAX_FURTHER);
+      .slice(0, Math.min(MAX_FURTHER, Math.max(24, near.length * 2)));
     hop = new Map([[nextId, 0], ...near.map((n) => [n, 1]), ...further.map((n) => [n, 2])]);
 
     const chosen = await chooseCards(near);
-    target = placeInSpace(nextId, near, further, new Set(chosen.map(({ n }) => n)));
+    // Articles that don't belong to the new map drift outward as they fade, like flying past them.
+    for (const [n, p] of pos) {
+      if (!hop.has(n)) away.set(n, { x: p.x * 1.7, y: p.y * 1.7, z: p.z * 1.7 });
+    }
+    // A small article gets a tight cluster and the view moves in; a big one spreads out.
+    const r1 = clamp(120 + Math.sqrt(near.length) * 14, 150, 290);
+    fitDist = DIST * clamp((r1 + 220) / 510, 0.72, 1);
+    cam.distTo = fitDist;
+    target = placeInSpace(nextId, near, further, new Set(chosen.map(({ n }) => n)), r1);
     const start = from ? { ...pos.get(from) } : { x: 0, y: 0, z: 0 };
     for (const [n, t] of target) {
       if (pos.has(n)) continue;
@@ -242,13 +252,13 @@ export async function mountExplore(root, { id }) {
   // Each topic gets its own patch of a sphere. Linked articles sit closer to the middle than the ones
   // a step further away, and a few rounds of nudging keep dots from landing on top of each other
   // and give picture cards room so they rarely cover one another.
-  function placeInSpace(cid, near, further, withCards) {
+  function placeInSpace(cid, near, further, withCards, r1) {
     const placed = new Map([[cid, { x: 0, y: 0, z: 0 }]]);
     for (const [n, h] of hop) {
       if (h === 0) continue;
       const a = anchors.get(topics[n]);
-      const reach = h === 1 ? 0.72 : 1.12;
-      const spread = h === 1 ? 70 : 84;
+      const reach = (h === 1 ? r1 : r1 + 160) / 400;
+      const spread = (h === 1 ? 0.24 : 0.19) * (h === 1 ? r1 : r1 + 160);
       const rand = seeded(n);
       placed.set(n, {
         x: a.x * reach + gauss(rand) * spread,
@@ -379,12 +389,15 @@ export async function mountExplore(root, { id }) {
     for (const k of ["x", "y", "z"]) cam.focus[k] += (cam.focusTo[k] - cam.focus[k]) * ease;
 
     for (const [n, p] of pos) {
-      const t2 = target.get(n);
+      const t2 = target.get(n) ?? away.get(n);
       const waiting = t < (p.arrive ?? 0);
       if (t2 && !waiting) for (const k of ["x", "y", "z"]) p[k] += (t2[k] - p[k]) * ease;
       const wanted = hop.has(n) && isAlive(n) && !waiting ? 1 : 0;
       p.a += (wanted - p.a) * ease;
-      if (!hop.has(n) && p.a < 0.01) pos.delete(n);
+      if (!hop.has(n) && p.a < 0.01) {
+        pos.delete(n);
+        away.delete(n);
+      }
     }
 
     projected = new Map([...pos].map(([n, p]) => [n, project(p)]));
@@ -673,7 +686,7 @@ export async function mountExplore(root, { id }) {
     if (selectedId === null) return;
     selectedId = null;
     cam.focusTo = { x: 0, y: 0, z: 0 };
-    cam.distTo = DIST;
+    cam.distTo = fitDist;
     openPanel(centerId);
   }
 
@@ -749,7 +762,6 @@ export async function mountExplore(root, { id }) {
     moving = true;
     selectedId = n;
     cam.focusTo = { ...target.get(n) };
-    cam.distTo = DIST;
     await wait(700);
 
     // Re-anchor everything on the new article, so the next layout starts from where things are now.
