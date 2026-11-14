@@ -1055,3 +1055,130 @@ body[data-view="history"] .bar {
 .history-view .minimap {
   right: 200px;
 }
+
+/* Edit wars inside the Article view: a swords button by each fought-over heading, and the fight
+   replayed in place of the section while the rest of the page fades back */
+
+.war-marks {
+  display: inline-flex;
+  gap: 6px;
+  margin-left: 12px;
+  vertical-align: 0.2em;
+}
+
+.war-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px 2px 6px;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  background: var(--paper);
+  font: 500 11px var(--sans);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  color: var(--ink-3);
+  cursor: pointer;
+  opacity: 0.75;
+  transition: color 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+}
+
+.war-mark:hover,
+.war-mark:focus-visible {
+  border-color: #d73333;
+  color: #d73333;
+  opacity: 1;
+}
+
+.war-mark svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+
+.layout .head,
+.layout .toc,
+.body > * {
+  transition: opacity 0.4s ease;
+}
+
+.war-mode .layout .head,
+.war-mode .layout .toc,
+.war-mode .body > :not(.war-focus, .war-stage) {
+  opacity: 0.18;
+}
+
+.war-mode .war-marks {
+  visibility: hidden;
+}
+
+.war-hidden {
+  display: none !important;
+}
+
+.war-stage {
+  margin: 0 0 1.15em;
+  padding-top: 36px;
+}
+
+.war-loading {
+  font: 13px var(--sans);
+  color: var(--ink-3);
+}
+
+.war-stage .replay-page {
+  flex: none;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow: visible;
+  border: 0;
+  background: none;
+}
+
+.war-stage .replay-tab {
+  position: static;
+  margin: 0 0 16px;
+  padding: 5px 12px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: #f8f9fa;
+}
+
+.war-stage .replay-doc {
+  font-size: inherit;
+  line-height: inherit;
+}
+
+.war-stage .replay-p {
+  margin: 0 0 1.15em;
+}
+
+.war-stage .replay-foot {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  z-index: 30;
+  width: min(560px, calc(100vw - 32px));
+  padding: 8px 8px 8px 10px;
+  translate: -50% 0;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  background: var(--paper);
+  box-shadow: 0 6px 24px rgb(0 0 0 / 0.12);
+  animation: war-foot-in 0.3s ease;
+}
+
+.war-stage .replay-close {
+  flex: none;
+}
+
+@keyframes war-foot-in {
+  from {
+    opacity: 0;
+    translate: -50% 12px;
+  }
+}

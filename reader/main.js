@@ -40,6 +40,7 @@ if (!version || !summary) {
   toc.innerHTML = renderToc(doc.toc);
   document.body.classList.add("is-ready");
   trackActiveSection(doc.toc);
+  import("./war-inline.js").then((m) => m.addWarMarkers({ body, id }));
   hoverCard({
     root: body,
     selector: "a.wl",
