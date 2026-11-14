@@ -25,7 +25,8 @@ export function chatPanel({ article, onClose }) {
   el.close.addEventListener("click", () => closeChat(active));
   el.minimise.addEventListener("click", hide);
   el.dock.addEventListener("click", () => setDocked(!docked));
-  el.newChat.addEventListener("click", () => show(create({ title: "New chat" })));
+  // An empty chat is reused rather than stacking up more blank tabs.
+  el.newChat.addEventListener("click", () => show(chats.find((c) => c.turn === 0 && !c.busy) ?? create({ title: "New chat" })));
   el.historyButton.addEventListener("click", () => toggleHistory());
   el.tabs.addEventListener("click", (e) => {
     const tab = e.target.closest(".chat-tab");
