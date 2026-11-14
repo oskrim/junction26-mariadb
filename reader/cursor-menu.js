@@ -28,8 +28,8 @@ const MODES = [
     id: "visualise",
     label: "Visualise",
     key: "v",
-    placeholder: "What should I chart?",
-    fallback: "Show how this grew over time",
+    placeholder: "What should I show? A model, a chart…",
+    fallback: "Show me how this works",
     icon: `<path d="M3 13V8.5M8 13V3.5M13 13V6.5" />`,
   },
 ];

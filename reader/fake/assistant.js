@@ -55,7 +55,20 @@ The most recent edit was on 3 November 2026 by Quantumavenger, who updated the e
     },
   }),
 
-  visualise: ({ context, article }) => ({
+  // Questions about time or edits get a chart; anything else gets a 3D model to play with.
+  visualise: ({ prompt, context, article }) =>
+    /grew|grow|time|year|histor|edit|length|chart|graph|change/i.test(prompt)
+      ? REPLIES.chart({ context, article })
+      : {
+          text: context
+            ? `Here is a qubit, the building block that passage is about. A normal bit is either 0 or 1. A qubit can point anywhere on this sphere: the top is 0, the bottom is 1, and everything in between is a bit of both.
+
+Drag to turn it. Press “Both at once”, then “Measure”: the qubit has to pick 0 or 1, and the arrow's height decides the odds.`
+            : `Here is a qubit, the building block ${article.title} is about. The top of the sphere is 0, the bottom is 1, and everything in between is a bit of both. Drag to turn it, then try “Measure”.`,
+          attachment: { type: "model", model: "bloch", title: "A qubit on the Bloch sphere" },
+        },
+
+  chart: ({ context, article }) => ({
     text: context
       ? `Here is how long ${article.title} was over time. The dot marks the day your passage first appeared.`
       : `Here is how long ${article.title} was over time, measured in characters.`,

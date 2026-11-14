@@ -23,5 +23,6 @@ python3 -m http.server 5120 -d reader
 ```
 
 - `cursor-menu.js` and `cursor-menu.css`: the menu and its prompt bar. Press Q to open it (no browser uses a bare Q).
-- `chat.js`: the floating chat window.
-- `fake/assistant.js`: every canned answer. Replace the body of `respond()` with a real call to go live.
+- `chat.js`: the chats: a floating window or side panel, with a tray of tabs and a history list.
+- `model3d.js`: the 3D qubit that Visualise shows, drawn on a canvas.
+- `fake/assistant.js`: every canned answer and the earlier chats in History. Replace the body of `respond()` with a real call to go live.

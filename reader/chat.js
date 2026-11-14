@@ -1,4 +1,5 @@
 import { PAST_CHATS, respond } from "./fake/assistant.js";
+import { modelHtml, mountModel } from "./model3d.js";
 
 // Chats. Every request from the menu starts a new chat. Open chats are tabs in the tray at the
 // bottom right; closed ones move to History. One window shows the active chat, either floating
@@ -144,6 +145,7 @@ export function chatPanel({ article, onClose }) {
     reply.classList.add("is-done");
     if (attachment) {
       reply.insertAdjacentHTML("beforeend", renderAttachment(attachment));
+      reply.querySelectorAll("[data-model]").forEach(mountModel);
       scrollDown(chat.log);
     }
     chat.busy = false;
@@ -350,6 +352,7 @@ function renderAttachment(a) {
       )
       .join("")}</div>`;
   }
+  if (a.type === "model") return modelHtml(a);
   if (a.type === "chart") return `<figure class="attach attach-chart">${lineChart(a)}<figcaption>${a.title}</figcaption></figure>`;
   return "";
 }
