@@ -62,7 +62,7 @@ const DOCK = `
       </div>
     </div>
     <button type="button" class="hp-speed" aria-label="Playback speed">1×</button>
-    <button type="button" class="hp-close" aria-label="Back to today's article">×</button>
+    <button type="button" class="hp-close" aria-label="Back to today's article"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>Close</button>
   </div>`;
 
 // Replays the article being written, in place: from its first version to today, through the versions
@@ -76,6 +76,7 @@ export function startHistoryPlay({ id, body, onClose }) {
   side.className = "hp-path";
   side.setAttribute("aria-label", "The article's life as a road");
   side.innerHTML = `
+    <dl class="hp-stats"></dl>
     <canvas></canvas>`;
   document.querySelector(".layout").append(side);
   const dock = document.createElement("div");
@@ -143,6 +144,13 @@ export function startHistoryPlay({ id, body, onClose }) {
   async function setUp() {
     edits = analyzeHistory(await getHistory(id));
     const wars = findEditWars(edits);
+    side.querySelector(".hp-stats").innerHTML = [
+      [edits.length, "edits"],
+      [new Set(edits.map((e) => e.user)).size, "editors"],
+      [wars.filter((w) => w.kind === "dispute").length, "edit wars"],
+    ]
+      .map(([n, label]) => `<div><dt>${label}</dt><dd>${n.toLocaleString("en-US")}</dd></div>`)
+      .join("");
     const picked = new Map(pickMilestones(edits, wars).map((e) => [e.index, { edit: e }]));
     // Each war is played round by round: a stop just before it, so the first round shows only the
     // contested edit and the page goes to where the fight is; then up to ROUNDS of its edits that were
