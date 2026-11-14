@@ -37,11 +37,15 @@ NEAREST = """SELECT page_id, VEC_DISTANCE_COSINE(embedding, VEC_FromText(%s)) AS
              FROM article_vector WHERE lang = 'fi' ORDER BY distance LIMIT %s"""
 
 
+CANDIDATES = 4  # vectors read per result wanted: some are of articles not loaded into the main table yet
+
+
 def nearest(cur, vector, limit, exclude=()):
     """[(page_id, distance)] of the openable articles closest to vector, nearest first."""
-    cur.execute(f"SET mhnsw_ef_search = {max(EF_SEARCH, limit + len(exclude))}")
+    wanted = (limit + len(exclude)) * CANDIDATES
+    cur.execute(f"SET mhnsw_ef_search = {max(EF_SEARCH, wanted)}")
     cur.execute(f"""SELECT v.page_id, v.distance FROM ({NEAREST}) v
-                    JOIN m_article_stats s USING (page_id) ORDER BY v.distance""", (vector, limit + len(exclude)))
+                    JOIN m_article_stats s USING (page_id) ORDER BY v.distance""", (vector, wanted))
     return [(r["page_id"], r["distance"]) for r in cur.fetchall() if r["page_id"] not in exclude][:limit]
 
 

@@ -67,7 +67,7 @@ export function citeLinks(html, { type, here, items }) {
     const s = byN.get(n);
     if (!s) return null;
     const tip = `data-tip-title="${escape(s.title)}" data-tip-meta="${escape(s.why ?? (s.section || "Introduction"))}" data-tip-quote="${escape(s.quote ?? "")}"`;
-    return type === "quotes"
+    return type === "quotes" && !s.link
       ? `<button type="button" class="cite" data-quote="${escape(s.quote)}" ${tip}>${items.indexOf(s) + 1}</button>`
       : `<a class="cite" href="${escape(href(s))}" target="_blank" rel="noopener" ${tip}>${n}</a>`;
   };
@@ -77,6 +77,7 @@ export function citeLinks(html, { type, here, items }) {
   });
 }
 
-const href = (s) => (s.page_id ? `./?id=${s.page_id}` : s.url);
+// An Ask quote from a related article or another version links to that text.
+const href = (s) => s.link ?? (s.page_id ? `./?id=${s.page_id}` : s.url);
 
 const escape = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);

@@ -198,8 +198,8 @@ def embed_job():
         vectors, cut, n_tokens = encoder.encode([text for _, text in rows])
         gpu_s += time.time() - t0
         cur.executemany("""INSERT IGNORE INTO article_vector (lang, page_id, model, truncated, embedding)
-                           VALUES ('fi', %s, %s, %s, %s)""",
-                        [(p, MODEL, c, packed(v)) for (p, _), v, c in zip(rows, vectors, cut)])
+                           VALUES (%s, %s, %s, %s, %s)""",
+                        [("fi", p, MODEL, c, packed(v)) for (p, _), v, c in zip(rows, vectors, cut)])
         articles += len(rows)
         tokens += n_tokens
         elapsed = time.time() - started
