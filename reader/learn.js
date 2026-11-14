@@ -48,7 +48,8 @@ async function* read(request, found, history) {
         if (name === "sources") found(data);
         else if (name === "done") return;
         else {
-          const piece = name === "error" ? `\n\nSorry, the answer stopped: ${data}` : data;
+          // No Markdown emphasis, and each key point is its own paragraph even without a blank line before it.
+          const piece = name === "error" ? `\n\nSorry, the answer stopped: ${data}` : data.replace(/\*/g, "").replace(/\s*• /g, "\n\n• ");
           text += piece;
           yield piece;
         }
