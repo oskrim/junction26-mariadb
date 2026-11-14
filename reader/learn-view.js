@@ -1,22 +1,25 @@
 // Learn: a wide sheet at the top of the page that turns one question into a short lesson. The server reads the
 // article's links (POST /api/learn with shape "lesson") and writes a title, a one-line goal, 3 or 4 sections and the
 // terms a newcomer would not know. A term opens in place with what it means here, and can become a lesson of its
-// own; the lessons dived into form a trail at the top. Read shows the lesson as text with a box for questions;
-// Listen (learn-audio.js) reads it aloud and takes questions in the middle. In Read, the chat sits on the left
-// of the lesson: a question is answered there, and a request to change the lesson ("make it simpler", "shorter",
-// "more about the treaty") rewrites the lesson itself, with the lesson so far as history.
+// own; the lessons dived into form a trail at the top. Read shows the lesson as text, with a chat beside the sheet
+// that changes it: each message rewrites the lesson in place (shape "revise"), with a note of what changed and Undo.
+// Listen (learn-audio.js) reads it aloud and takes questions in the middle.
 
 import { citeLinks, learn } from "./learn.js";
 import { stepsView } from "./steps.js";
 import { listenView } from "./learn-audio.js";
 
-const W = 1100; // the chat on the left (300) and the lesson column
+const W = 920;
 const EDGE = 16;
 const TRAY = 60;
+const SIDE_W = 296; // the chat beside the sheet
+const SIDE_GAP = 14;
+const SIDE_MIN = 900; // narrower windows keep the question box under the lesson
+const SUGGESTIONS = ["Be more specific", "Make it simpler", "Add a concrete example"];
 
 export function learnView({ article }) {
   const el = build();
-  document.body.append(el.scrim, el.sheet);
+  document.body.append(el.scrim, el.sheet, el.edit);
 
   const trail = [];
   let current = null;
@@ -42,11 +45,17 @@ export function learnView({ article }) {
   });
   el.compose.addEventListener("submit", (e) => {
     e.preventDefault();
-    const question = el.textarea.value.trim();
-    if (!question || !current?.done || current.asking) return;
+    const request = el.textarea.value.trim();
+    if (!request || !current?.done || current.asking) return;
     el.textarea.value = "";
     grow();
-    (isEdit(question) ? rewrite(current, question) : ask(current, question)).then(() => scrollThread(true));
+    revise(current, request);
+  });
+  el.edit.addEventListener("click", (e) => {
+    const suggestion = e.target.closest("[data-suggest]");
+    const undo = e.target.closest("[data-undo]");
+    if (suggestion && current?.done && !current.asking) revise(current, suggestion.dataset.suggest);
+    else if (undo) undoEdit(current, current.edits[Number(undo.dataset.undo)]);
   });
   el.textarea.addEventListener("keydown", (e) => {
     if (e.key === "Escape") el.textarea.blur();
@@ -58,6 +67,7 @@ export function learnView({ article }) {
   el.textarea.addEventListener("input", grow);
   addEventListener("keydown", (e) => {
     if (e.key !== "Escape" || el.sheet.hidden || isTyping(e.target) || !document.querySelector(".qm")?.hidden) return;
+    if (el.player.querySelector(".player-voices")) return; // Escape closes the voice menu first
     close();
   });
   addEventListener("resize", () => !el.sheet.hidden && layout());
@@ -82,12 +92,12 @@ export function learnView({ article }) {
   function close() {
     listen?.destroy();
     listen = null;
-    el.sheet.hidden = el.scrim.hidden = true;
+    el.sheet.hidden = el.scrim.hidden = el.edit.hidden = true;
     document.documentElement.classList.remove("lesson-open");
   }
 
   function create({ prompt, context, from = null }) {
-    const lesson = { prompt, context, from, text: "", parsed: parse("", prompt), sources: null, done: false, history: [], followups: [], openTerm: null, asking: false };
+    const lesson = { prompt, context, from, text: "", parsed: parse("", prompt), sources: null, done: false, history: [], followups: [], edits: [], openTerm: null, asking: false };
     lesson.page = document.createElement("div");
     lesson.page.className = "lesson-page";
     lesson.page.innerHTML = `<div class="lesson-top"></div><div class="lesson-progress"></div><div class="lesson-content"></div>`;
@@ -119,8 +129,86 @@ export function learnView({ article }) {
     render(lesson);
     if (lesson === current) {
       renderChrome();
+      renderEdits();
       listen?.update();
     }
+  }
+
+  // A message in the chat beside the sheet: the lesson is written again as asked. The old text stays, dimmed,
+  // until the new one starts, then the new one streams over it; the chat says what changed and offers Undo.
+  async function revise(lesson, request) {
+    const edit = { request, note: "", done: false, failed: false, undone: false, before: { text: lesson.text, sources: lesson.sources } };
+    lesson.edits.push(edit);
+    lesson.asking = true;
+    lesson.page.classList.add("is-rewriting");
+    renderEdits();
+    renderChrome();
+    const { stream, attachment } = learn({ prompt: request, context: lesson.context, article, history: lesson.history, shape: "revise" });
+    let raw = "";
+    let started = false;
+    for await (const piece of stream) {
+      raw += piece;
+      const { note, body } = splitNote(raw);
+      if (note !== null && note !== edit.note) {
+        edit.note = note;
+        renderEdits();
+      }
+      if (!body.trim() || /Sorry, the answer stopped/.test(body)) continue;
+      if (!started) {
+        started = true;
+        lesson.sources = null; // the new text's citation numbers are for the new sources
+        lesson.page.classList.remove("is-rewriting");
+        el.read.scrollTo({ top: 0, behavior: "smooth" });
+      }
+      lesson.text = body;
+      render(lesson);
+    }
+    const sources = await attachment;
+    const { body } = splitNote(raw);
+    if (!started || !parse(body, lesson.prompt).sections.length) {
+      Object.assign(lesson, edit.before); // nothing usable came back: keep the lesson as it was
+      edit.failed = true;
+    } else lesson.sources = sources ?? edit.before.sources;
+    edit.done = true;
+    lesson.asking = false;
+    lesson.page.classList.remove("is-rewriting");
+    render(lesson);
+    renderEdits();
+    renderChrome();
+    if (lesson === current) listen?.update();
+  }
+
+  function undoEdit(lesson, edit) {
+    if (!edit?.done || edit.undone || lesson.asking) return;
+    Object.assign(lesson, edit.before);
+    edit.undone = true;
+    // The next change starts from this version, so the history says so.
+    lesson.history.push({ role: "user", text: `Undo that change: "${edit.request}".` }, { role: "ai", text: edit.before.text });
+    render(lesson);
+    renderEdits();
+    if (lesson === current) listen?.update();
+  }
+
+  function renderEdits() {
+    if (!current) return;
+    const lesson = current;
+    const turns = lesson.edits
+      .map((edit, i) => {
+        const last = i === lesson.edits.length - 1;
+        const status = !edit.done
+          ? `<p class="lesson-edit-note is-working"><span class="dots"><i></i><i></i><i></i></span>${edit.note ? escape(edit.note) : "Rewriting the lesson…"}</p>`
+          : edit.failed
+            ? `<p class="lesson-edit-note is-failed">Couldn't change the lesson this time. It is as it was.</p>`
+            : `<p class="lesson-edit-note"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5 6.5 11.5 12.5 4.5" /></svg><span>${escape(edit.note || "Rewrote the lesson")}</span></p>
+               ${edit.undone ? `<p class="lesson-edit-undone">Undone</p>` : last ? `<button type="button" class="lesson-edit-undo" data-undo="${i}">Undo</button>` : ""}`;
+        return `<div class="lesson-edit-turn"><p class="lesson-edit-q">${escape(edit.request)}</p>${status}</div>`;
+      })
+      .join("");
+    el.editLog.innerHTML = lesson.edits.length
+      ? turns
+      : `<p class="lesson-edit-hint">Ask a question or for a change, and the lesson rewrites itself.</p>
+         <div class="lesson-edit-suggest">${SUGGESTIONS.map((t) => `<button type="button" data-suggest="${escape(t)}" ${lesson.done ? "" : "disabled"}>${escape(t)}</button>`).join("")}</div>`;
+    el.editLog.scrollTop = el.editLog.scrollHeight;
   }
 
   // A question during the lesson, typed under it in Read or asked in the middle of Listen (at: the sentence it
@@ -129,66 +217,15 @@ export function learnView({ article }) {
     const turn = { question, text: "", sources: null, done: false, at };
     lesson.followups.push(turn);
     lesson.asking = true;
-    renderQa(lesson);
     const { stream, attachment } = learn({ prompt: question, context: lesson.context, article, history: lesson.history, shape: "reply" });
     for await (const piece of stream) {
       turn.text += piece;
-      renderQa(lesson);
       if (lesson === current) listen?.update();
     }
     turn.sources = await attachment;
     turn.done = true;
     lesson.asking = false;
-    renderQa(lesson);
     if (lesson === current) listen?.update();
-    return turn;
-  }
-
-  // A request to change the lesson: the server writes it again with the lesson so far as history, and the new
-  // text replaces the old as it streams. If nothing comes back, the old lesson stays.
-  async function rewrite(lesson, request) {
-    const turn = { question: request, text: "", sources: null, done: false, edit: true };
-    const before = { text: lesson.text, sources: lesson.sources };
-    lesson.followups.push(turn);
-    lesson.asking = true;
-    lesson.done = false;
-    lesson.text = "";
-    lesson.openTerm = null;
-    renderQa(lesson);
-    if (lesson === current) renderChrome();
-    const progress = lesson.page.querySelector(".lesson-progress");
-    progress.replaceChildren();
-    const steps = stepsView(progress);
-    if (lesson === current) el.read.scrollTo({ top: 0, behavior: reduceMotion() ? "instant" : "smooth" });
-    const { stream, attachment } = learn({
-      prompt: `Write the lesson again, changed like this: ${request}. Keep the same lesson shape.`,
-      context: lesson.context,
-      article,
-      history: lesson.history,
-      shape: "lesson",
-      onStep: (name, data) => steps.update(name, data),
-    });
-    for await (const piece of stream) {
-      lesson.text += piece;
-      steps.fold();
-      render(lesson);
-    }
-    const sources = await attachment;
-    if (lesson.text.trim()) {
-      lesson.sources = sources ?? before.sources;
-      turn.text = "Rewrote the lesson.";
-    } else {
-      Object.assign(lesson, before);
-      turn.text = "Could not rewrite the lesson; it is as it was.";
-    }
-    turn.done = true;
-    lesson.done = true;
-    lesson.asking = false;
-    render(lesson);
-    if (lesson === current) {
-      renderChrome();
-      listen?.update();
-    }
     return turn;
   }
 
@@ -210,7 +247,7 @@ export function learnView({ article }) {
     current = lesson;
     for (const l of trail) l.page.hidden = l !== lesson;
     renderChrome();
-    renderQa(lesson);
+    renderEdits();
     if (mode === "listen") startListen();
     el.read.scrollTop = 0;
   }
@@ -219,6 +256,7 @@ export function learnView({ article }) {
     mode = next;
     el.sheet.dataset.mode = next;
     for (const b of el.modes.querySelectorAll("[data-mode]")) b.setAttribute("aria-pressed", String(b.dataset.mode === next));
+    if (!el.sheet.hidden) layout();
     if (next === "listen") startListen();
     else {
       listen?.destroy();
@@ -245,7 +283,7 @@ export function learnView({ article }) {
         )}</button>`,
       )
       .join("");
-    el.textarea.placeholder = current.done ? "Ask, or ask to change the lesson…" : "The lesson is being written…";
+    el.textarea.placeholder = !current.done ? "The lesson is being written…" : current.asking ? "Rewriting the lesson…" : "Ask, or ask for a change…";
   }
 
   function render(lesson) {
@@ -277,27 +315,28 @@ export function learnView({ article }) {
               .join("")}</dl></section>`
           : ""
       }`;
-    renderQa(lesson);
   }
 
-  // The chat beside the lesson shows the current lesson's questions and changes.
-  function renderQa(lesson) {
-    if (lesson !== current) return;
-    el.thread.innerHTML = lesson.followups.length
-      ? lesson.followups.map((t) => turnHtml(t, lesson)).join("")
-      : `<p class="lesson-thread-empty">Ask about the lesson, or ask to change it: “make it simpler”, “shorter”, “more about the causes”.</p>`;
-    scrollThread(false);
-  }
-
-  function scrollThread(smooth) {
-    el.thread.scrollTo({ top: el.thread.scrollHeight, behavior: smooth && !reduceMotion() ? "smooth" : "instant" });
-  }
-
+  // The sheet is centred; in Read, the chat sits just left of it, and the sheet moves right when there is no room.
+  // A narrow window keeps the question box under the lesson instead.
   function layout() {
     // The top bar scrolls away with the article; once it is gone the sheet starts at the top of the window.
     const top = Math.max(document.querySelector(".bar")?.getBoundingClientRect().bottom ?? 0, 0) + EDGE;
-    const w = Math.min(W, innerWidth - EDGE * 2);
-    Object.assign(el.sheet.style, { left: `${(innerWidth - w) / 2}px`, top: `${top}px`, width: `${w}px`, height: `${innerHeight - top - TRAY - 4}px` });
+    const height = innerHeight - top - TRAY - 4;
+    let w = Math.min(W, innerWidth - EDGE * 2);
+    let left = (innerWidth - w) / 2;
+    const side = mode === "read" && innerWidth >= SIDE_MIN;
+    if (side && left < EDGE + SIDE_W + SIDE_GAP) {
+      left = EDGE + SIDE_W + SIDE_GAP;
+      w = Math.min(W, innerWidth - left - EDGE);
+    }
+    Object.assign(el.sheet.style, { left: `${left}px`, top: `${top}px`, width: `${w}px`, height: `${height}px` });
+    el.sheet.classList.toggle("has-side", side);
+    el.edit.hidden = !side || el.sheet.hidden;
+    if (side) {
+      Object.assign(el.edit.style, { left: `${left - SIDE_GAP - SIDE_W}px`, top: `${top}px`, width: `${SIDE_W}px`, height: `${height}px` });
+      if (el.compose.parentElement !== el.edit) el.edit.append(el.compose);
+    } else if (el.compose.parentElement !== el.foot) el.foot.prepend(el.compose);
   }
 
   // The sheet swells out of the prompt bar it replaces.
@@ -392,11 +431,6 @@ function sourcesHtml(lesson) {
 }
 
 export function turnHtml(turn, lesson) {
-  if (turn.edit)
-    return `<div class="lesson-turn is-edit${turn.done ? "" : " is-thinking"}">
-      <p class="lesson-turn-q">${escape(turn.question)}</p>
-      <p class="lesson-turn-edit">${turn.done ? escape(turn.text) : "Rewriting the lesson…"}</p>
-    </div>`;
   return `<div class="lesson-turn${turn.done ? "" : " is-thinking"}">
     <p class="lesson-turn-q">${escape(turn.question)}</p>
     <div class="lesson-turn-a">${turn.text ? `<p>${prose(turn.text.trim(), lesson, turn.sources)}</p>` : `<span class="dots"><i></i><i></i><i></i></span>`}</div>
@@ -414,6 +448,12 @@ function build() {
   sheet.dataset.mode = "read";
   sheet.setAttribute("role", "dialog");
   sheet.setAttribute("aria-label", "Lesson");
+  const edit = document.createElement("aside");
+  edit.className = "lesson-edit";
+  edit.hidden = true;
+  edit.setAttribute("aria-label", "Change this lesson");
+  edit.innerHTML = `<p class="lesson-edit-head">Change this lesson</p><div class="lesson-edit-log" aria-live="polite"></div>`;
+
   sheet.innerHTML = `
     <header class="lesson-head">
       <nav class="lesson-crumbs" aria-label="Lessons"></nav>
@@ -427,39 +467,31 @@ function build() {
       </div>
       <button type="button" class="chat-tool lesson-close" aria-label="Close lesson"><svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" /></svg></button>
     </header>
-    <div class="lesson-body">
-      <aside class="lesson-side" aria-label="Questions about the lesson">
-        <div class="lesson-thread" aria-live="polite"></div>
-        <form class="lesson-compose">
-          <textarea rows="1" aria-label="Question"></textarea>
-          <button type="submit" class="chat-send" aria-label="Ask"><svg viewBox="0 0 16 16"><path d="M8 13V3.5M4 7.5l4-4 4 4" /></svg></button>
-        </form>
-      </aside>
-      <div class="lesson-read"></div>
-      <div class="lesson-listen"></div>
-    </div>
+    <div class="lesson-read"></div>
+    <div class="lesson-listen"></div>
     <footer class="lesson-foot">
+      <form class="lesson-compose">
+        <textarea rows="1" aria-label="Question"></textarea>
+        <button type="submit" class="chat-send" aria-label="Ask"><svg viewBox="0 0 16 16"><path d="M8 13V3.5M4 7.5l4-4 4 4" /></svg></button>
+      </form>
       <div class="lesson-player"></div>
     </footer>`;
   return {
     scrim,
     sheet,
+    edit,
+    editLog: edit.querySelector(".lesson-edit-log"),
+    foot: sheet.querySelector(".lesson-foot"),
     crumbs: sheet.querySelector(".lesson-crumbs"),
     modes: sheet.querySelector(".lesson-modes"),
     close: sheet.querySelector(".lesson-close"),
     read: sheet.querySelector(".lesson-read"),
     listen: sheet.querySelector(".lesson-listen"),
-    thread: sheet.querySelector(".lesson-thread"),
     compose: sheet.querySelector(".lesson-compose"),
     textarea: sheet.querySelector(".lesson-compose textarea"),
     player: sheet.querySelector(".lesson-player"),
   };
 }
-
-// A request to change the lesson rather than a question about it.
-const EDIT =
-  /\b(simpl|easier|harder|shorter|longer|brief|more detail|less detail|in more depth|rewrite|rephrase|reword|explain (it )?(like|as if|for)|for a (child|kid|beginner|student)|eli5|in (finnish|english|swedish)|translate|add (a |an |more )?(section|example|part)|remove|drop the|focus (more )?on|more about|less about|change|make it|yksinkertai|helpomm|lyhyemm|pidemm|selkeämm|tarkemm|kirjoita|suomeksi|englanniksi|lisää|poista|keskity)/i;
-const isEdit = (text) => EDIT.test(text);
 
 export const CITES = /\s*\[\d+(?:\s*,\s*\d+)*\](?:\s*,?\s*\[\d+(?:\s*,\s*\d+)*\])*/g;
 const EASE = "cubic-bezier(0.22, 1, 0.36, 1)";
@@ -468,3 +500,13 @@ const isTyping = (target) => target.closest?.("input, textarea, select, [content
 const reduceMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
 const shorten = (text, max) => (text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text);
 export const escape = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+
+// A revised lesson starts with "Changed: what changed" on its own line; the note is null until that line is
+// complete (or the text turns out not to start with it).
+function splitNote(raw) {
+  const text = raw.replace(/^\s+/, "");
+  const m = text.match(/^Changed:[ \t]*([^\n]*)\n/);
+  if (m) return { note: m[1].trim(), body: text.slice(m[0].length) };
+  if ("Changed:".startsWith(text.slice(0, 8)) || (text.startsWith("Changed:") && !text.includes("\n"))) return { note: null, body: "" };
+  return { note: null, body: text };
+}

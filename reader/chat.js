@@ -2,7 +2,6 @@ import { PAST_CHATS, respond } from "./assistant.js";
 import { citeLinks, learn, sourcesHtml } from "./learn.js";
 import { modelHtml, mountModel } from "./model3d.js";
 import { stepsView } from "./steps.js";
-import { stopVoice, voiceBar } from "./voice.js";
 import "./cite-tip.js";
 
 // Chats. Every request from the menu starts a new chat. Open chats are tabs in the tray at the
@@ -137,7 +136,6 @@ export function chatPanel({ article, onClose }) {
     if (!chat) return;
     chats.splice(chats.indexOf(chat), 1);
     chat.log?.remove();
-    stopVoice();
     if (chat.turn > 0 || chat.messages) past.unshift({ ...chat, label: chat.label ?? "Ask", when: chat.when ?? "Just now" });
     if (chat === active) {
       active = null;
@@ -185,28 +183,6 @@ export function chatPanel({ article, onClose }) {
       if (shown) {
         reply.insertAdjacentHTML("beforeend", renderAttachment(shown));
         reply.querySelectorAll("[data-model]").forEach(mountModel);
-        scrollDown(chat.log);
-      }
-      if (mode === "learn" && text.trim()) {
-        voiceBar(reply, {
-          article,
-          autoplay: true,
-          context: {
-            answer: text,
-            article: document.querySelector(".body")?.innerText.slice(0, 6000) ?? "",
-            sources: (shown?.items ?? []).map((s) => ({ title: s.title, why: s.why, text: s.text })),
-          },
-          say: (role, spoken) => {
-            chat.log.insertAdjacentHTML(
-              "beforeend",
-              role === "user"
-                ? `<div class="msg msg-user msg-voice"><p class="msg-bubble">${escape(spoken)}</p></div>`
-                : `<div class="msg msg-ai msg-voice is-done"><div class="msg-text">${paragraphs(spoken)}</div></div>`,
-            );
-            (chat.history ??= []).push({ role: role === "user" ? "user" : "ai", text: spoken });
-            scrollDown(chat.log, true);
-          },
-        });
         scrollDown(chat.log);
       }
     } catch (error) {

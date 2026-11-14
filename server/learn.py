@@ -13,7 +13,8 @@
 
 `shape` sets what is written: a chat answer (default), "lesson" (the Learn view: a title, a one-line goal, 3 or 4
 sections and the terms a newcomer would not know, explained from the sources) or "reply" (a short answer to a
-question asked during a lesson, which may be read aloud).
+question asked during a lesson, which may be read aloud) or "revise" (the lesson in the history rewritten as the
+reader asked, after a "Changed: ..." line).
 
 Server-Sent Events as in /api/ask (`step`, `thinking`, `message`, `error`, `done`), plus `sources`: the explored
 articles, JSON, sent after the explanation. Each has the quote its claims rest on when Gemini gave one that occurs
@@ -98,7 +99,13 @@ term exactly as wrapped, then " :: ", then 1 or 2 sentences on what it means and
 number of the source it comes from."""
 REPLY_SHAPE = ("The reader stopped the lesson to ask this. Answer like a tutor in 2 to 4 sentences, in one paragraph "
                "that also reads well aloud, and tie it back to the lesson.")
-SHAPES = {"lesson": LESSON_SHAPE, "reply": REPLY_SHAPE}
+# The reader's message is a change to the lesson they have (the last lesson in the history), not a question to
+# answer beside it: the whole lesson comes back rewritten, after one line saying what changed.
+REVISE_SHAPE = ("The reader's next message asks to change the lesson you wrote last; a question means: work its "
+                "answer into the lesson. First write one line that starts with \"Changed: \" and says in at most 14 "
+                "words what you changed, in the language of the message. Then write the whole lesson again: keep what "
+                "still fits, change what the message asks for, and use exactly the layout below.\n" + LESSON_SHAPE)
+SHAPES = {"lesson": LESSON_SHAPE, "reply": REPLY_SHAPE, "revise": REVISE_SHAPE}
 
 MORE_RULES = f"""You help a reader understand something by deciding whether to read further Wikipedia articles.
 You get the reader's question, the article they are on, what has been read so far (numbered, with its start),
@@ -352,7 +359,7 @@ def write(progress, request, here, sources):
     contents += [{"role": "user" if h.get("role") == "user" else "model", "parts": [{"text": str(h["text"])}]}
                  for h in request["history"]]
     contents.append({"role": "user", "parts": [{"text": f"{request['prompt']}\n\n(Answer in the language of this question.)"}]})
-    rules = WRITE_RULES.replace("{layout}", LESSON_LAYOUT if request["shape"] == "lesson" else PLAIN)
+    rules = WRITE_RULES.replace("{layout}", LESSON_LAYOUT if request["shape"] in ("lesson", "revise") else PLAIN)
     with gemini(WRITE_MODEL, "streamGenerateContent?alt=sse", rules, contents, {"thinkingConfig": WRITE_THINKING}) as response:
         yield from answer_texts(progress, response)
 

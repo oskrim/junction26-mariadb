@@ -1,6 +1,6 @@
 """Learn, out loud, with ElevenLabs. The API key stays on the server.
 
-POST /api/speak  {text}  →  audio/mpeg, streamed from ElevenLabs text to speech as it is made.
+POST /api/speak  {text, voice?}  →  audio/mpeg, streamed from ElevenLabs text to speech as it is made.
 POST /api/voice  {page_id, title, article, answer, sources}  →  {signed_url, dynamic_variables}: a one-time
     URL for a live voice conversation with the Learn agent (ELEVENLABS_AGENT_ID), and the values that fill in
     its prompt: the article, the Learn answer and the linked articles it rests on.
@@ -17,6 +17,9 @@ import urllib.request
 API = "https://api.elevenlabs.io/v1"
 TIMEOUT_S = 30
 VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "JBFqnCBsd6RMkjVDRZzb")  # George, a premade voice every account has
+# The voices the reader can pick from (VOICES in reader/voice.js); premade, so every account has them.
+VOICES = {VOICE_ID, "JBFqnCBsd6RMkjVDRZzb", "Xb7hH8MSUJpSbSDYk0k2", "onwK4e9ZLuTAKqWW03F9", "XrExE9yKIg1WjnnlVkGX",
+          "SAz9YHcvj6GT2YYXdXww", "nPczCjzI2devNBz1zQrb"}
 # Flash v2.5: ~75 ms model latency and 32 languages, Finnish among them.
 TTS_MODEL = os.environ.get("ELEVENLABS_TTS_MODEL", "eleven_flash_v2_5")
 MAX_SPEAK_CHARS = 5_000
@@ -57,10 +60,14 @@ class VoiceError(Exception):
 def speak(handler, database=None):
     """Streams speech for the text in the request body."""
     try:
-        text = spoken(str(body(handler)["text"]))[:MAX_SPEAK_CHARS]
+        request = body(handler)
+        text = spoken(str(request.get("text") or ""))[:MAX_SPEAK_CHARS]
         if not text:
             raise VoiceError(400, "text must not be empty")
-        response = elevenlabs(f"/text-to-speech/{VOICE_ID}/stream?output_format=mp3_44100_128",
+        voice_id = request.get("voice") or VOICE_ID
+        if voice_id not in VOICES:
+            raise VoiceError(400, "unknown voice")
+        response = elevenlabs(f"/text-to-speech/{voice_id}/stream?output_format=mp3_44100_128",
                               {"text": text, "model_id": TTS_MODEL})
     except VoiceError as error:
         return reply(handler, error.status, {"error": str(error)})

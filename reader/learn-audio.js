@@ -1,15 +1,18 @@
 // Listen: the lesson as an audio book. Its sections are chapters on the scrubber, the transcript follows the voice,
 // and Ask pauses it for a question: the answer is read out where it was asked, then the lesson picks up again.
-// The voice is the browser's speech synthesis for now, one sentence at a time; without one, the player keeps time
-// silently. Times are estimated from word counts, in lesson time (1.5× plays a 3:00 lesson in 2:00).
+// The voice is ElevenLabs (voice.js), one sentence at a time with the next few made ahead; when the server has no
+// ElevenLabs key it is the browser's speech synthesis, and without that the player keeps time silently. Times are
+// estimated from word counts, in lesson time (1.5× plays a 3:00 lesson in 2:00).
 
 import { CITES, escape, turnHtml } from "./learn-view.js";
+import { VOICES, currentVoice, setVoice, speechAvailable, speechUrl } from "./voice.js";
 
 const WORDS_PER_S = 2.6;
 const PAUSE_S = 0.35;
 const SKIP_S = 15;
 const RATES = [1, 1.25, 1.5, 2, 0.75];
 const RESUME_S = 3;
+const AHEAD = 3; // sentences made ahead of the one being said
 
 export function listenView({ root, bar, lesson, ask }) {
   root.innerHTML = `<div class="listen-scroll"><div class="listen-transcript"></div></div>`;
@@ -31,6 +34,10 @@ export function listenView({ root, bar, lesson, ask }) {
   let scrub = null;
   let heldScroll = 0;
   let recognition = null;
+  const audio = new Audio();
+  audio.preservesPitch = true;
+  let hush = null; // ends the sentence being said
+  let voiceMenu = false;
 
   const listeners = [
     ["keydown", onKey],
@@ -66,6 +73,7 @@ export function listenView({ root, bar, lesson, ask }) {
 
   function destroy() {
     stop();
+    audio.removeAttribute("src");
     clearTimeout(resumeTimer);
     recognition?.abort();
     cancelAnimationFrame(frame);
@@ -147,6 +155,7 @@ export function listenView({ root, bar, lesson, ask }) {
 
   async function speakFrom(i, token) {
     for (; i < sentences.length; i++) {
+      for (let j = i + 1; j <= i + AHEAD && j < sentences.length && speechAvailable(); j++) speechUrl(plain(sentences[j].text)).catch(() => {});
       index = i;
       begun = performance.now();
       markNow(true);
@@ -162,6 +171,8 @@ export function listenView({ root, bar, lesson, ask }) {
   function stop() {
     run++;
     playing = false;
+    audio.pause();
+    hush?.();
     globalThis.speechSynthesis?.cancel();
   }
 
@@ -182,7 +193,29 @@ export function listenView({ root, bar, lesson, ask }) {
   }
 
   // Resolves when the sentence has been said, or at once when speech is cancelled.
-  function say(text, voiceRate = rate) {
+  async function say(text, voiceRate = rate) {
+    if (speechAvailable()) {
+      const token = run;
+      try {
+        const url = await speechUrl(text);
+        if (token !== run) return;
+        return await new Promise((resolve) => {
+          hush = audio.onended = audio.onerror = () => {
+            hush = null;
+            resolve();
+          };
+          audio.src = url;
+          audio.playbackRate = voiceRate;
+          audio.play().catch(hush);
+        });
+      } catch {
+        if (token !== run) return; // otherwise this sentence falls back to the browser's voice
+      }
+    }
+    return sayInBrowser(text, voiceRate);
+  }
+
+  function sayInBrowser(text, voiceRate) {
     return new Promise((resolve) => {
       const synth = globalThis.speechSynthesis;
       if (!synth) return void setTimeout(resolve, ((words(text) / WORDS_PER_S + PAUSE_S) * 1000) / voiceRate);
@@ -205,7 +238,10 @@ export function listenView({ root, bar, lesson, ask }) {
     if (index >= sentences.length) return total();
     const s = sentences[index];
     if (!s) return 0;
-    return playing ? s.start + Math.min(((performance.now() - begun) / 1000) * rate, s.dur) : s.start;
+    if (!playing) return s.start;
+    // While ElevenLabs speaks, its clip says how far into the sentence the voice is.
+    const into = !audio.paused && audio.duration > 0 ? audio.currentTime / audio.duration : ((performance.now() - begun) / 1000 / s.dur) * rate;
+    return s.start + Math.min(into, 1) * s.dur;
   }
 
   function number(chapter) {
@@ -384,7 +420,10 @@ export function listenView({ root, bar, lesson, ask }) {
         </div>
         <div class="player-times"><span class="player-now">0:00</span><span class="player-chapter"></span><span class="player-left"></span></div>
         <div class="player-controls">
-          <button type="button" class="player-rate" data-act="rate" aria-label="Speed">${rate}×</button>
+          <div class="player-side">
+            <button type="button" class="player-rate" data-act="rate" aria-label="Speed">${rate}×</button>
+            ${speechAvailable() ? voiceButton() : ""}
+          </div>
           <div class="player-main">
             <button type="button" class="player-skip" data-act="back" aria-label="Back ${SKIP_S} seconds" ${ready ? "" : "disabled"}>${ICONS.back}</button>
             <button type="button" class="player-play" data-act="play" aria-label="${playing ? "Pause" : finished ? "Play again" : "Play"}" ${ready ? "" : "disabled"}>${playing ? ICONS.pause : ICONS.play}</button>
@@ -396,9 +435,36 @@ export function listenView({ root, bar, lesson, ask }) {
     paint();
   }
 
+  // The voice picker: the voice's name, and a menu of the others above it.
+  function voiceButton() {
+    const now = currentVoice();
+    return `<button type="button" class="player-voice" data-act="voices" aria-haspopup="menu" aria-expanded="${voiceMenu}" title="Voice">${ICONS.voice}<span>${escape(now.name)}</span></button>
+      ${
+        voiceMenu
+          ? `<div class="player-voices" role="menu" aria-label="Voice">${VOICES.map(
+              (v) => `<button type="button" role="menuitemradio" aria-checked="${v.id === now.id}" data-act="voice" data-voice="${v.id}">
+                <span class="player-voice-name">${escape(v.name)}</span><span class="player-voice-note">${escape(v.note)}</span>
+              </button>`,
+            ).join("")}</div>`
+          : ""
+      }`;
+  }
+
   function onBarClick(e) {
     const act = e.target.closest("[data-act]")?.dataset.act;
-    if (act === "play") playing ? pause() : playFrom(index);
+    if (voiceMenu && act !== "voices" && act !== "voice") {
+      voiceMenu = false;
+      renderBar();
+    }
+    if (act === "voices") {
+      voiceMenu = !voiceMenu;
+      renderBar();
+    } else if (act === "voice") {
+      voiceMenu = false;
+      setVoice(e.target.closest("[data-voice]").dataset.voice);
+      if (playing) playFrom(index); // the sentence again, in the new voice
+      else renderBar();
+    } else if (act === "play") playing ? pause() : playFrom(index);
     else if (act === "back" || act === "forward") seek(clamp(now() + (act === "back" ? -SKIP_S : SKIP_S), 0, total() - 0.01));
     else if (act === "rate") {
       rate = RATES[(RATES.indexOf(rate) + 1) % RATES.length];
@@ -452,6 +518,11 @@ export function listenView({ root, bar, lesson, ask }) {
   function onKey(e) {
     if (e.metaKey || e.ctrlKey || e.altKey || isTyping(e.target) || !root.isConnected || root.closest("[hidden]")) return;
     if (!document.querySelector(".qm")?.hidden) return;
+    if (e.key === "Escape" && voiceMenu) {
+      e.preventDefault();
+      voiceMenu = false;
+      return renderBar();
+    }
     if (e.key === " " && phase === "player" && !e.target.closest?.("button")) {
       e.preventDefault();
       playing ? pause() : playFrom(index);
@@ -487,6 +558,7 @@ const ICONS = {
   pause: `<svg viewBox="0 0 16 16" aria-hidden="true"><rect class="fill" x="4" y="3" width="2.8" height="10" rx="0.8" /><rect class="fill" x="9.2" y="3" width="2.8" height="10" rx="0.8" /></svg>`,
   back: `<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4.5 10a5.5 5.5 0 1 0 1.7-4M4 3v3.4h3.4" /><text x="10" y="12.4" text-anchor="middle">15</text></svg>`,
   forward: `<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M15.5 10a5.5 5.5 0 1 1-1.7-4M16 3v3.4h-3.4" /><text x="10" y="12.4" text-anchor="middle">15</text></svg>`,
+  voice: `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 6.5v3M5.5 4.5v7M8 2.5v11M10.5 5v6M13 7v2" /></svg>`,
   mic: `<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="2" width="5" height="8" rx="2.5" /><path d="M3.5 8a4.5 4.5 0 0 0 9 0M8 12.5V14" /></svg>`,
 };
 
