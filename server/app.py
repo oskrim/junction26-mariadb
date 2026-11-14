@@ -17,6 +17,7 @@ from urllib.parse import parse_qs, quote, urlparse
 import pymysql
 
 import ask
+import learn
 
 READER = Path(__file__).resolve().parent.parent / "reader"
 TYPES = {".html": "text/html", ".js": "text/javascript", ".json": "application/json", ".css": "text/css",
@@ -243,7 +244,7 @@ def search(cur, params):
 ROUTES = {"/api/articles": articles, "/api/article": article, "/api/history": history, "/api/change": change,
           "/api/graph": graph, "/api/topics": topics, "/api/preview": preview, "/api/search": search}
 # POST handlers write their own response, so they can stream.
-POST_ROUTES = {"/api/ask": ask.serve}
+POST_ROUTES = {"/api/ask": ask.serve, "/api/learn": learn.serve}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -305,4 +306,7 @@ class Handler(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8010))
     print(f"http://127.0.0.1:{port}")
+    # The proxy opens a connection per request, ~90 at once for the History view. The default backlog of 5
+    # drops the rest, and the client's TCP retries back off for up to a minute.
+    ThreadingHTTPServer.request_queue_size = 256
     ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
