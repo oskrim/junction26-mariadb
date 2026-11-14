@@ -755,3 +755,16 @@ body[data-view="explore"] .chat-history {
   stroke-linecap: round;
   stroke-linejoin: round;
 }
+
+.ex-back kbd {
+  display: inline-grid;
+  place-items: center;
+  min-width: 19px;
+  height: 19px;
+  margin-left: 4px;
+  padding: 0 5px;
+  border-radius: 6px;
+  background: var(--chip);
+  color: var(--ink-2);
+  font: 500 11px/1 var(--sans);
+}

@@ -24,7 +24,7 @@ export async function mountExplore(root, { id }) {
     <div class="ex-tip" role="tooltip"></div>
     <aside class="ex-panel" aria-live="polite"></aside>
     <button class="ex-back" type="button" title="Back (Ctrl+Z / ⌘Z)" hidden>
-      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3 5 8l5 5" /></svg>Back
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3 5 8l5 5" /></svg>Back<kbd aria-hidden="true">${/Mac|iPhone|iPad/.test(navigator.platform) ? "⌘Z" : "Ctrl Z"}</kbd>
     </button>
     <div class="ex-time">
       <button class="ex-play" type="button" aria-label="Play the history">
