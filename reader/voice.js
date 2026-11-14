@@ -117,28 +117,37 @@ export async function startTalk({ context, onStatus, onMessage }) {
   );
   let mode = "listening";
   let connected = false;
-  const session = await step("Connecting to ElevenLabs…", () =>
-    VoiceConversation.startSession({
-      signedUrl: started.signed_url,
-      connectionType: "websocket",
-      dynamicVariables: started.dynamic_variables,
-      onConnect: () => {
-        connected = true;
-        console.info("[voice] connected");
-        onStatus("listening");
-      },
-      onModeChange: ({ mode: m }) => onStatus((mode = m === "speaking" ? "speaking" : "listening")),
-      onMessage: ({ source, message }) => message && onMessage(source === "user" ? "user" : "ai", message),
-      onError: (message, context) => {
-        console.error("[voice] error", message, context);
-        onStatus("ended", String(message));
-      },
-      onDisconnect: (details) => {
-        console.info("[voice] disconnected", details);
-        onStatus("ended", details?.reason === "error" ? details.message : "");
-      },
-    }),
-  );
+  const callbacks = {
+    dynamicVariables: started.dynamic_variables,
+    onConnect: () => {
+      connected = true;
+      console.info("[voice] connected");
+      onStatus("listening");
+    },
+    onModeChange: ({ mode: m }) => onStatus((mode = m === "speaking" ? "speaking" : "listening")),
+    onMessage: ({ source, message }) => message && onMessage(source === "user" ? "user" : "ai", message),
+    onError: (message, context) => {
+      console.error("[voice] error", message, context);
+      if (connected) onStatus("ended", String(message));
+    },
+    onDisconnect: (details) => {
+      console.info("[voice] disconnected", details);
+      if (connected) onStatus("ended", details?.reason === "error" ? details.message : "");
+    },
+  };
+  // WebRTC first: the browser's own call audio, which works where the WebSocket route's 16 kHz audio setup hangs
+  // (seen on a Mac); the WebSocket only when WebRTC fails.
+  let session;
+  try {
+    session = await step("Connecting to ElevenLabs…", () =>
+      VoiceConversation.startSession({ conversationToken: started.conversation_token, connectionType: "webrtc", ...callbacks }),
+    );
+  } catch (error) {
+    console.warn("[voice] WebRTC failed, trying the WebSocket", error);
+    session = await step("Connecting to ElevenLabs again…", () =>
+      VoiceConversation.startSession({ signedUrl: started.signed_url, connectionType: "websocket", ...callbacks }),
+    );
+  }
   if (!connected) onStatus("listening"); // the session is up even if onConnect came before we listened
   return {
     stop: () => session.endSession().catch(() => {}),

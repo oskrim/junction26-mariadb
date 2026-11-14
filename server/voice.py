@@ -1,9 +1,10 @@
 """Learn, out loud, with ElevenLabs. The API key stays on the server.
 
 POST /api/speak  {text, voice?}  →  audio/mpeg, streamed from ElevenLabs text to speech as it is made.
-POST /api/voice  {page_id, title, article, answer, sources}  →  {signed_url, dynamic_variables}: a one-time
-    URL for a live voice conversation with the Learn agent (ELEVENLABS_AGENT_ID), and the values that fill in
-    its prompt: the article, the Learn answer and the linked articles it rests on.
+POST /api/voice  {page_id, title, article, answer, sources}  →  {conversation_token, signed_url, dynamic_variables}:
+    one-time credentials for a live voice conversation with the Learn agent (ELEVENLABS_AGENT_ID), over WebRTC
+    (the token) or a WebSocket (the URL), and the values that fill in its prompt: the article, the Learn answer
+    and the linked articles it rests on.
 
 `python server/voice.py create-agent` makes that agent in the ElevenLabs account and prints its id.
 """
@@ -100,14 +101,15 @@ def voice(handler, database=None):
             "sources": "\n\n".join(f"{s.get('title')}: {s.get('text') or s.get('why') or ''}"
                                    for s in sources if isinstance(s, dict))[:SOURCES_CHARS] or "(none)",
         }
-        signed = elevenlabs(f"/convai/conversation/get-signed-url?agent_id={agent}")
-        with signed:
-            url = json.loads(signed.read())["signed_url"]
+        with elevenlabs(f"/convai/conversation/token?agent_id={agent}") as response:
+            token = json.loads(response.read())["token"]
+        with elevenlabs(f"/convai/conversation/get-signed-url?agent_id={agent}") as response:
+            url = json.loads(response.read())["signed_url"]
     except VoiceError as error:
         return reply(handler, error.status, {"error": str(error)})
     except (KeyError, ValueError) as error:
-        return reply(handler, 502, {"error": f"ElevenLabs gave no signed URL: {error}"})
-    reply(handler, 200, {"signed_url": url, "dynamic_variables": variables})
+        return reply(handler, 502, {"error": f"ElevenLabs gave no conversation credentials: {error}"})
+    reply(handler, 200, {"conversation_token": token, "signed_url": url, "dynamic_variables": variables})
 
 
 def spoken(text):
