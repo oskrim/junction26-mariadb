@@ -467,7 +467,8 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
       if (tag.image?.complete && tag.image.naturalWidth) {
         const w = Math.max(18, Math.min(56, 90 * p.s));
         const h = (w * tag.image.naturalHeight) / tag.image.naturalWidth;
-        const x = Math.max(extra + 4, Math.min(width * 0.86 - w, b.side > 0 ? p.x : p.x - w));
+        // Pinned to the road's edge, even if the panel clips it.
+        const x = b.side > 0 ? p.x : p.x - w;
         const y = p.y - h - lift;
         ctx.shadowColor = "rgba(0,0,0,0.18)";
         ctx.shadowBlur = 6;
@@ -479,7 +480,7 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
       } else if (tag.text) {
         ctx.font = `500 ${Math.round(Math.max(9, Math.min(11, 18 * p.s)))}px Inter, system-ui, sans-serif`;
         const w = ctx.measureText(tag.text).width + 10;
-        const x = Math.max(extra + 2, Math.min(width - w - 2, b.side > 0 ? p.x : p.x - w));
+        const x = b.side > 0 ? p.x : p.x - w;
         const y = p.y - 8 - lift;
         ctx.fillStyle = "rgba(255,255,255,0.92)";
         ctx.strokeStyle = "rgba(32,33,34,0.12)";
