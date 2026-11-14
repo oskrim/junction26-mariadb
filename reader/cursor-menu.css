@@ -1,0 +1,606 @@
+/* Cursor menu and chat window. Sits on top of the reader and uses its colors and fonts. */
+
+:root {
+  --liquid: #ffffff;
+  --paint: #fde58a;
+  --chip: #f3f4f6;
+  --shadow-float: 0 0 0 1px rgba(0, 0, 0, 0.06), 0 2px 6px rgba(0, 0, 0, 0.05), 0 8px 32px rgba(0, 0, 0, 0.09);
+}
+
+/* Painting: the pointer is the menu's text cursor, so the real one hides. */
+html.qm-following,
+html.qm-following * {
+  cursor: none !important;
+}
+
+html.qm-following ::selection {
+  background: var(--paint);
+  color: inherit;
+}
+
+::highlight(qm-paint) {
+  background-color: var(--paint);
+}
+
+.qm {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  pointer-events: none;
+  font-family: var(--sans);
+}
+
+.qm[hidden] {
+  display: none;
+}
+
+.qm-goo {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.qm-goo rect,
+.qm-goo circle {
+  fill: var(--liquid);
+}
+
+.qm-caret {
+  position: absolute;
+  left: -8px;
+  top: -11px;
+  width: 16px;
+  height: 22px;
+  color: var(--ink);
+  will-change: transform;
+}
+
+.qm-caret svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+
+/* Blobs: the circle is drawn in the liquid layer; this is the crisp icon and label on top. */
+
+.qm-btn {
+  position: absolute;
+  left: -18px;
+  top: -18px;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ink);
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  will-change: transform;
+}
+
+.qm[data-state="pinned"] .qm-btn.is-out {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.qm-icon {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0;
+  filter: blur(2px);
+  transition: opacity 120ms ease, filter 120ms ease;
+}
+
+.qm-label {
+  position: absolute;
+  top: 50%;
+  left: calc(100% + 10px);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 5px 0 11px;
+  border-radius: 999px;
+  background: var(--liquid);
+  box-shadow: var(--shadow-float);
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  opacity: 0;
+  filter: blur(2px);
+  transform: translate(-6px, -50%);
+  transition: opacity 120ms ease, filter 120ms ease, transform 160ms ease;
+}
+
+.qm[data-side="left"] .qm-label {
+  left: auto;
+  right: calc(100% + 10px);
+  flex-direction: row-reverse;
+  padding: 0 11px 0 5px;
+  transform: translate(6px, -50%);
+}
+
+.qm kbd {
+  display: inline-grid;
+  place-items: center;
+  min-width: 19px;
+  height: 19px;
+  padding: 0 4px;
+  border-radius: 6px;
+  background: var(--chip);
+  color: var(--ink-2);
+  font: 500 11px/1 var(--sans);
+}
+
+.qm-btn.is-out .qm-icon,
+.qm-btn.is-out .qm-label {
+  opacity: 1;
+  filter: none;
+  transition-delay: calc(var(--i) * 40ms + 110ms);
+}
+
+.qm-btn.is-out .qm-label {
+  transform: translate(0, -50%);
+}
+
+.qm[data-state="pinned"] .qm-btn.is-out:hover .qm-label {
+  background: #f7f8fa;
+}
+
+.qm[data-state="pinned"] .qm-btn.is-out:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+/* Prompt bar: the chosen blob stretches to this shape; the bar fades in on top of it. */
+
+.qm-bar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 48px;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px 0 10px;
+  opacity: 0;
+  transition: opacity 140ms ease;
+}
+
+.qm-bar.is-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.qm-chip {
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: var(--paint);
+  color: var(--ink);
+  font: italic 13px/1.2 var(--serif);
+}
+
+.qm-chip.is-whole {
+  background: var(--chip);
+  color: var(--ink-2);
+  font: 500 12px/1.2 var(--sans);
+}
+
+.qm-bar input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+  font: 14px var(--sans);
+}
+
+.qm-bar input::placeholder {
+  color: var(--ink-3);
+}
+
+.qm-enter {
+  flex: none;
+}
+
+/* Chat window */
+
+.chat {
+  position: fixed;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  border-radius: 20px;
+  background: #fff;
+  box-shadow: var(--shadow-float);
+  font-family: var(--sans);
+  color: var(--ink);
+  transform-origin: 0 0;
+}
+
+.chat[hidden],
+.chat-dock[hidden] {
+  display: none;
+}
+
+.chat.is-resizing {
+  transition: left 300ms cubic-bezier(0.22, 1, 0.36, 1), top 300ms cubic-bezier(0.22, 1, 0.36, 1),
+    width 300ms cubic-bezier(0.22, 1, 0.36, 1), height 300ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.chat-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 14px 10px 22px;
+  cursor: grab;
+  touch-action: none;
+}
+
+.chat.is-expanded .chat-head {
+  cursor: default;
+}
+
+.chat-title {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.chat-tools {
+  display: flex;
+  gap: 2px;
+}
+
+.chat-tool,
+.chat-send {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.chat-tool:hover {
+  background: var(--chip);
+  color: var(--ink);
+}
+
+.chat-tool svg,
+.chat-send svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.chat-log {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 22px 16px;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.msg + .msg {
+  margin-top: 18px;
+}
+
+.msg-user {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.msg-quote {
+  max-width: 88%;
+  margin: 0;
+  padding: 2px 0 2px 10px;
+  border-left: 3px solid var(--paint);
+  color: var(--ink-2);
+  font: italic 13.5px/1.45 var(--serif);
+}
+
+.msg-bubble {
+  max-width: 88%;
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 14px;
+  background: var(--chip);
+}
+
+.msg-mode {
+  margin-right: 6px;
+  color: var(--ink-3);
+  font-weight: 500;
+}
+
+.msg-text p {
+  margin: 0 0 10px;
+}
+
+.msg-text p:last-child {
+  margin-bottom: 0;
+}
+
+.msg-ai:not(.is-done):not(.is-thinking) .msg-text p:last-child::after {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 14px;
+  margin-left: 2px;
+  vertical-align: -2px;
+  border-radius: 2px;
+  background: var(--ink);
+  animation: blink 900ms steps(2) infinite;
+}
+
+.dots {
+  display: inline-flex;
+  gap: 4px;
+  padding: 6px 0;
+}
+
+.dots i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ink-3);
+  animation: pulse 1s ease-in-out infinite;
+}
+
+.dots i:nth-child(2) {
+  animation-delay: 150ms;
+}
+
+.dots i:nth-child(3) {
+  animation-delay: 300ms;
+}
+
+@keyframes blink {
+  to {
+    visibility: hidden;
+  }
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.3;
+    transform: translateY(-2px);
+  }
+}
+
+.attach {
+  margin: 14px 0 0;
+  animation: rise 360ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+.res-label {
+  margin: 14px 0 6px;
+  color: var(--ink-3);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.res-label:first-child {
+  margin-top: 0;
+}
+
+.attach-results ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.attach-results li + li {
+  border-top: 1px solid var(--rule);
+}
+
+.res-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 12px;
+  width: 100%;
+  padding: 9px 12px;
+  border: 0;
+  background: #fff;
+  font: inherit;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+}
+
+.res-item:hover {
+  background: #f8f9fa;
+}
+
+.res-title {
+  font-weight: 500;
+}
+
+.res-meta {
+  color: var(--ink-3);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.res-note {
+  grid-column: 1 / -1;
+  color: var(--ink-2);
+  font-size: 13px;
+}
+
+.attach-chart {
+  padding: 12px 12px 10px;
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+}
+
+.attach-chart svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.attach-chart figcaption {
+  margin-top: 6px;
+  color: var(--ink-3);
+  font-size: 12px;
+}
+
+.attach-chart .grid line {
+  stroke: var(--rule);
+  stroke-dasharray: 2 3;
+}
+
+.attach-chart text {
+  fill: var(--ink-3);
+  font: 10px var(--sans);
+  font-variant-numeric: tabular-nums;
+}
+
+.attach-chart .area {
+  fill: var(--link);
+  opacity: 0.1;
+}
+
+.attach-chart .line {
+  fill: none;
+  stroke: var(--link);
+  stroke-width: 1.75;
+  stroke-linejoin: round;
+}
+
+.attach-chart .mark-line {
+  stroke: var(--ink-2);
+  stroke-dasharray: 3 3;
+}
+
+.attach-chart .mark-dot {
+  fill: var(--paint);
+  stroke: var(--ink);
+  stroke-width: 1.5;
+}
+
+.attach-chart .mark-label {
+  fill: var(--ink);
+  font-weight: 500;
+}
+
+.chat-compose {
+  margin: 0 12px 12px;
+  padding: 12px 10px 8px 14px;
+  border: 1px solid var(--rule);
+  border-radius: 14px;
+}
+
+.chat-compose textarea {
+  display: block;
+  width: 100%;
+  min-height: 24px;
+  border: 0;
+  outline: 0;
+  resize: none;
+  background: transparent;
+  color: var(--ink);
+  font: 14px/1.5 var(--sans);
+}
+
+.chat-compose textarea::placeholder {
+  color: var(--ink-3);
+}
+
+.chat-compose-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.chat-send {
+  border: 1px solid var(--rule);
+  border-radius: 50%;
+  color: var(--ink);
+}
+
+.chat-send:hover {
+  background: var(--chip);
+}
+
+.chat-dock {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 280px;
+  height: 40px;
+  padding: 0 16px 0 14px;
+  border: 0;
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: var(--shadow-float);
+  color: var(--ink);
+  font: 500 13px var(--sans);
+  cursor: pointer;
+}
+
+.chat-dock-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-dock-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--link);
+}

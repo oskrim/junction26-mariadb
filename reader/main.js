@@ -1,4 +1,6 @@
 import { fileUrl, getArticle, getArticles, getPreview } from "./fake/api.js";
+import { chatPanel } from "./chat.js";
+import { cursorMenu } from "./cursor-menu.js";
 import { hoverCard } from "./hover-card.js";
 import { renderWikitext } from "./wikitext.js";
 
@@ -51,6 +53,8 @@ if (!version || !summary) {
   body.addEventListener("click", (event) => {
     if (event.target.closest("a.wl")) event.preventDefault();
   });
+  const chat = chatPanel({ article: summary, onClose: () => menu.clearPaint() });
+  const menu = cursorMenu({ root: body, onSubmit: (request) => chat.ask(request) });
 }
 
 function formatDate(rowStart) {
