@@ -93,7 +93,7 @@ export function chatPanel({ article, onClose }) {
   dragByHeader();
   renderTray();
 
-  return { ask };
+  return { ask, hide };
 
   // A request from the menu: a new chat, opened beside where it came from.
   function ask({ mode, label, prompt, context, from }) {

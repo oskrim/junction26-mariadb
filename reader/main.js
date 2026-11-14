@@ -80,21 +80,23 @@ if (!version || !summary) {
     else window.open(`https://fi.wikipedia.org/wiki/${encodeURIComponent(link.dataset.title.replace(/ /g, "_"))}`, "_blank", "noopener");
   });
   const chat = chatPanel({ article: summary, onClose: () => menu.clearPaint() });
-  // Learn opens a lesson and Find its articles, each in a wide sheet at the top; Ask opens a chat.
+  // Learn opens a lesson and Find its articles, each in a wide sheet at the top; Ask opens a chat. A sheet
+  // tucks the open chat away into its tray.
   const lessons = import("./learn-view.js").then((m) => m.learnView({ article: summary }));
+  const openSheet = (sheet, request) => (chat.hide(), sheet.open(request));
   const finder = import("./find-view.js").then((m) =>
     m.findView({
       article: summary,
-      actions: { ask: (request) => chat.ask(request), learn: (request) => lessons.then((l) => l.open(request)) },
+      actions: { ask: (request) => chat.ask(request), learn: (request) => lessons.then((l) => openSheet(l, request)) },
     }),
   );
-  openFind = (query) => finder.then((f) => f.open({ typed: query, context: null, from: null }));
+  openFind = (query) => finder.then((f) => openSheet(f, { typed: query, context: null, from: null }));
   const panels = { learn: lessons, find: finder };
   const menu = cursorMenu({
     root: body,
     onSubmit: (request) =>
       panels[request.mode]
-        ? panels[request.mode].then((p) => (menu.clearPaint(), p.open(request))).catch((error) => (console.error("panel failed, opening a chat instead", error), chat.ask(request)))
+        ? panels[request.mode].then((p) => (menu.clearPaint(), openSheet(p, request))).catch((error) => (console.error("panel failed, opening a chat instead", error), chat.ask(request)))
         : chat.ask(request),
   });
 }
