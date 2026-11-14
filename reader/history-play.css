@@ -618,3 +618,10 @@
     opacity: 0.35;
   }
 }
+
+/* Text being erased */
+.hp-erasing {
+  color: var(--ink-3);
+  text-decoration: line-through;
+  text-decoration-color: rgb(180 35 35 / 0.45);
+}

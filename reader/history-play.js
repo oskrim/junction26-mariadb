@@ -18,11 +18,13 @@ const AGAIN = `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8a4.5 4
 // closing; and how long a changed paragraph shows its new words.
 const STEP = 300;
 const ROUND_HOLD = 1400;
+const QUIET_ROUND = 550;
+const ERASE = 550;
 // Rounds of a war shown at most, and how fast ordinary versions and war rounds play, at 1×.
 const ROUNDS = 10;
 const FAST = 2;
 const SLOW = 0.75;
-const WAR_HOLD = 2600;
+const WAR_HOLD = 1800;
 const GROW = 700;
 const SHUT = 420;
 // Typing goes at an even PER_LETTER ms a letter (deleting two at a time). Each version types at most
@@ -190,10 +192,17 @@ export function startHistoryPlay({ id, body, onClose }) {
     for (let i = from; i < frames.length; i++) {
       for (let k = i + 1; k <= i + 5 && k < frames.length; k++) load(frames[k]);
       const time = frames[i].edit.time;
-      const hold = () => (frames[i].war ? WAR_HOLD : frames[i].round ? ROUND_HOLD : STEP) / rate;
+      // A war round with nothing to type (its edit touched only the infobox, a table or the sources) passes
+      // as quickly as the blow on the road.
+      let typing = 0;
+      const hold = () =>
+        (frames[i].war ? WAR_HOLD : frames[i].round ? (typing ? ROUND_HOLD : QUIET_ROUND) : STEP) / rate;
       // While a version is written, the marker and the road travel to it: as soon as it knows how long
       // its writing will take, the trip starts, timed to arrive as the writing and the pause after it end.
-      await show(i, token, true, (ms) => travelTo(time, ms + hold()));
+      await show(i, token, true, (ms) => {
+        typing = ms;
+        travelTo(time, ms + hold());
+      });
       if (token !== run) return;
       if (travel?.time !== time) travelTo(time, hold());
       const waited = await wait(Math.max(0, travel.end - performance.now()), token);
@@ -509,7 +518,8 @@ export function startHistoryPlay({ id, body, onClose }) {
     );
     const ordered = places.filter((p) => visits.has(p));
     // About how long the visit will take, so the road can be timed to it.
-    const visitMs = (p) => 500 + (typeable(p) ? Math.min(QUOTA, typingLetters(p)) * PER_LETTER + SETTLE : GROW);
+    const visitMs = (p) =>
+      500 + (typeable(p) ? Math.min(QUOTA, typingLetters(p)) * PER_LETTER + SETTLE : GROW) + Math.min(3, p.removes.filter(erasable).length) * ERASE;
     onPlan((animate ? ordered.reduce((sum, p) => sum + visitMs(p), 0) : 0) / rate);
     for (const place of places) if (!visits.has(place)) applyQuietly(place, animate && !place.quiet);
     for (const place of ordered) {
@@ -551,9 +561,55 @@ export function startHistoryPlay({ id, body, onClose }) {
       openUp(next, from, ms(SHUT));
     }
     for (const el of place.removes) {
-      if (animated) openUp(el, el.offsetHeight, ms(SHUT), 0).then(() => el.remove());
-      else el.remove();
+      if (!animated) {
+        el.remove();
+        continue;
+      }
+      // Text on screen is erased before its space closes.
+      const top = el.getBoundingClientRect().top;
+      const seen = top < innerHeight && top > -el.offsetHeight;
+      (seen && erasable(el) ? erase(el, run, false) : Promise.resolve())
+        .then(() => openUp(el, el.offsetHeight, ms(SHUT), 0))
+        .then(() => el.remove());
     }
+  }
+
+  // Erases `el`'s text from the end, quickly: about ERASE ms however long it is, with the editor's cursor
+  // when `cursor` is set. A jump or close finishes it at once.
+  function erase(el, token, cursor = true) {
+    const text = textOf(el);
+    el.classList.add("hp-erasing");
+    el.textContent = "";
+    const span = document.createElement("span");
+    span.textContent = text;
+    el.append(span);
+    let caret = null;
+    if (cursor && typist) {
+      caret = document.createElement("span");
+      caret.className = "hp-caret";
+      caret.style.setProperty("--c", typist.color);
+      const tag = document.createElement("span");
+      tag.className = "hp-caret-name";
+      tag.textContent = typist.name;
+      caret.append(tag);
+      el.append(caret);
+    }
+    const duration = ERASE / rate;
+    const start = performance.now();
+    return new Promise((resolve) => {
+      let paused = 0;
+      let last = start;
+      const step = (now) => {
+        if (!playing) paused += now - last;
+        last = now;
+        const t = token !== run || closed ? 1 : Math.min(1, (now - start - paused) / duration);
+        span.textContent = text.slice(0, Math.round(text.length * (1 - t)));
+        if (t < 1) return requestAnimationFrame(step);
+        caret?.remove();
+        resolve();
+      };
+      requestAnimationFrame(step);
+    });
   }
 
   // The visited place is written as if by hand: a cursor goes through it in reading order, deleting
@@ -599,8 +655,16 @@ export function startHistoryPlay({ id, body, onClose }) {
       job.draft = null;
       openUp(job.next, 0, GROW / rate);
     }
-    // Paragraphs that are gone close once the new text is in.
-    await Promise.all(place.removes.map((el) => openUp(el, el.offsetHeight, SHUT / rate, 0).then(() => el.remove())));
+    // Paragraphs and sections that are gone are erased quickly, top to bottom, once the new text is in,
+    // and their space closes. Past the first few, the rest just close.
+    let erased = 0;
+    for (const el of place.removes) {
+      if (erasable(el) && erased < 3 && token === run && !closed) {
+        erased++;
+        await erase(el, token);
+      }
+      openUp(el, el.offsetHeight, SHUT / rate, 0).then(() => el.remove());
+    }
     if (jobs.length) await wait(SETTLE / rate, token);
     for (const { draft, next } of jobs) {
       if (!draft?.isConnected) continue;
@@ -894,6 +958,11 @@ function sectionElements(heading) {
     els.add(el);
   }
   return els;
+}
+
+// What can be erased letter by letter: prose and lists, not pictures, the infobox or tables.
+function erasable(el) {
+  return (prose(el) || /^(UL|OL|BLOCKQUOTE)$/.test(el.tagName)) && !el.matches("ol.references") && !el.querySelector("img, table");
 }
 
 // Prose that can be typed: paragraphs and headings of plain text, not old table markup or maths.
