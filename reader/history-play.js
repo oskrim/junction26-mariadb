@@ -1070,18 +1070,26 @@ function partners(before, after) {
 function tagsFor(places) {
   const tags = [];
   const sections = new Set();
+  const images = [];
   let imagesIn = 0;
   let imagesOut = 0;
+  const srcOf = (el) => (el.matches("img") ? el : el.querySelector?.("img"))?.src;
   const hasImage = (el) => el.matches("figure, .figure, .infobox, img") || !!el.querySelector?.("img");
   for (const p of places) {
     if (p.quiet) continue;
     for (const el of p.adds) {
       if (/^H[23]$/.test(el.tagName)) tags.push(`New section: ${el.textContent.trim()}`);
-      if (hasImage(el)) imagesIn++;
+      if (hasImage(el)) {
+        imagesIn++;
+        if (srcOf(el)) images.push(srcOf(el));
+      }
     }
     for (const el of p.removes) if (hasImage(el)) imagesOut++;
     for (const { old, next } of p.rewrites) {
-      if (hasImage(next) && !hasImage(old)) imagesIn++;
+      if (hasImage(next) && !hasImage(old)) {
+        imagesIn++;
+        if (srcOf(next)) images.push(srcOf(next));
+      }
       if (hasImage(old) && !hasImage(next)) imagesOut++;
     }
     for (const el of [...p.rewrites.map((w) => w.old), ...p.adds, ...p.removes]) {
@@ -1090,10 +1098,14 @@ function tagsFor(places) {
       if (title) sections.add(title);
     }
   }
-  if (imagesIn) tags.push(`+${imagesIn} image${imagesIn > 1 ? "s" : ""}`);
+  if (imagesIn > images.length) tags.push(`+${imagesIn - images.length} image${imagesIn - images.length > 1 ? "s" : ""}`);
   if (imagesOut) tags.push(`−${imagesOut} image${imagesOut > 1 ? "s" : ""}`);
   for (const title of sections) tags.push(`§ ${title}`);
-  return tags.slice(0, 3).map((t) => (t.length > 34 ? `${t.slice(0, 33)}…` : t));
+  // Added pictures show as thumbnails; the rest as short names.
+  return [
+    ...images.slice(0, 2).map((image) => ({ image })),
+    ...tags.map((t) => ({ text: t.length > 30 ? `${t.slice(0, 29)}…` : t })),
+  ].slice(0, 4);
 }
 
 // A heading and the elements under it, up to the next heading of the same or a higher level.

@@ -99,6 +99,12 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
   let shownFight = null;
   let focus = 0;
   let tags = [];
+  let tagsAt = 0;
+  const thumbs = new Map();
+  const thumb = (src) => {
+    if (!thumbs.has(src)) thumbs.set(src, Object.assign(new Image(), { src }));
+    return thumbs.get(src);
+  };
   // The stop whose version is on screen; its block rises as the camera drives up to it.
   let stopNow = 0;
   let frame = 0;
@@ -346,6 +352,16 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
       if (sign.z < camZ + NEAR || sign.z > camZ + FAR) continue;
       standing.push({ z: sign.z, draw: () => drawSign(sign) });
     }
+    // The notes on the road being walked stand at points spread along it.
+    const tagged = blocks[walkK];
+    if (tagged?.k && !inWar.has(stops[tagged.k])) {
+      const z0 = stopZ[tagged.k - 1];
+      const z1 = stopZ[tagged.k];
+      tags.forEach((tag, j) => {
+        const wz = z0 + (z1 - z0) * (0.3 + (0.5 * (j + 0.5)) / Math.max(1, tags.length));
+        standing.push({ z: wz, draw: () => drawTag(tagged, { ...tag, k: j }, wz) });
+      });
+    }
     standing.sort((a, b) => b.z - a.z);
     const labels = [];
     for (const s of standing) s.draw();
@@ -413,12 +429,7 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
       const lw = Math.max(w, dw);
       // Always on the side toward the lane, so it never flips: left of the disc on right-hand roads.
       const lx = b.side > 0 ? Math.max(extra + 4, foot.x - r - 5 - lw) : Math.min(width - lw - 4, foot.x + r + 5);
-      // Under the diff, small tags: the section edited, a new section, images.
-      const notes = walking ? tags : [];
-      ctx.font = "500 10px Inter, system-ui, sans-serif";
-      const tw = notes.length ? Math.max(...notes.map((t) => ctx.measureText(t).width + 10)) : 0;
-      ctx.font = `${walking ? 600 : 500} 11px Inter, system-ui, sans-serif`;
-      const box = { x: lx - 3, y: cy - 8, w: Math.max(lw, tw) + 6, h: (diff?.length ? 30 : 16) + notes.length * 18 };
+      const box = { x: lx - 3, y: cy - 8, w: lw + 6, h: diff?.length ? 30 : 16 };
       if (!walking && labels.some((o) => box.x < o.x + o.w && o.x < box.x + box.w && box.y < o.y + o.h && o.y < box.y + box.h)) return;
       labels.push(box);
       ctx.fillStyle = `rgba(255,255,255,${0.85 * a})`;
@@ -439,19 +450,51 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
           dx += ctx.measureText(part).width + 6;
         }
       }
-      ctx.font = "500 10px Inter, system-ui, sans-serif";
-      for (const note of notes) {
-        ty += 18;
-        const nw = ctx.measureText(note).width + 10;
-        // Right-hand roads have their label left of the disc, so their tags line up on the right.
-        const nx = b.side > 0 ? lx + lw - nw : lx;
-        ctx.fillStyle = `rgba(32,33,34,${0.06 * a})`;
+    }
+
+    // A note on the road being walked: dropped onto the outer edge of the side road at its point, as a small
+    // sign with the section's name or as a thumbnail of an image added.
+    function drawTag(b, tag, wz) {
+      const dropped = smoothstep(0, 1, Math.min(1, (performance.now() - tagsAt - tag.k * 180) / 450));
+      if (dropped <= 0) return;
+      const edgeX = roadX(wz) + branchOffset(b, wz) + b.side * (branchHalf(b, wz) + 6);
+      const p = project(edgeX, LANE_H, wz);
+      const a = calm * dropped * smoothstep(NEAR, NEAR + 300, wz - camZ) * (1 - smoothstep(NAMED * 0.75, NAMED, wz - camZ));
+      if (a < 0.02) return;
+      const lift = (1 - dropped) * 18;
+      ctx.save();
+      ctx.globalAlpha = a;
+      if (tag.image?.complete && tag.image.naturalWidth) {
+        const w = Math.max(18, Math.min(56, 90 * p.s));
+        const h = (w * tag.image.naturalHeight) / tag.image.naturalWidth;
+        const x = Math.max(extra + 4, Math.min(width * 0.86 - w, b.side > 0 ? p.x : p.x - w));
+        const y = p.y - h - lift;
+        ctx.shadowColor = "rgba(0,0,0,0.18)";
+        ctx.shadowBlur = 6;
+        ctx.shadowOffsetY = 2;
+        ctx.fillStyle = "#fff";
+        ctx.fillRect(x - 2, y - 2, w + 4, h + 4);
+        ctx.shadowColor = "transparent";
+        ctx.drawImage(tag.image, x, y, w, h);
+      } else if (tag.text) {
+        ctx.font = `500 ${Math.round(Math.max(9, Math.min(11, 18 * p.s)))}px Inter, system-ui, sans-serif`;
+        const w = ctx.measureText(tag.text).width + 10;
+        const x = Math.max(extra + 2, Math.min(width - w - 2, b.side > 0 ? p.x : p.x - w));
+        const y = p.y - 8 - lift;
+        ctx.fillStyle = "rgba(255,255,255,0.92)";
+        ctx.strokeStyle = "rgba(32,33,34,0.12)";
+        ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.roundRect(nx, ty - 11, nw, 15, 4);
+        ctx.roundRect(x, y - 8, w, 16, 4);
         ctx.fill();
-        ctx.fillStyle = `rgba(84,89,93,${a})`;
-        ctx.fillText(note, nx + 5, ty);
+        ctx.stroke();
+        ctx.fillStyle = "rgba(84,89,93,1)";
+        ctx.textAlign = "left";
+        ctx.textBaseline = "middle";
+        ctx.fillText(tag.text, x + 5, y);
+        ctx.textBaseline = "alphabetic";
       }
+      ctx.restore();
     }
 
     function drawSign(sign) {
@@ -702,7 +745,8 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
     },
     // Notes on what the version being walked changed, shown under its editor.
     setTags(list) {
-      tags = list;
+      tags = list.map((t) => (t.image ? { ...t, image: thumb(t.image) } : t));
+      tagsAt = performance.now();
     },
     setStop(k) {
       stopNow = k;
