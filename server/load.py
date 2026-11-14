@@ -56,6 +56,8 @@ def create_tables(cur, dataset, reset):
     for statement in filter(str.strip, sql.split(";")):
         cur.execute(statement)
     # Tables created before these keys were in schema.sql.
+    if dataset == "s":
+        cur.execute("ALTER TABLE s_article ADD INDEX IF NOT EXISTS title (lang, title)")
     if dataset == "m":
         cur.execute("ALTER TABLE m_article ADD INDEX IF NOT EXISTS start_key (page_id, row_start), "
                     "ADD INDEX IF NOT EXISTS rev_id (rev_id), ADD INDEX IF NOT EXISTS title (title)")
