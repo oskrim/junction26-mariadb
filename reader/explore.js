@@ -567,6 +567,16 @@ export async function mountExplore(root, { id }) {
         ctx.arc(p.x, p.y, size + 4, 0, Math.PI * 2);
         ctx.stroke();
       }
+      // Every dot has its title beside it, on the side away from the middle so labels point outward.
+      const title = nodes.get(n).title;
+      const label = title.length > 26 ? `${title.slice(0, 25)}…` : title;
+      const left = p.x < middleX();
+      ctx.font = `${n === lit ? 600 : 500} 11px system-ui, -apple-system, "Segoe UI", sans-serif`;
+      ctx.textAlign = left ? "right" : "left";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = n === lit ? "rgb(51 102 204)" : "rgb(84 89 93)";
+      ctx.globalAlpha = point.a * (dimmed ? 0.2 : 0.85);
+      ctx.fillText(label, p.x + (left ? -1 : 1) * (size + 5), p.y);
     }
     ctx.globalAlpha = 1;
   }
