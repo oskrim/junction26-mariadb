@@ -2,6 +2,16 @@
 
 A small Python API on MariaDB for the reader app in `../reader/`. Run every command from the repo root.
 
+## Quick start: everything on your machine
+
+```bash
+server/local.sh                  # downloads S and M, loads all of M (~20-30 min the first time), runs the app
+ARTICLES=200 server/local.sh     # a quicker partial load
+```
+
+Then open <http://127.0.0.1:8010>. Later runs start in seconds. It needs Docker, `uv` and `curl`. Ask, Find
+and Learn need `GEMINI_API_KEY` in your environment. The steps below are what the script does.
+
 ## 1. Start the database
 
 ```bash
