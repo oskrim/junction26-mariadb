@@ -1182,3 +1182,32 @@ body[data-view="history"] .bar {
     translate: -50% 12px;
   }
 }
+
+/* Previous and next edit, either side of play */
+.replay-step {
+  flex: none;
+  width: 26px;
+  height: 30px;
+  margin: 0 -8px;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  font: 400 22px/1 var(--sans);
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.replay-step:hover:not(:disabled) {
+  color: var(--ink);
+}
+
+.replay-step:disabled {
+  color: var(--rule);
+  cursor: default;
+}
+
+/* The article's paragraph margins don't apply inside the floating controls */
+.war-stage .replay-caption {
+  margin: 0;
+  line-height: 30px;
+}

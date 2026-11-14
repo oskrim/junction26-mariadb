@@ -27,7 +27,9 @@ export async function openWarReplay({ mount, articleId, war, before, onTurn = ()
         <div class="replay-doc"></div>
       </div>
       <footer class="replay-foot">
+        <button type="button" class="replay-step" data-step="-1" aria-label="Previous edit">‹</button>
         <button type="button" class="replay-play" aria-label="Pause">❚❚</button>
+        <button type="button" class="replay-step" data-step="1" aria-label="Next edit">›</button>
         <p class="replay-caption"></p>
         <span class="replay-count"></span>
         <button type="button" class="replay-close" aria-label="Leave the replay">×</button>
@@ -48,7 +50,9 @@ export async function openWarReplay({ mount, articleId, war, before, onTurn = ()
         <div class="replay-doc"></div>
       </div>
       <footer class="replay-foot">
+        <button type="button" class="replay-step" data-step="-1" aria-label="Previous edit">‹</button>
         <button type="button" class="replay-play" aria-label="Pause">❚❚</button>
+        <button type="button" class="replay-step" data-step="1" aria-label="Next edit">›</button>
         <p class="replay-caption"></p>
         <span class="replay-count"></span>
       </footer>`;
@@ -115,6 +119,10 @@ export async function openWarReplay({ mount, articleId, war, before, onTurn = ()
     }${comment ? `<span class="replay-comment">${escape(comment)}</span>` : ""}`;
     caption.title = comment;
     root.querySelector(".replay-count").textContent = `${t + 1} / ${turns.length}`;
+    for (const b of root.querySelectorAll(".replay-step")) {
+      const to = t + Number(b.dataset.step);
+      b.disabled = to < 0 || to >= turns.length;
+    }
     onTurn(edit);
   }
 
@@ -135,9 +143,11 @@ export async function openWarReplay({ mount, articleId, war, before, onTurn = ()
       p.classList.remove("is-empty");
       p.style.setProperty("--c", colorOf(s.edit.user));
       if (s.edit.revertsTo !== null) flash(p, colorOf(s.edit.user));
-      const runs = diff(words(change.from), words(change.to ?? ""));
+      const runs = mergeRuns(diff(words(change.from), words(change.to ?? "")));
       const typed = runs.reduce((n, r) => n + (r.type === "change" ? r.b.join("").length : 0), 0);
       const perChar = Math.min(32, Math.max(3, 2600 / Math.max(1, typed)));
+      // A paragraph changed in many places goes quicker between places.
+      const pace = Math.min(1, 3 / runs.filter((r) => r.type === "change").length);
 
       setTokens(p, change.from);
       const spans = [...p.children];
@@ -148,13 +158,13 @@ export async function openWarReplay({ mount, articleId, war, before, onTurn = ()
           continue;
         }
         pointAt(cursor, spans[at] ?? p.lastElementChild ?? p, false);
-        await wait(520);
+        await wait(520 * pace);
         const doomed = spans.slice(at, at + r.a.length);
         for (const span of doomed) {
           span.classList.add("is-selected");
-          await wait(Math.min(40, 500 / doomed.length));
+          await wait(Math.min(40, (500 * pace) / doomed.length));
         }
-        if (doomed.length) await wait(260);
+        if (doomed.length) await wait(260 * pace);
         const anchor = spans[at + r.a.length] ?? null;
         doomed.forEach((span) => span.remove());
         spans.splice(at, doomed.length);
@@ -204,6 +214,14 @@ export async function openWarReplay({ mount, articleId, war, before, onTurn = ()
     playButton.setAttribute("aria-label", label === "↻" ? "Play again" : on ? "Pause" : "Play");
   }
 
+  // The arrows skip to the start of the previous or next turn and play it.
+  function stepBy(d) {
+    const t = turn + d;
+    if (t < 0 || t >= turns.length) return;
+    setPlaying(true);
+    jump(t);
+  }
+
   function jump(t) {
     run++;
     renderState(turns[t] - 1);
@@ -214,6 +232,8 @@ export async function openWarReplay({ mount, articleId, war, before, onTurn = ()
 
   const onClick = (event) => {
     if (event.target.closest(".replay-close")) return close();
+    const step = event.target.closest(".replay-step");
+    if (step) return stepBy(Number(step.dataset.step));
     if (event.target.closest(".replay-play")) {
       if (playButton.textContent === "↻") {
         setPlaying(true);
@@ -227,8 +247,8 @@ export async function openWarReplay({ mount, articleId, war, before, onTurn = ()
     else if (event.key === " ") {
       event.preventDefault();
       setPlaying(!playing);
-    } else if (event.key === "ArrowLeft" && turn > 0) jump(turn - 1);
-    else if (event.key === "ArrowRight" && turn < turns.length - 1) jump(turn + 1);
+    } else if (event.key === "ArrowLeft") stepBy(-1);
+    else if (event.key === "ArrowRight") stepBy(1);
     event.stopPropagation();
   };
   addEventListener("keydown", onKey, true);
@@ -310,6 +330,26 @@ function paragraphsOf(text) {
     .filter((line) => !/^\s*\[\[(file|image):/i.test(line))
     .map(plainText)
     .filter((t) => t.length > 1);
+}
+
+// Changes only a few unchanged words apart become one select-and-retype, instead of the cursor
+// hopping word by word through a reworded sentence.
+function mergeRuns(runs) {
+  const out = [];
+  for (let i = 0; i < runs.length; i++) {
+    const r = runs[i];
+    const prev = out.at(-1);
+    const next = runs[i + 1];
+    if (r.type === "equal" && prev?.type === "change" && next && r.a.length <= 7) {
+      prev.a.push(...r.a, ...next.a);
+      prev.b.push(...r.b, ...next.b);
+      i++;
+    } else if (r.type === "change" && prev?.type === "change") {
+      prev.a.push(...r.a);
+      prev.b.push(...r.b);
+    } else out.push({ type: r.type, a: [...r.a], b: [...r.b] });
+  }
+  return out;
 }
 
 function setTokens(p, text) {
