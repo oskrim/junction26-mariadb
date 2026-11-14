@@ -74,6 +74,7 @@ export function speechUrl(text) {
 // connecting, detail names the step. Each step has CONNECT_S to finish, and is logged as [voice] in the console.
 // Resolves to { stop(), volume() }.
 const CONNECT_S = 20;
+const MIC_BLOCKED = "the microphone is blocked. Allow it for this site, and on a Mac for the browser too (System Settings › Privacy & Security › Microphone), then reload";
 
 export async function startTalk({ context, onStatus, onMessage }) {
   const step = async (label, work) => {
@@ -91,9 +92,18 @@ export async function startTalk({ context, onStatus, onMessage }) {
     }
   };
   await step("Starting the microphone…", async () => {
-    const mic = await navigator.mediaDevices?.getUserMedia?.({ audio: true });
-    if (!mic) throw new Error("this browser has no microphone access");
-    mic.getTracks().forEach((t) => t.stop());
+    if (!navigator.mediaDevices?.getUserMedia) throw new Error("this browser has no microphone access");
+    let mic;
+    try {
+      mic = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (error) {
+      // macOS can deny Chrome the microphone while the site itself is allowed.
+      throw new Error(error.name === "NotAllowedError" ? MIC_BLOCKED : `the microphone didn't start (${error.message})`);
+    }
+    const tracks = mic.getAudioTracks();
+    const dead = !tracks.length || tracks.every((t) => t.muted || t.readyState !== "live");
+    tracks.forEach((t) => t.stop());
+    if (dead) throw new Error(MIC_BLOCKED);
   });
   const [{ VoiceConversation }, started] = await step("Loading the voice…", () =>
     Promise.all([
