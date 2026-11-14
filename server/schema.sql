@@ -59,12 +59,15 @@ CREATE TABLE IF NOT EXISTS m_link (
 
 -- M: one row per article, written by the loader with its versions: the current title, how many versions
 -- it has and when the first was saved. Counting them in m_article on each request reads every version.
+-- topic is the article's S category that the most M articles share.
 CREATE TABLE IF NOT EXISTS m_article_stats (
   page_id  INT UNSIGNED NOT NULL,
   title    VARCHAR(255) NOT NULL,
   versions INT UNSIGNED NOT NULL,
   first    TIMESTAMP(6) NOT NULL,
-  PRIMARY KEY (page_id)
+  topic    VARCHAR(255),
+  PRIMARY KEY (page_id),
+  KEY (title)
 ) CHARACTER SET utf8mb4;
 
 -- M: the text search looks in, one row per article: its current Finnish S text, else its current M text,

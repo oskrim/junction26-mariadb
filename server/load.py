@@ -60,6 +60,8 @@ def create_tables(cur, dataset, reset):
         cur.execute("ALTER TABLE m_article ADD INDEX IF NOT EXISTS start_key (page_id, row_start), "
                     "ADD INDEX IF NOT EXISTS rev_id (rev_id), ADD INDEX IF NOT EXISTS title (title)")
         cur.execute("ALTER TABLE m_link ADD INDEX IF NOT EXISTS dst (dst)")
+        cur.execute("ALTER TABLE m_article_stats ADD COLUMN IF NOT EXISTS topic VARCHAR(255), "
+                    "ADD INDEX IF NOT EXISTS title (title)")
         # Articles loaded before m_article_stats existed.
         cur.execute("SELECT EXISTS (SELECT 1 FROM m_article_stats)")
         if not cur.fetchone()[0]:
@@ -206,6 +208,24 @@ def load_m(con, cur, count):
               f"{time.time() - t0:.1f} s", flush=True)
     print(f"m: {len(todo)} articles, {versions_total} versions, {links_total} link rows, {time.time() - started:.0f} s")
     fill_search(con, cur)
+    cur.execute("SELECT EXISTS (SELECT 1 FROM m_article_stats WHERE topic IS NULL)")
+    if todo or cur.fetchone()[0]:
+        fill_topics(con, cur)
+
+
+def fill_topics(con, cur):
+    """Each article's topic: its S category that the most M articles share."""
+    cur.execute("""UPDATE m_article_stats st JOIN (
+                     SELECT page_id, category FROM (
+                       SELECT c.page_id, c.category,
+                              ROW_NUMBER() OVER (PARTITION BY c.page_id ORDER BY n.articles DESC, c.category) AS rank
+                       FROM s_category c
+                       JOIN (SELECT c2.category, COUNT(*) AS articles FROM s_category c2
+                             JOIN m_article_stats s ON s.page_id = c2.page_id GROUP BY c2.category) n
+                         USING (category)) ranked
+                     WHERE rank = 1) t USING (page_id)
+                   SET st.topic = t.category""")
+    con.commit()
 
 
 def fill_search(con, cur):
