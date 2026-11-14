@@ -5,24 +5,32 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Wikipedia Reader</title>
     <script>
-      // main.js imports the open view's modules only after the article loads; fetch them alongside it.
+      // The open view's modules, and the API answers its first paint needs, load alongside main.js instead of
+      // after it. The URLs must match the ones api.js asks for, or the answers are fetched twice.
       {
-        const views = {
+        const params = new URLSearchParams(location.search);
+        const view = params.get("view");
+        const id = Number(params.get("id") ?? 1150);
+        const at = Math.floor(Date.now() / 60000) * 60; // now() in api.js
+        const modules = {
           explore: ["explore.js"],
           history: ["history.js", "article-panel.js", "diff.js", "history-cards.js", "history-model.js", "minimap.js", "timeline3d.js", "war-replay.js"],
         };
-        for (const file of views[new URLSearchParams(location.search).get("view")] ?? []) {
-          const link = Object.assign(document.createElement("link"), { rel: "modulepreload", href: `./${file}` });
-          document.head.append(link);
+        const answers = [`/api/articles?id=${id}`, `/api/article?id=${id}&at=${at}`];
+        if (view === "explore") answers.push(`/api/graph?at=${at}&id=${id}`);
+        if (view === "history") answers.push(`/api/history?id=${id}`);
+        const preload = (attrs) => document.head.append(Object.assign(document.createElement("link"), attrs));
+        for (const file of modules[view] ?? []) preload({ rel: "modulepreload", href: `./${file}` });
+        // Only when this server answers the API (BASE in api.js is "").
+        if (location.origin === "https://65-109-75-60.sslip.io" || /^801\d$/.test(location.port)) {
+          for (const href of answers) preload({ rel: "preload", as: "fetch", crossOrigin: "anonymous", href });
         }
       }
     </script>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,500;0,8..60,600;1,8..60,400&display=swap"
-      rel="stylesheet"
-    />
+    <link rel="preconnect" href="https://upload.wikimedia.org" />
+    <link rel="preload" href="./vendor/fonts/source-serif-4-normal-latin.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="./vendor/fonts/inter-normal-latin.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="./vendor/fonts/fonts.css" />
     <link rel="modulepreload" href="./main.js" />
     <link rel="modulepreload" href="./api.js" />
     <link rel="modulepreload" href="./chat.js" />
@@ -36,8 +44,7 @@
     <link rel="modulepreload" href="./wikitext.js" />
     <link rel="modulepreload" href="./censor.js" />
     <link rel="modulepreload" href="./steps.js" />
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+    <link rel="modulepreload" href="./math.js" />
     <link rel="stylesheet" href="./styles.css" />
     <link rel="stylesheet" href="./explore.css" />
     <link rel="stylesheet" href="./cursor-menu.css" />

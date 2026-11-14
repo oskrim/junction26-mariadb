@@ -70,24 +70,20 @@ class AskError(Exception):
         self.status = status
 
 
-def serve(handler, connect):
+def serve(handler, database):
     """Handles one POST /api/ask on a BaseHTTPRequestHandler."""
     try:
         request = parse(handler)
     except AskError as error:
         return send_json(handler, error.status, {"error": str(error)})
     with Progress(handler) as progress:
-        con = connect()
-        try:
-            cur = con.cursor()
-            version = read_version(cur, progress, request)
-            if request["mode"] == "find":
-                result = find(cur, progress, request, version)
-            else:
-                facts = edit_facts(cur, progress, request["page_id"], version["row_start"])
-                facts["passage_first"] = passage_first(cur, progress, request, version)
-        finally:
-            con.close()
+        cur = database().cursor()
+        version = read_version(cur, progress, request)
+        if request["mode"] == "find":
+            result = find(cur, progress, request, version)
+        else:
+            facts = edit_facts(cur, progress, request["page_id"], version["row_start"])
+            facts["passage_first"] = passage_first(cur, progress, request, version)
         if request["mode"] == "find":
             event(handler, "result", result)
         else:

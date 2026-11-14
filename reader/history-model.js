@@ -32,45 +32,84 @@ export function analyzeHistory(rows) {
   return edits;
 }
 
-// Reverts less than three days apart form one fight. It counts as a war when it has at least
-// four reverts and two people who each made two or more of its edits.
+// Reverts of someone else's edits, less than three days apart, form one fight; people undoing their own
+// edit don't count. Fighters are the people reverting or being reverted. It is a dispute when two people
+// each reverted the other, and vandalism fought off when one side only ever got reverted. A fight needs
+// at least MIN_REVERTS such reverts to count.
+const MIN_REVERTS = 4;
+
 export function findEditWars(edits) {
-  const groups = [];
-  let current = [];
+  const reverts = [];
   for (const edit of edits) {
     if (edit.revertsTo === null) continue;
-    if (current.length && edit.time - current.at(-1).time > 3 * DAY) {
+    const undone = edits.slice(edit.revertsTo + 1, edit.index).filter((e) => e.user !== edit.user);
+    if (undone.length) reverts.push({ edit, victims: [...new Set(undone.map((e) => e.user))], undone });
+  }
+
+  const groups = [];
+  let current = [];
+  for (const r of reverts) {
+    if (current.length && r.edit.time - current.at(-1).edit.time > 3 * DAY) {
       groups.push(current);
       current = [];
     }
-    current.push(edit);
+    current.push(r);
   }
   if (current.length) groups.push(current);
 
   return groups
-    .map((reverts) => {
-      const span = edits.slice(reverts[0].revertsTo + 1, reverts.at(-1).index + 1);
-      const counts = new Map();
-      for (const e of span) counts.set(e.user, (counts.get(e.user) ?? 0) + 1);
-      const fighters = [...counts]
-        .filter(([, n]) => n >= 2)
-        .sort((a, b) => b[1] - a[1])
-        .map(([user]) => user);
-      const undone = span.filter((e) => e.undoneBy !== null);
-      const vandalism = undone.filter((e) => e.kind === "anonymous").length >= undone.length * 0.7;
+    .filter((group) => group.length >= MIN_REVERTS)
+    .map((group) => {
+      const span = edits.slice(group[0].edit.revertsTo + 1, group.at(-1).edit.index + 1);
+      const involved = new Map();
+      const hit = new Set();
+      const bump = (user) => involved.set(user, (involved.get(user) ?? 0) + 1);
+      for (const { edit, victims } of group) {
+        bump(edit.user);
+        for (const v of victims) {
+          bump(v);
+          hit.add(`${edit.user}\n${v}`);
+        }
+      }
+      const ranked = [...involved].sort((a, b) => b[1] - a[1]).map(([user]) => user);
+      // The two shown fighting: the busiest pair who reverted each other, otherwise the most reverted
+      // person and whoever reverted them most.
+      let pair = null;
+      for (const a of ranked) {
+        for (const b of ranked) {
+          if (a !== b && hit.has(`${a}\n${b}`) && hit.has(`${b}\n${a}`)) {
+            pair = [a, b];
+            break;
+          }
+        }
+        if (pair) break;
+      }
+      const dispute = pair !== null;
+      if (!pair) {
+        const victimCount = new Map();
+        for (const { victims } of group) for (const v of victims) victimCount.set(v, (victimCount.get(v) ?? 0) + 1);
+        const victim = [...victimCount].sort((a, b) => b[1] - a[1])[0][0];
+        const byReverter = new Map();
+        for (const { edit, victims } of group) {
+          if (victims.includes(victim)) byReverter.set(edit.user, (byReverter.get(edit.user) ?? 0) + 1);
+        }
+        pair = [victim, [...byReverter].sort((a, b) => b[1] - a[1])[0][0]];
+      }
+      const fighters = [...pair, ...ranked.filter((u) => !pair.includes(u))];
+      const fought = group.flatMap(({ edit, undone }) => [edit, ...undone]);
+      const contested = group[0].undone[0];
       return {
         id: `war-${span[0].rev_id}`,
         start: span[0].time,
         end: span.at(-1).time,
         edits: span,
-        reverts: reverts.length,
+        reverts: group.length,
         fighters,
-        kind: vandalism ? "vandalism" : "dispute",
-        section: mostCommon(span.map((e) => e.section).filter(Boolean)),
-        contested: undone[0] ?? span[0],
+        kind: dispute ? "dispute" : "vandalism",
+        section: mostCommon(fought.map((e) => e.section).filter(Boolean)),
+        contested,
       };
-    })
-    .filter((war) => war.reverts >= 4 && war.fighters.length >= 2);
+    });
 }
 
 // The edits worth a card: the first version, the biggest additions and cuts, and the biggest edit of

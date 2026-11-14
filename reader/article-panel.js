@@ -1,6 +1,7 @@
 import { censor } from "./censor.js";
 import { diff, words } from "./diff.js";
 import { fileUrl, getArticle } from "./api.js";
+import { loadMath } from "./math.js";
 import { formatDate } from "./history-cards.js";
 import { parseRowStart } from "./history-model.js";
 import { renderWikitext } from "./wikitext.js";
@@ -20,14 +21,13 @@ export function createArticlePanel({ root, articleId }) {
     const token = ++request;
     const { version } = await getArticle(articleId, Math.floor(wanted / 1000));
     if (token !== request || !version || version.rev_id === shown?.revId) return;
-    render(version);
+    const renderMath = await loadMath(version.text);
+    if (token !== request) return;
+    render(version, renderMath);
   }
 
-  function render(version) {
-    const { html } = renderWikitext(version.text, {
-      fileUrl,
-      renderMath: (tex, displayMode) => katex.renderToString(tex, { displayMode, throwOnError: false }),
-    });
+  function render(version, renderMath) {
+    const { html } = renderWikitext(version.text, { fileUrl, renderMath });
     const box = document.createElement("div");
     box.innerHTML = html;
     box.querySelectorAll("ol.references").forEach((el) => el.remove());

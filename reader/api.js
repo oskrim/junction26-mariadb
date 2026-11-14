@@ -25,6 +25,9 @@ function get(path) {
 // One article ([{ page_id, title, versions, first }]) when id is given, else all of them.
 export const getArticles = (id) => get(id == null ? "/api/articles" : `/api/articles?id=${id}`);
 
+// The current time for `at`, in whole minutes so that views opened within a minute share cached answers.
+export const now = () => Math.floor(Date.now() / 60000) * 60;
+
 export const getArticle = (id, at) => get(`/api/article?id=${id}&at=${at}`);
 
 // Previews asked for within PREVIEW_WAIT ms go out as one /api/previews request: Explore asks for ~20 at once.

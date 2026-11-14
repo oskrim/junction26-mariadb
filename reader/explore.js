@@ -1,4 +1,4 @@
-import { getArticle, getGraph, getPreview } from "./api.js";
+import { getArticle, getGraph, getPreview, now as currentTime } from "./api.js";
 
 // Related articles as a slowly turning 3D cloud: the article in the middle, the articles it links
 // with around it, grouped by topic, and a fainter ring of articles one step further out.
@@ -42,7 +42,7 @@ export async function mountExplore(root, { id }) {
   const yearOut = $(".ex-year");
   const playButton = $(".ex-play");
 
-  const now = Math.floor(Date.now() / 1000);
+  const now = currentTime();
   // The part of the link graph loaded so far: each article the map centers on or grows from brings
   // its own neighborhood.
   const nodes = new Map();
@@ -153,6 +153,7 @@ export async function mountExplore(root, { id }) {
     const further = [];
     hop = new Map([[nextId, 0], ...near.map((n) => [n, 1])]);
 
+    const centerPreview = preview(nodes.get(nextId).title); // goes out in the same request as the cards'
     const chosen = await chooseCards(near);
     ring = near;
     ringCards = chosen;
@@ -172,7 +173,7 @@ export async function mountExplore(root, { id }) {
     }
     edges = graphEdges.filter((e) => hop.has(e.source) && hop.has(e.target) && e.source !== e.target);
 
-    buildCards(nextId, chosen, await preview(nodes.get(nextId).title));
+    buildCards(nextId, chosen, await centerPreview);
     buildPills();
     setTitle();
   }

@@ -73,7 +73,7 @@ WIDE_SHAPE = ("The reader is on a wide screen: write 2 short paragraphs of 2 or 
               "with \"• \" and put a blank line between key points.")
 
 
-def serve(handler, connect):
+def serve(handler, database):
     """Handles one POST /api/learn on a BaseHTTPRequestHandler."""
     started = time.perf_counter()
     timings = {}
@@ -82,13 +82,9 @@ def serve(handler, connect):
     except AskError as error:
         return send_json(handler, error.status, {"error": str(error)})
     with Progress(handler, [("Access-Control-Allow-Origin", "*")]) as progress:
-        con = connect()
-        try:
-            cur = con.cursor()
-            here = read_version(cur, progress, request)
-            candidates = linked_articles(cur, progress, request["page_id"], request["at"])
-        finally:
-            con.close()
+        cur = database().cursor()
+        here = read_version(cur, progress, request)
+        candidates = linked_articles(cur, progress, request["page_id"], request["at"])
         timings["db_ms"] = ms(started)
         if candidates:
             picks = rank(progress, request, here, candidates)

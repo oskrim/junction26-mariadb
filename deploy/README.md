@@ -11,7 +11,7 @@ One Verda CPU instance (`junction-wiki`, Ubuntu 24.04) runs everything.
 | Repo checkout | `/srv/junction26-mariadb` |
 | Box config and passwords | `/etc/junction-wiki.env` (root only) |
 
-Firewall (ufw) allows 22, 80, 443 and 3306 only.
+Firewall (ufw) allows TCP 22, 80, 443 and 3306, and UDP 443 for HTTP/3.
 
 ## Provision (once)
 
