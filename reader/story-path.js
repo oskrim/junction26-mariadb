@@ -143,7 +143,8 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
     // quickly, as in a war; the road then shows where it is, not where the text is.
     const walkK = Math.min(stopNow, Math.max(0, lowerBound(stopZ, nowZ - 1)));
     const nowBlock = blocks[walkK];
-    const nowOffset = nowBlock?.k ? branchOffset(nowBlock, nowZ) : 0;
+    // War rounds have no side road, so during a war the dot stays on the lane.
+    const nowOffset = nowBlock?.k && !inWar.has(stops[nowBlock.k]) ? branchOffset(nowBlock, nowZ) : 0;
     const camX = roadX(camZ + BACK) * 0.9;
     const project = (x, y, wz) => {
       const dz = wz - camZ;
