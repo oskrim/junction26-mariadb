@@ -6,7 +6,6 @@ import { FIGHTER_COLORS } from "./timeline3d.js";
 import { plainText } from "./wikitext.js";
 
 const SHOWN_PARAGRAPHS = 3;
-const SPEEDS = [1, 2, 4];
 
 // Replays an edit war between its two main fighters on the passage they fought over most. Each has a
 // named cursor that waits in the corner, then selects, deletes and types their real edit. Edits by
@@ -39,22 +38,9 @@ export async function openWarReplay({ articleId, war, before }) {
         <div class="replay-doc"></div>
       </div>
       <footer class="replay-foot">
-        <div class="replay-caption"></div>
-        <div class="replay-controls">
-          <button type="button" class="replay-play" aria-label="Pause">❚❚</button>
-          <div class="replay-track">
-            <div class="replay-fill"></div>
-            ${turns
-              .map((i, t) => {
-                const s = model.steps[i];
-                const left = turns.length > 1 ? (t / (turns.length - 1)) * 100 : 0;
-                return `<i style="left:${left}%;--c:${colorOf(s.edit.user)}"${s.edit.revertsTo !== null ? ' class="is-undo"' : ""}></i>`;
-              })
-              .join("")}
-          </div>
-          <span class="replay-count"></span>
-          <button type="button" class="replay-speed">1×</button>
-        </div>
+        <button type="button" class="replay-play" aria-label="Pause">❚❚</button>
+        <p class="replay-caption"></p>
+        <span class="replay-count"></span>
       </footer>
     </section>`;
   document.body.append(root);
@@ -64,7 +50,6 @@ export async function openWarReplay({ articleId, war, before }) {
   const tab = root.querySelector(".replay-tab");
   const caption = root.querySelector(".replay-caption");
   const playButton = root.querySelector(".replay-play");
-  const track = root.querySelector(".replay-track");
   const cursors = new Map(
     fighters.map((user, k) => {
       const el = document.createElement("div");
@@ -77,7 +62,6 @@ export async function openWarReplay({ articleId, war, before }) {
   );
   let turn = 0;
   let playing = true;
-  let speed = 1;
   let run = 0;
 
   // Both fighters wait side by side in the page's top-right corner.
@@ -118,12 +102,11 @@ export async function openWarReplay({ articleId, war, before }) {
       minute: "2-digit",
       timeZone: "UTC",
     });
-    caption.innerHTML = `
-      <p><b style="--c:${colorOf(edit.user)}">${escape(censor(edit.user))}</b>${edit.revertsTo !== null ? `<span class="replay-undo">Undo</span>` : ""}</p>
-      <p class="replay-comment">${comment ? `“${escape(comment)}”` : `<span>No edit summary</span>`}</p>`;
+    caption.innerHTML = `<b style="--c:${colorOf(edit.user)}">${escape(censor(edit.user))}</b>${
+      edit.revertsTo !== null ? `<span class="replay-undo">undo</span>` : ""
+    }${comment ? `<span class="replay-comment">${escape(comment)}</span>` : ""}`;
+    caption.title = comment;
     root.querySelector(".replay-count").textContent = `${t + 1} / ${turns.length}`;
-    root.querySelector(".replay-fill").style.width = `${turns.length > 1 ? (t / (turns.length - 1)) * 100 : 100}%`;
-    track.querySelectorAll("i").forEach((tick, k) => tick.classList.toggle("is-past", k <= t));
   }
 
   async function animate(index, token) {
@@ -131,7 +114,7 @@ export async function openWarReplay({ articleId, war, before }) {
     const wait = (ms) =>
       new Promise((resolve, reject) => {
         const tick = () => (token !== run ? reject(new Error("stopped")) : playing ? resolve() : setTimeout(tick, 120));
-        setTimeout(tick, ms / speed);
+        setTimeout(tick, ms);
       });
     const cursor = cursors.get(s.edit.user);
     cursor.classList.remove("is-idle");
@@ -222,14 +205,7 @@ export async function openWarReplay({ articleId, war, before }) {
 
   root.addEventListener("click", (event) => {
     if (event.target.closest(".replay-backdrop, .replay-close")) return close();
-    if (event.target.closest(".replay-track")) {
-      const r = track.getBoundingClientRect();
-      return jump(Math.round(((event.clientX - r.left) / r.width) * (turns.length - 1)));
-    }
-    if (event.target.closest(".replay-speed")) {
-      speed = SPEEDS[(SPEEDS.indexOf(speed) + 1) % SPEEDS.length];
-      root.querySelector(".replay-speed").textContent = `${speed}×`;
-    } else if (event.target.closest(".replay-play")) {
+    if (event.target.closest(".replay-play")) {
       if (playButton.textContent === "↻") {
         setPlaying(true);
         jump(0);
@@ -241,7 +217,8 @@ export async function openWarReplay({ articleId, war, before }) {
     else if (event.key === " ") {
       event.preventDefault();
       setPlaying(!playing);
-    }
+    } else if (event.key === "ArrowLeft" && turn > 0) jump(turn - 1);
+    else if (event.key === "ArrowRight" && turn < turns.length - 1) jump(turn + 1);
     event.stopPropagation();
   };
   addEventListener("keydown", onKey, true);
