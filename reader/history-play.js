@@ -5,6 +5,7 @@ import { formatDate } from "./history-cards.js";
 import { analyzeHistory, findEditWars, parseRowStart, pickMilestones } from "./history-model.js";
 import { loadMath } from "./math.js";
 import { createMinimap } from "./minimap.js";
+import { createStoryPath } from "./story-path.js";
 import { closeWar, playWar, warHeading } from "./war-inline.js";
 import { renderWikitext } from "./wikitext.js";
 
@@ -12,9 +13,16 @@ const SWORDS = `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 2.5 10
 const PLAY = `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3.2v9.6L12.6 8z"/></svg>`;
 const PAUSE = `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 3h2.4v10H4.5zM9.1 3h2.4v10H9.1z"/></svg>`;
 const AGAIN = `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8a4.5 4.5 0 1 0 1.4-3.3M4.5 2v3h3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
-// Milliseconds each version stays on screen at 1×; the version where a war starts stays longer.
-const STEP = 1100;
-const WAR_HOLD = 3200;
+// Milliseconds at 1×: the pause after each version, longer where a war starts; a paragraph opening or
+// closing; and how long a changed paragraph shows its new words.
+const STEP = 500;
+const WAR_HOLD = 2600;
+const GROW = 700;
+const SHUT = 420;
+const READ = 1000;
+// Places in one version that the page glides to in turn.
+const VISITS = 3;
+const CLOSED = { height: "0px", marginTop: "0px", marginBottom: "0px", overflow: "hidden", opacity: "0" };
 const SPEEDS = [1, 2, 4];
 // After the reader scrolls by hand, the page stops following the changes for this long.
 const HANDS_OFF = 6000;
@@ -39,10 +47,16 @@ const DOCK = `
 
 // Replays the article being written, in place: from its first version to today, through the versions
 // that mattered most, with what each one added written in. A timeline docks at the bottom, with a
-// swords button over every edit war; reaching or clicking one marks where the fight broke out.
+// swords button over every edit war; reaching or clicking one marks where the fight broke out. The
+// contents list makes way for a 3D road of the article's life that the reader travels along.
 // × or Escape puts today's article back exactly as it was.
-export function startHistoryPlay({ id, body, toc, renderToc, onClose }) {
-  const saved = { body: [...body.childNodes], toc: [...toc.childNodes], scroll: scrollY };
+export function startHistoryPlay({ id, body, onClose }) {
+  const saved = { body: [...body.childNodes], scroll: scrollY };
+  const side = document.createElement("aside");
+  side.className = "hp-path";
+  side.setAttribute("aria-label", "The article's life as a road");
+  side.innerHTML = `<canvas></canvas>`;
+  document.querySelector(".layout").append(side);
   const dock = document.createElement("div");
   dock.className = "hp-dock";
   dock.innerHTML = DOCK;
@@ -55,6 +69,7 @@ export function startHistoryPlay({ id, body, toc, renderToc, onClose }) {
   let frames = [];
   let edits = [];
   let minimap = null;
+  let path = null;
   let at = -1;
   let playing = true;
   let looping = false;
@@ -80,6 +95,16 @@ export function startHistoryPlay({ id, body, toc, renderToc, onClose }) {
 
     minimap = createMinimap({ root: $(".hp-map"), edits, wars, onPick: (time) => jump(frameAt(time)) });
     drawSwords(wars);
+    path = createStoryPath({
+      canvas: side.querySelector("canvas"),
+      edits,
+      wars,
+      onPick: (war) => {
+        setPlaying(false);
+        jump(frames.findIndex((f) => f.war === war));
+      },
+    });
+    path.setTime(edits[0].time, { instant: true });
     window.scrollTo({ top: 0, behavior: "instant" });
     play(0);
   }
@@ -129,7 +154,7 @@ export function startHistoryPlay({ id, body, toc, renderToc, onClose }) {
     looping = true;
     for (let i = from; i < frames.length; i++) {
       for (let k = i + 1; k <= i + 3 && k < frames.length; k++) load(frames[k]);
-      await show(i, token);
+      await show(i, token, true);
       if (token !== run) return;
       if (i === frames.length - 1) break;
       const hold = (frames[i].war ? WAR_HOLD : STEP) / speed;
@@ -156,25 +181,27 @@ export function startHistoryPlay({ id, body, toc, renderToc, onClose }) {
         if (playing) left -= t - last;
         last = t;
         if (left <= 0) resolve(true);
-        else setTimeout(tick, 50);
+        else setTimeout(tick, 30);
       };
-      setTimeout(tick, 50);
+      setTimeout(tick, 30);
     });
   }
 
-  async function show(i, token) {
+  async function show(i, token, animate) {
     const frame = frames[i];
     const version = await load(frame);
     if (token !== run || closed || !version) return;
     const renderMath = await loadMath(version.text);
     if (token !== run || closed) return;
     at = i;
-    render(version, renderMath);
     moveMarker(frame.edit.time, 0);
+    path.setTime(frame.edit.time, { instant: !animate });
+    path.setWar(frame.war ?? null);
     $(".hp-date").textContent = formatDate(parseRowStart(version.row_start));
     $(".hp-who").innerHTML = `${escape(censor(version.user))} <span>· version ${(frame.edit.index + 1).toLocaleString("en-US")} of ${edits.length.toLocaleString("en-US")}</span>`;
-    if (frame.war) announce(frame.war);
-    else if (announced && frame.edit.time > announced.end) announce(null);
+    if (!frame.war && announced && frame.edit.time > announced.end) announce(null);
+    await render(version, renderMath, token, animate);
+    if (frame.war && token === run && !closed) announce(frame.war);
   }
 
   function moveMarker(time, ms) {
@@ -189,7 +216,7 @@ export function startHistoryPlay({ id, body, toc, renderToc, onClose }) {
     if (playing) play(i);
     else {
       looping = false;
-      show(i, ++run);
+      show(i, ++run, false);
     }
   }
 
@@ -202,59 +229,197 @@ export function startHistoryPlay({ id, body, toc, renderToc, onClose }) {
     if (!looping) play(at >= frames.length - 1 ? 0 : Math.max(0, at));
   }
 
-  // The article as `version`: unchanged paragraphs stay as they are, new ones are written in and changed
-  // ones show their new words. The first change is brought into view unless the reader is scrolling.
-  function render(version, renderMath) {
-    const { html, toc: entries } = renderWikitext(version.text, { fileUrl, renderMath });
+  // The article as `version`. Unchanged paragraphs stay where they are. Each place that changed is then
+  // visited in turn: the page glides there, new paragraphs open up and are written in, changed ones show
+  // their new words before settling, and cut ones close. Only the biggest few places get a visit; the rest
+  // change at the same time as the last one, so a version never takes too long.
+  async function render(version, renderMath, token, animate) {
+    const { html } = renderWikitext(version.text, { fileUrl, renderMath });
     const box = document.createElement("div");
     box.innerHTML = html;
     const blocks = [...box.children].map((el) => ({ key: `${el.tagName}.${el.className}:${textOf(el)}`, el }));
     const runs = shown ? diff(shown, blocks, (b) => b.key) : [];
     const changed = runs.reduce((n, r) => n + (r.type === "change" ? r.b.length : 0), 0);
-    const rewritten = !shown || changed > blocks.length / 2;
-    let first = null;
-    if (rewritten) {
+    // A version that replaced most of the article fades over instead.
+    if (!shown || (changed > 8 && changed > blocks.length * 0.6)) {
+      const swap = () => body.replaceChildren(...blocks.map((b) => b.el));
+      if (animate && shown) await fadeOver(swap);
+      else swap();
       shown = blocks;
-      body.replaceChildren(...blocks.map((b) => b.el));
-      body.classList.remove("hp-swap");
-      void body.offsetWidth;
-      body.classList.add("hp-swap");
-    } else {
-      // `shown` keeps the elements on the page, so unchanged paragraphs aren't drawn again.
-      const out = [];
-      const kept = [];
-      const keep = (key, el) => {
-        out.push(el);
-        kept.push({ key, el });
-      };
-      for (const r of runs) {
-        if (r.type === "equal") {
-          // Kept paragraphs lose last version's marks.
-          r.a.forEach((prev, k) => keep(prev.key, prev.el.matches(".hp-changed, .hp-added") ? r.b[k].el : prev.el));
-          continue;
-        }
-        r.b.forEach((next, k) => {
-          const prev = r.a[k];
-          const el = prev && prev.el.tagName === next.el.tagName ? rewrite(prev.el, next.el) : added(next.el);
-          if (!el.matches("ol.references")) first ??= el;
-          keep(next.key, el);
-        });
-        for (const prev of r.a.slice(r.b.length)) {
-          prev.el.classList.remove("hp-added", "hp-changed");
-          prev.el.classList.add("hp-removed");
-          out.push(prev.el);
-          setTimeout(() => prev.el.remove(), 700);
-        }
-      }
-      body.replaceChildren(...out);
-      shown = kept;
+      return;
     }
-    toc.innerHTML = renderToc(entries);
 
-    if (first && playing && performance.now() > handsOffUntil) {
-      const top = first.getBoundingClientRect().top;
-      if (top < 80 || top > innerHeight - 220) scrollTo({ top: scrollY + top - 160, behavior: "smooth" });
+    const out = [];
+    const kept = [];
+    const places = [];
+    for (const r of runs) {
+      if (r.type === "equal") {
+        r.a.forEach((prev, k) => {
+          out.push(prev.el);
+          kept.push({ key: r.b[k].key, el: prev.el });
+        });
+        continue;
+      }
+      const place = { adds: [], rewrites: [], removes: [], size: 0 };
+      r.b.forEach((next, k) => {
+        const prev = r.a[k];
+        kept.push({ key: next.key, el: next.el });
+        if (prev && prev.el.tagName === next.el.tagName) {
+          place.rewrites.push({ old: prev.el, next: next.el });
+          out.push(prev.el);
+          place.size += Math.abs(textOf(next.el).length - textOf(prev.el).length) + 20;
+        } else {
+          next.el.hidden = true;
+          place.adds.push(next.el);
+          out.push(next.el);
+          place.size += textOf(next.el).length + 40;
+        }
+      });
+      for (const prev of r.a.slice(r.b.length)) {
+        place.removes.push(prev.el);
+        out.push(prev.el);
+        place.size += textOf(prev.el).length;
+      }
+      if ([...place.adds, ...place.removes, ...place.rewrites.map((w) => w.next)].every((el) => el.matches("ol.references"))) {
+        place.quiet = true;
+      }
+      places.push(place);
     }
+    // Put the page in order without taking unchanged paragraphs out, so the reader's place holds.
+    out.forEach((el, k) => {
+      if (body.children[k] !== el) body.insertBefore(el, body.children[k] ?? null);
+    });
+    while (body.children.length > out.length) body.lastElementChild.remove();
+    shown = kept;
+
+    const visits = new Set(
+      places
+        .filter((p) => !p.quiet)
+        .sort((a, b) => b.size - a.size)
+        .slice(0, VISITS),
+    );
+    const ordered = places.filter((p) => visits.has(p));
+    for (const place of places) if (!visits.has(place)) applyNow(place, animate && !place.quiet);
+    for (const place of ordered) {
+      if (!animate || token !== run || closed) {
+        applyNow(place, false);
+        continue;
+      }
+      // New paragraphs wait at no height where they will open, so the page can glide to that spot.
+      for (const el of place.adds) {
+        el.hidden = false;
+        Object.assign(el.style, CLOSED);
+      }
+      await glideTo(place.rewrites[0]?.old ?? place.removes[0] ?? place.adds[0], token);
+      if (token !== run || closed) {
+        applyNow(place, false);
+        continue;
+      }
+      await applyAnimated(place, token);
+    }
+  }
+
+  // A place's changes, with no visit: animated where they are if asked, otherwise at once.
+  function applyNow(place, animated) {
+    if (animated) {
+      applyAnimated(place, run);
+      return;
+    }
+    for (const el of place.adds) {
+      el.hidden = false;
+      for (const k of Object.keys(CLOSED)) el.style[k] = "";
+    }
+    for (const { old, next } of place.rewrites) old.replaceWith(next);
+    for (const el of place.removes) el.remove();
+  }
+
+  async function applyAnimated(place, token) {
+    const ms = (n) => n / speed;
+    const work = [];
+    for (const el of place.adds) {
+      el.hidden = false;
+      for (const k of Object.keys(CLOSED)) el.style[k] = "";
+      if (!el.matches("ol.references")) el.classList.add("hp-added");
+      work.push(openUp(el, 0, ms(GROW)));
+    }
+    for (const el of place.removes) {
+      work.push(openUp(el, el.offsetHeight, ms(SHUT), 0).then(() => el.remove()));
+    }
+    const settles = [];
+    for (const { old, next } of place.rewrites) {
+      const marked = rewrite(old, next.cloneNode(true));
+      const from = old.offsetHeight;
+      old.replaceWith(marked);
+      work.push(openUp(marked, from, ms(SHUT)));
+      settles.push({ marked, next });
+    }
+    await Promise.all(work);
+    if (settles.length) await wait(ms(READ), token);
+    // Changed paragraphs go back to the article's own text, links and all, once read.
+    await Promise.all(
+      settles.map(({ marked, next }) => {
+        if (!marked.isConnected) return null;
+        const from = marked.offsetHeight;
+        marked.replaceWith(next);
+        return openUp(next, from, ms(SHUT));
+      }),
+    );
+  }
+
+  // Animates `el` from `from` px tall to its own height (or `to`), margins and all.
+  function openUp(el, from, duration, to = null) {
+    const style = getComputedStyle(el);
+    const end = to ?? el.offsetHeight;
+    if (Math.abs(end - from) < 2 || style.float !== "none" || !duration) return Promise.resolve();
+    const margins = (k) => (to === 0 ? "0px" : k === "top" ? style.marginTop : style.marginBottom);
+    const keyframes = [
+      { height: `${from}px`, marginTop: from ? style.marginTop : "0px", marginBottom: from ? style.marginBottom : "0px", opacity: from ? 1 : 0 },
+      { height: `${end}px`, marginTop: margins("top"), marginBottom: margins("bottom"), opacity: to === 0 ? 0 : 1 },
+    ];
+    el.style.overflow = "hidden";
+    return el
+      .animate(keyframes, { duration, easing: "cubic-bezier(0.25, 0.8, 0.25, 1)" })
+      .finished.catch(() => {})
+      .finally(() => (el.style.overflow = ""));
+  }
+
+  // Brings `el` to a third of the way down the screen: a glide when it's near, a quick dim and jump
+  // when it's far, and nothing when it's already in view or the reader is scrolling on their own.
+  async function glideTo(el, token) {
+    if (performance.now() < handsOffUntil) return;
+    const top = el.getBoundingClientRect().top;
+    if (top > 90 && top < innerHeight * 0.62) return;
+    const to = Math.max(0, scrollY + top - innerHeight * 0.3);
+    const distance = Math.abs(to - scrollY);
+    if (distance > innerHeight * 2.5) {
+      await fadeOver(() => scrollTo({ top: to, behavior: "instant" }));
+      return;
+    }
+    const from = scrollY;
+    const duration = (380 + Math.min(620, distance * 0.35)) / speed;
+    const t0 = performance.now();
+    await new Promise((resolve) => {
+      const step = (now) => {
+        if (token !== run || closed || performance.now() < handsOffUntil) return resolve();
+        const t = Math.min(1, (now - t0) / duration);
+        const eased = t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
+        scrollTo({ top: from + (to - from) * eased, behavior: "instant" });
+        if (t < 1) requestAnimationFrame(step);
+        else resolve();
+      };
+      requestAnimationFrame(step);
+    });
+  }
+
+  // Dims the article, runs `change`, and brings it back.
+  async function fadeOver(change) {
+    const column = document.querySelector(".layout .column");
+    // A second fade can cancel this one; the change still happens.
+    const fade = (from, to, ms) => column.animate([{ opacity: from }, { opacity: to }], { duration: ms / speed, fill: "forwards" }).finished.catch(() => {});
+    await fade(1, 0.08, 180);
+    change();
+    await fade(0.08, 1, 320);
+    column.getAnimations().forEach((a) => a.cancel());
   }
 
   // An edit war breaks out: its swords ring on the timeline, the fought-over heading flashes, and a
@@ -286,11 +451,9 @@ export function startHistoryPlay({ id, body, toc, renderToc, onClose }) {
       heading.classList.remove("hp-fought");
       void heading.offsetWidth;
       heading.classList.add("hp-fought");
-      // Paragraphs are put back on every version, which would replay the flash, so it goes once played.
+      // A paragraph that moves would replay the flash, so it goes once played.
       heading.addEventListener("animationend", () => heading.classList.remove("hp-fought"), { once: true });
-      if (performance.now() > handsOffUntil) {
-        scrollTo({ top: scrollY + heading.getBoundingClientRect().top - 140, behavior: "smooth" });
-      }
+      glideTo(heading, run);
     }
   }
 
@@ -300,8 +463,8 @@ export function startHistoryPlay({ id, body, toc, renderToc, onClose }) {
     run++;
     closeWar();
     body.replaceChildren(...saved.body);
-    toc.replaceChildren(...saved.toc);
-    body.classList.remove("hp-swap");
+    path?.stop();
+    side.remove();
     document.body.classList.remove("hp-mode");
     dock.classList.add("is-leaving");
     setTimeout(() => dock.remove(), 250);
@@ -352,11 +515,6 @@ function textOf(el) {
   const clone = el.cloneNode(true);
   clone.querySelectorAll("sup.ref, .katex-mathml").forEach((n) => n.remove());
   return clone.textContent.replace(/\s+/g, " ").trim();
-}
-
-function added(el) {
-  if (!el.matches("ol.references")) el.classList.add("hp-added");
-  return el;
 }
 
 // A changed paragraph, as plain text for now, with its new words written in and the cut ones struck.

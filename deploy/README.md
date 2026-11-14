@@ -35,7 +35,7 @@ reset to `origin/main`, start MariaDB, run the loaders, restart the app, check
 
 | Database | What it holds |
 |---|---|
-| `wiki_full` | S and all of M: 19,742 articles, 862,076 versions. The app uses it. |
+| `wiki_full` | S, all of M (19,742 articles, 862,076 versions) and the 549,131 other L articles. The app uses it. |
 | `wiki` | S and the 20-article M slice. The fallback. |
 
 `DB_NAME` in `/etc/junction-wiki.env` picks the database for the app and for the loaders that

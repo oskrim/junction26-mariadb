@@ -10,14 +10,14 @@ import "./cite-tip.js";
 
 const W = 480;
 const EDGE = 16;
-const GAP = 12;
 const TRAY = 60;
 const SIDE_W = 520;
 
-// A new chat opens on the right, except in Explore, where the details panel is on the right and the
-// chat tray on the left.
+// A new chat opens on the left beside the chat tray in the article and in Explore (whose details panel
+// is on the right), and on the right elsewhere.
 function newChatX() {
-  return document.body.dataset.view === "explore" ? 20 : innerWidth - 20 - Math.min(W, innerWidth - EDGE * 2);
+  const left = ["article", "explore"].includes(document.body.dataset.view);
+  return left ? 20 : innerWidth - 20 - Math.min(W, innerWidth - EDGE * 2);
 }
 
 // Panels on the right start 20px below the top bar, like Explore's details panel.
@@ -84,9 +84,9 @@ export function chatPanel({ article, onClose }) {
   return { ask };
 
   // A request from the menu: a new chat, opened beside where it came from.
-  function ask({ mode, label, prompt, context, from, avoid }) {
+  function ask({ mode, label, prompt, context, from }) {
     const chat = create({ title: shorten(prompt, 38) });
-    show(chat, { from, avoid });
+    show(chat, { from });
     send(chat, { mode, label, prompt, context });
   }
 
@@ -96,7 +96,7 @@ export function chatPanel({ article, onClose }) {
     return chat;
   }
 
-  function show(chat, { from, avoid } = {}) {
+  function show(chat, { from } = {}) {
     active = chat;
     if (!chat.log) chat.log = makeLog(chat);
     for (const c of chats) if (c.log) c.log.hidden = c !== chat;
@@ -104,7 +104,7 @@ export function chatPanel({ article, onClose }) {
     el.title.textContent = chat.title;
     const wasHidden = el.panel.hidden;
     el.panel.hidden = false;
-    if (!docked && (from || !place)) place = from ? spotNear(from, avoid) : { x: newChatX(), y: topLine() };
+    if (!docked && (from || !place)) place = { x: newChatX(), y: topLine() };
     layout();
     if (!docked && from) growFrom(from);
     else if (wasHidden) popIn();
@@ -234,26 +234,6 @@ export function chatPanel({ article, onClose }) {
     el.panel.classList.add("is-resizing");
     layout();
     setTimeout(() => el.panel.classList.remove("is-resizing"), 340);
-  }
-
-  // Tries below, above, right and left of the source, then the window's sides, preferring a spot
-  // that leaves the painted passage visible; if nothing fits, keeps it inside the window.
-  function spotNear(from, avoid) {
-    const { w, h } = floatSize();
-    const bottom = innerHeight - TRAY;
-    const x = clamp(from.left, EDGE, innerWidth - EDGE - w);
-    const y = clamp(from.top + from.height / 2 - h / 2, EDGE, bottom - h);
-    const options = [
-      { x, y: from.bottom + GAP },
-      { x, y: from.top - GAP - h },
-      { x: from.right + GAP, y },
-      { x: from.left - GAP - w, y },
-      { x: innerWidth - EDGE - w, y },
-      { x: EDGE, y },
-    ];
-    const fits = (o) => o.x >= EDGE && o.y >= EDGE && o.x + w <= innerWidth - EDGE && o.y + h <= bottom;
-    const clear = (o) => !avoid || o.x > avoid.right || o.x + w < avoid.left || o.y > avoid.bottom || o.y + h < avoid.top;
-    return options.find((o) => fits(o) && clear(o)) ?? options.find(fits) ?? { x, y: clamp(from.bottom + GAP, EDGE, bottom - h) };
   }
 
   function floatSize() {

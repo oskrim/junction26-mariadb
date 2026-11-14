@@ -139,7 +139,7 @@ export function cursorMenu({ root, onSubmit }) {
     e.preventDefault();
     const mode = chosen;
     const from = el.bar.getBoundingClientRect();
-    onSubmit({ mode: mode.id, label: mode.label, prompt: el.input.value.trim() || mode.fallback, context: paint?.text ?? null, from, avoid: paint?.range.getBoundingClientRect() ?? null });
+    onSubmit({ mode: mode.id, label: mode.label, prompt: el.input.value.trim() || mode.fallback, context: paint?.text ?? null, from });
     close({ keepPaint: true });
   });
 
