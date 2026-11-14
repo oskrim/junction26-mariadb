@@ -101,6 +101,7 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
   let focus = 0;
   // Notes on what each version changed, by stop; they stay on their road once dropped.
   const tagsOf = new Map();
+  const countsOf = new Map();
   const thumbs = new Map();
   const thumb = (src) => {
     if (!thumbs.has(src)) thumbs.set(src, Object.assign(new Image(), { src }));
@@ -416,7 +417,9 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
       ctx.font = `${walking ? 600 : 500} 11px Inter, system-ui, sans-serif`;
       const w = ctx.measureText(name).width;
       // The walker's label has a second line: +added −cut, in characters.
-      const diff = walking && [b.added && `+${b.added.toLocaleString("en-US")}`, b.cut && `−${b.cut.toLocaleString("en-US")}`].filter(Boolean);
+      // What the version did to the text on screen, once known; until then, the history's own counts.
+      const counts = countsOf.get(b.k) ?? b;
+      const diff = walking && [counts.added && `+${counts.added.toLocaleString("en-US")}`, counts.cut && `−${counts.cut.toLocaleString("en-US")}`].filter(Boolean);
       // Labels sit on the outer side of the disc, inside the panel's clear middle away from its faded edges.
       ctx.font = "600 10.5px Inter, system-ui, sans-serif";
       const dw = diff?.length ? ctx.measureText(diff.join("  ")).width : 0;
@@ -744,6 +747,9 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
       current = war;
     },
     // Notes on what the version being walked changed, shown under its editor.
+    setCounts(k, counts) {
+      countsOf.set(k, counts);
+    },
     setTags(k, list) {
       tagsOf.set(k, list.map((t) => (t.image ? { ...t, image: thumb(t.image) } : t)));
     },

@@ -482,6 +482,11 @@ export function startHistoryPlay({ id, body, onClose }) {
     const changed = runs.reduce((n, r) => n + (r.type === "change" ? r.b.length : 0), 0);
     // A version that replaced most of the article fades over instead.
     if (!shown || (changed > 8 && changed > blocks.length * 0.6)) {
+      // Rewritten wholesale: the counts are how much longer or shorter the text on screen became.
+      const length = (list) => list.reduce((n, b) => n + textOf(b.el).length, 0);
+      const before = shown ? length(shown) : 0;
+      const after = length(blocks);
+      path.setCounts(at, { added: Math.max(0, after - before), cut: Math.max(0, before - after) });
       const swap = () => body.replaceChildren(...blocks.map((b) => b.el));
       onPlan(500 / rate);
       if (animate && shown) await fadeOver(swap);
@@ -538,6 +543,7 @@ export function startHistoryPlay({ id, body, onClose }) {
     while (body.children.length > out.length) body.lastElementChild.remove();
     shown = kept;
     path.setTags(at, tagsFor(places));
+    path.setCounts(at, countsFor(places));
 
     // In a war, a change in the section fought over is visited first, whatever its size.
     const fought = war ? sectionElements(warHeading(body, war)) : new Set();
@@ -1063,6 +1069,24 @@ function partners(before, after) {
     if (best) used.add(best);
     return best;
   });
+}
+
+// How many characters of the text on screen a version added and cut: new and removed paragraphs whole,
+// changed ones by their word diff.
+function countsFor(places) {
+  let added = 0;
+  let cut = 0;
+  for (const p of places) {
+    for (const el of p.adds) added += textOf(el).length;
+    for (const el of p.removes) cut += textOf(el).length;
+    for (const { old, next } of p.rewrites) {
+      for (const op of wordEdits(textOf(old), textOf(next))) {
+        if (op.ins) added += op.ins.length;
+        if (op.del) cut += op.del.trim().length;
+      }
+    }
+  }
+  return { added, cut };
 }
 
 // Short notes on what a version changed, for the walker on the road: the sections it touched, a section
