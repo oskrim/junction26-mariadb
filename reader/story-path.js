@@ -1,3 +1,4 @@
+import { fileUrl } from "./api.js";
 import { censor } from "./censor.js";
 import { FIGHTER_COLORS } from "./timeline3d.js";
 
@@ -515,10 +516,10 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
     ctx.lineWidth = 1;
     ctx.stroke();
     if (GLOBE.complete && GLOBE.naturalWidth) {
-      const w = R * 1.55;
+      const w = R * 1.5;
       const h = (w * GLOBE.naturalHeight) / GLOBE.naturalWidth;
-      // The logo's top piece is missing, so the globe itself sits a little below the picture's middle.
-      ctx.drawImage(GLOBE, -w / 2, -h / 2 - h * 0.05, w, h);
+      // The picture's middle is above the globe's (its top piece is missing), so it sits a little lower.
+      ctx.drawImage(GLOBE, -w / 2, -h / 2 + h * 0.03, w, h);
     }
     ctx.restore();
   }
@@ -679,8 +680,10 @@ function lastEditor(war) {
 }
 
 // The two main fighters keep their blue and red; the others get their own colors.
-// The Wikipedia globe the prompt bar shows.
-const GLOBE = Object.assign(new Image(), { src: new URL("files/wikipedia-globe.png", import.meta.url).href });
+// The Wikipedia globe, sharp from Commons; the small copy the prompt bar uses if that can't load.
+const GLOBE = new Image();
+GLOBE.onerror = () => (GLOBE.src = new URL("files/wikipedia-globe.png", import.meta.url).href);
+GLOBE.src = fileUrl("Wikipedia-logo-v2.svg");
 
 const MORE_COLORS = ["#2a9d6f", "#c97a16", "#7b52c4", "#1f8fa8", "#b0487a", "#6d7a1f"];
 export function colorFor(k) {
