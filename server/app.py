@@ -3,15 +3,23 @@
     uv run --with pymysql python server/app.py      # http://127.0.0.1:8010 ($PORT)
 """
 import difflib
+import hashlib
+import html
 import json
 import os
 import re
+import time
+import unicodedata
 from datetime import datetime, timezone
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from socketserver import ForkingMixIn
 from urllib.parse import parse_qs, quote, urlparse
 
 import pymysql
+
+import ask
+import learn
 
 READER = Path(__file__).resolve().parent.parent / "reader"
 TYPES = {".html": "text/html", ".js": "text/javascript", ".json": "application/json", ".css": "text/css",
@@ -30,8 +38,11 @@ class BadRequest(Exception):
 def connect():
     con = pymysql.connect(
         host=os.environ.get("DB_HOST", "127.0.0.1"), port=int(os.environ.get("DB_PORT", 3309)),
-        user="wiki", password=os.environ.get("DB_PASSWORD", "wiki"), database="wiki", charset="utf8mb4",
-        cursorclass=pymysql.cursors.DictCursor,
+        user=os.environ.get("DB_USER", "wiki"), password=os.environ.get("DB_PASSWORD", "wiki"),
+        database=os.environ.get("DB_NAME", "wiki"),
+        charset="utf8mb4", cursorclass=pymysql.cursors.DictCursor,
+        # The server's certificate is self-signed, so the connection is encrypted but not verified.
+        ssl={"verify_mode": False} if os.environ.get("DB_SSL") == "1" else None,
     )
     con.cursor().execute("SET time_zone = '+00:00'")
     return con
@@ -59,17 +70,20 @@ def normalize(title):
 
 
 def articles(cur, params):
-    cur.execute("""SELECT a.page_id, a.title, v.versions, v.first FROM m_article a
-                   JOIN (SELECT page_id, COUNT(*) AS versions, UNIX_TIMESTAMP(MIN(row_start)) AS first
-                         FROM m_article FOR SYSTEM_TIME ALL GROUP BY page_id) v USING (page_id)
-                   ORDER BY a.title""")
+    """Every M article, or only the one given as id, with its version count and first edit."""
+    page_id = number(params, "id") if "id" in params else None
+    cur.execute("""SELECT page_id, title, versions, UNIX_TIMESTAMP(first) AS first FROM m_article_stats
+                   WHERE %s IS NULL OR page_id = %s ORDER BY title""", (page_id, page_id))
     return [{**r, "first": int(r["first"])} for r in cur.fetchall()]
 
 
 def article(cur, params):
+    # The ORDER BY makes MariaDB read start_key backwards; without it, it may walk the (page_id, row_end)
+    # index and decompress the text of every version that ended later.
     sql = cur.mogrify("""SELECT title, rev_id, IFNULL(user, '') AS user, IFNULL(comment, '') AS comment, row_start, text
 FROM m_article FOR SYSTEM_TIME AS OF TIMESTAMP %s
-WHERE page_id = %s""", (stamp(moment(params)), number(params, "id")))
+WHERE page_id = %s
+ORDER BY row_start DESC LIMIT 1""", (stamp(moment(params)), number(params, "id")))
     cur.execute(sql)
     version = cur.fetchone()
     if version:
@@ -107,8 +121,15 @@ def change(cur, params):
     return {"added": [line for line in added if line.strip()], "removed": [line for line in removed if line.strip()]}
 
 
+MAX_NODES = 400
+
+
 def graph(cur, params):
+    """The link graph as of at. With id, only that article's neighborhood: the articles it links with and the
+    articles they link with, at most MAX_NODES, with each one's topic, version count and first edit."""
     at = stamp(moment(params))
+    if "id" in params:
+        return neighborhood(cur, number(params, "id"), at)
     cur.execute("SELECT page_id AS id, title, bytes AS chars FROM m_article FOR SYSTEM_TIME AS OF TIMESTAMP %s", (at,))
     nodes = cur.fetchall()
     cur.execute("""SELECT DISTINCT l.src AS source, a.page_id AS target
@@ -118,17 +139,66 @@ def graph(cur, params):
     return {"nodes": nodes, "edges": cur.fetchall()}
 
 
-def topics(cur, params):
-    cur.execute("""SELECT c.page_id, c.category, n.articles FROM s_category c
-                   JOIN m_article a ON a.page_id = c.page_id
+def links_touching(cur, ids, at):
+    """The links as of at from or to the given articles, as (source, target) page ids."""
+    cur.execute("""SELECT l.src, a.page_id FROM m_link FOR SYSTEM_TIME AS OF TIMESTAMP %s AS l
+                   JOIN m_article FOR SYSTEM_TIME AS OF TIMESTAMP %s AS a ON a.title = l.dst
+                   WHERE l.src IN %s
+                   UNION
+                   SELECT l.src, a.page_id FROM m_article FOR SYSTEM_TIME AS OF TIMESTAMP %s AS a
+                   STRAIGHT_JOIN m_link FOR SYSTEM_TIME AS OF TIMESTAMP %s AS l ON l.dst = a.title
+                   WHERE a.page_id IN %s""", (at, at, ids, at, at, ids))
+    return {(r["src"], r["page_id"]) for r in cur.fetchall() if r["src"] != r["page_id"]}
+
+
+def neighborhood(cur, center, at):
+    edges = links_touching(cur, [center], at)
+    near = {n for edge in edges for n in edge} - {center}
+    if near:
+        edges |= links_touching(cur, sorted(near), at)
+    degree, via = {}, {}
+    for source, target in edges:
+        for n, other in ((source, target), (target, source)):
+            degree[n] = degree.get(n, 0) + 1
+            if n not in near and n != center and other in near:
+                via[n] = via.get(n, 0) + 1
+    # The best-connected articles one step away, then the ones two steps away that most of them link with.
+    kept = [center] + sorted(near, key=lambda n: -degree[n])[: MAX_NODES - 1]
+    kept += sorted(via, key=lambda n: -via[n])[: MAX_NODES - len(kept)]
+    cur.execute("""SELECT a.page_id AS id, a.title, a.bytes AS chars, s.versions, UNIX_TIMESTAMP(s.first) AS first
+                   FROM m_article FOR SYSTEM_TIME AS OF TIMESTAMP %s AS a JOIN m_article_stats s USING (page_id)
+                   WHERE a.page_id IN %s""", (at, kept))
+    nodes = cur.fetchall()
+    ids = {n["id"] for n in nodes}
+    topic = topics_of(cur, sorted(ids))
+    for n in nodes:
+        n["first"] = int(n["first"])
+        n["topic"] = topic.get(n["id"])
+    further = sorted(ids - near - {center})
+    if further:  # links between two articles two steps away
+        edges |= links_touching(cur, further, at)
+    return {"nodes": nodes, "edges": [{"source": s, "target": t} for s, t in sorted(edges) if s in ids and t in ids]}
+
+
+def topics_of(cur, ids):
+    """Each article's topic: the category of it that has the most M articles."""
+    if not ids:
+        return {}
+    cur.execute("""SELECT c.page_id, c.category FROM s_category c
                    JOIN (SELECT c2.category, COUNT(*) AS articles FROM s_category c2
-                         JOIN m_article a2 ON a2.page_id = c2.page_id GROUP BY c2.category) n
+                         JOIN m_article_stats s ON s.page_id = c2.page_id GROUP BY c2.category) n
                      ON n.category = c.category
-                   ORDER BY c.page_id, n.articles DESC, c.category""")
+                   WHERE c.page_id IN %s
+                   ORDER BY c.page_id, n.articles DESC, c.category""", (ids,))
     result = {}
     for r in cur.fetchall():
         result.setdefault(r["page_id"], r["category"])
     return result
+
+
+def topics(cur, params):
+    cur.execute("SELECT page_id FROM m_article_stats")
+    return topics_of(cur, [r["page_id"] for r in cur.fetchall()])
 
 
 def extract(markdown):
@@ -145,8 +215,23 @@ def extract(markdown):
     return ""
 
 
-def preview(cur, params):
-    title = normalize(params.get("title", [""])[0])
+THUMB_WIDTH = 330  # a standard Wikimedia thumbnail width (others answer 400), wider than every place that shows one
+
+
+def thumbnail_url(name):
+    """The direct upload.wikimedia.org thumbnail of a Commons file: Special:FilePath costs two redirects.
+
+    Mirrors fileUrl in reader/api.js."""
+    name = name.replace(" ", "_")
+    digest = hashlib.md5(name.encode()).hexdigest()
+    suffix = ".png" if name.lower().endswith(".svg") else ".jpg" if name.lower().endswith((".tif", ".tiff")) else ""
+    prefix = "lossy-page1-" if suffix == ".jpg" else ""
+    return (f"https://upload.wikimedia.org/wikipedia/commons/thumb/{digest[0]}/{digest[:2]}/{quote(name)}/"
+            f"{prefix}{THUMB_WIDTH}px-{quote(name)}{suffix}")
+
+
+def preview_of(cur, title):
+    title = normalize(title)
     if not title:
         raise BadRequest("title is required")
     # Find the page_id first and read text by primary key: selecting text in a scan reads all of it.
@@ -164,31 +249,158 @@ def preview(cur, params):
     image = next(filter(None, (pattern.search(m["text"]) for pattern in IMAGES)), None) if m else None
     thumbnail = None
     if image:
-        name = normalize(image.group(1).strip())
-        thumbnail = {"url": f"https://commons.wikimedia.org/wiki/Special:FilePath/{quote(name)}?width=640",
-                     "width": 640, "height": None}
+        thumbnail = {"url": thumbnail_url(normalize(image.group(1).strip())), "width": THUMB_WIDTH, "height": None}
     return {"title": found["title"], "extract": extract(s["text"]) if s else "", "thumbnail": thumbnail}
 
 
+def preview(cur, params):
+    return preview_of(cur, params.get("title", [""])[0])
+
+
+MAX_PREVIEWS = 100
+
+
+def previews(cur, params):
+    """Many previews in one request: {title: preview | null} for titles=a|b|c (titles cannot hold "|")."""
+    titles = list(dict.fromkeys(t for t in params.get("titles", [""])[0].split("|") if t.strip()))
+    if not titles or len(titles) > MAX_PREVIEWS:
+        raise BadRequest(f"titles must name 1 to {MAX_PREVIEWS} articles")
+    return {title: preview_of(cur, title) for title in titles}
+
+
+def prose(markdown):
+    """The running text of an S article's Markdown: no headings or table rows, on one line."""
+    lines = (line for line in markdown.splitlines() if not line.lstrip().startswith(("#", "|")))
+    text = re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", " ".join(lines)).replace("**", "")
+    return " ".join(text.split())
+
+
+FILE_LINK = re.compile(r"\[\[\s*(?:File|Image|Tiedosto|Kuva|Luokka|Category)\s*:[^\[\]]*(?:\[\[[^\[\]]*\]\][^\[\]]*)*\]\]", re.I)
+INNERMOST_BLOCK = re.compile(r"\{\{[^{}]*\}\}|\{\|(?:(?!\{\||\|\}).)*\|\}", re.S)
+
+
+def unwiki(wikitext):
+    """Wiki markup as plain text, roughly: the snippet source for M articles that have no S text."""
+    text = re.sub(r"<!--.*?-->|<(timeline|gallery)[^>]*>.*?</\1>|<ref[^>]*/>|<ref[^>]*>.*?</ref>", "", wikitext, flags=re.S | re.I)
+    for _ in range(100):  # templates and tables nest; each pass removes the innermost ones
+        text, removed = INNERMOST_BLOCK.subn("", text)
+        if not removed:
+            break
+    text = FILE_LINK.sub("", text)
+    text = re.sub(r"\[\[(?:[^|\]]*\|)?([^\]]*)\]\]", r"\1", text)
+    text = re.sub(r"\[(?:https?:)?//[^\s\]]*\s*([^\]]*)\]", r"\1", text)
+    text = re.sub(r"'{2,}|<[^>]+>|^=+.*?=+\s*$", "", text, flags=re.M)
+    return " ".join(html.unescape(text).split())
+
+
+def lead(text, width):
+    """The first sentence of at least 40 characters, cut to width."""
+    end = next((m.end() for m in re.finditer(r"[.!?](?=\s+[A-ZÅÄÖ0-9]|\s*$)", text) if m.end() >= 40), len(text))
+    sentence = text[:end]
+    return sentence if len(sentence) <= width else sentence[:width].rsplit(" ", 1)[0] + "…"
+
+
+def snippet(text, q, width=160):
+    """About width characters around the first q in text, and where q sits in it; the lead if q is absent."""
+    at = text.lower().find(q.lower()) if len(text.lower()) == len(text) else -1
+    if at < 0:
+        return lead(text, width), None
+    start = max(0, at - (width - len(q)) // 3)
+    if start:
+        start = text.find(" ", start, at) + 1 or start
+    end = max(at + len(q), start + width)
+    if end < len(text):
+        space = text.rfind(" ", at + len(q), end)
+        end = space if space > 0 else end
+    prefix = "…" if start else ""
+    shown = prefix + text[start:end] + ("…" if end < len(text) else "")
+    return shown, [len(prefix) + at - start, len(prefix) + at - start + len(q)]
+
+
+def fold(text):
+    """Lowercase without accents, as load.py stores the text in m_search."""
+    return "".join(c for c in unicodedata.normalize("NFKD", text.lower()) if not unicodedata.combining(c))
+
+
 def search(cur, params):
+    """Current M articles whose title, then clean text, contains q (any case or accent).
+
+    The text searched is the article's S Markdown (Finnish), or its wikitext when it has none."""
     q = params.get("q", [""])[0].strip()
     if not q:
         raise BadRequest("q is required")
     like = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
-    cur.execute("""SELECT lang, page_id, title, url,
-                          SUBSTRING(text, GREATEST(1, LOCATE(%s, text) - 80), 200) AS snippet
-                   FROM s_article WHERE title LIKE %s OR text LIKE %s
-                   ORDER BY title LIKE %s DESC, title LIMIT %s""",
-                (q, like, like, like, number(params, "limit", 20)))
-    return cur.fetchall()
+    limit = number(params, "limit", 20)
+    cur.execute("""SELECT s.page_id, s.title FROM m_article_stats s JOIN m_search x USING (page_id)
+                   WHERE s.title LIKE %s OR INSTR(x.text, %s) > 0
+                   ORDER BY s.title LIKE %s DESC, s.title LIMIT %s""", (like, fold(q).encode(), like, limit))
+    found = cur.fetchall()
+    if not found:
+        return []
+    # Text by primary key; IF reads the M wikitext only for articles without S text.
+    cur.execute("""SELECT a.page_id, s.page_id IS NOT NULL AS clean, IF(s.page_id IS NULL, a.text, s.text) AS text
+                   FROM m_article a LEFT JOIN s_article s ON s.lang = 'fi' AND s.page_id = a.page_id
+                   WHERE a.page_id IN %s""", ([r["page_id"] for r in found],))
+    texts = {r["page_id"]: r for r in cur.fetchall()}
+    results = []
+    for r in found:
+        t = texts[r["page_id"]]
+        text, match = snippet(prose(t["text"]) if t["clean"] else unwiki(t["text"]), q)
+        results.append({"page_id": r["page_id"], "title": r["title"], "snippet": text, "match": match})
+    return results
 
 
 ROUTES = {"/api/articles": articles, "/api/article": article, "/api/history": history, "/api/change": change,
-          "/api/graph": graph, "/api/topics": topics, "/api/preview": preview, "/api/search": search}
+          "/api/graph": graph, "/api/topics": topics, "/api/preview": preview, "/api/previews": previews, "/api/search": search}
+# POST handlers write their own response, so they can stream.
+POST_ROUTES = {"/api/ask": ask.serve, "/api/learn": learn.serve}
+
+
+class Server(ForkingMixIn, HTTPServer):
+    """A process per request: the History view sends ~90 requests at once, and threads would share one core."""
+    # The proxy opens a connection per request. The default backlog of 5 drops the rest of a burst, and the
+    # client's TCP retries back off for up to a minute.
+    request_queue_size = 256
+    max_children = 64
 
 
 class Handler(BaseHTTPRequestHandler):
+    status = "-"
+
     def do_GET(self):
+        started = time.perf_counter()
+        try:
+            self.route()
+        finally:
+            self.log_message('"%s" %s %.0f ms', self.requestline, self.status, (time.perf_counter() - started) * 1000)
+
+    def end_headers(self):
+        # The designer's static dev server (another origin) reads this API, including the streamed POSTs.
+        if self.path.startswith("/api/"):
+            self.send_header("Access-Control-Allow-Origin", "*")
+        super().end_headers()
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Methods", "GET, POST")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Max-Age", "86400")
+        self.end_headers()
+
+    def do_POST(self):
+        started = time.perf_counter()
+        try:
+            route = POST_ROUTES.get(urlparse(self.path).path)
+            if not route:
+                return self.send(404, "application/json", b'{"error": "not found"}')
+            route(self, connect)
+        finally:
+            self.log_message('"%s" %s %.0f ms', self.requestline, self.status, (time.perf_counter() - started) * 1000)
+
+    def log_request(self, code="-", size="-"):
+        self.status = getattr(code, "value", code)  # logged with the duration once the request is done
+
+    def route(self):
         url = urlparse(self.path)
         if url.path.startswith("/api/"):
             return self.api(url)
@@ -197,7 +409,13 @@ class Handler(BaseHTTPRequestHandler):
             path = path / "index.html"
         if READER not in path.parents or not path.is_file():
             return self.send(404, "application/json", b'{"error": "not found"}')
-        self.send(200, TYPES.get(path.suffix, "application/octet-stream"), path.read_bytes())
+        body = path.read_bytes()
+        # Files change on deploy, so the browser asks every time, and a revisit costs a 304 without a body.
+        etag = f'"{hashlib.sha1(body).hexdigest()}"'
+        headers = (("ETag", etag), ("Cache-Control", "no-cache"))
+        if etag in self.headers.get("If-None-Match", ""):
+            return self.send(304, None, b"", headers)
+        self.send(200, TYPES.get(path.suffix, "application/octet-stream"), body, headers)
 
     def api(self, url):
         route = ROUTES.get(url.path)
@@ -213,10 +431,13 @@ class Handler(BaseHTTPRequestHandler):
             status, result = 400, {"error": str(error)}
         self.send(status, "application/json", json.dumps(result, ensure_ascii=False, default=str).encode())
 
-    def send(self, status, kind, body):
+    def send(self, status, kind, body, headers=()):
         self.send_response(status)
-        self.send_header("Content-Type", f"{kind}; charset=utf-8" if kind.startswith(("text", "application/json")) else kind)
-        self.send_header("Content-Length", str(len(body)))
+        if kind:
+            self.send_header("Content-Type", f"{kind}; charset=utf-8" if kind.startswith(("text", "application/json")) else kind)
+            self.send_header("Content-Length", str(len(body)))
+        for name, value in headers:
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(body)
 
@@ -224,4 +445,4 @@ class Handler(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8010))
     print(f"http://127.0.0.1:{port}")
-    ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
+    Server(("127.0.0.1", port), Handler).serve_forever()

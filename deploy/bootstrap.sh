@@ -90,6 +90,7 @@ EOF
 write_caddyfile() {
   cat > /etc/caddy/Caddyfile <<EOF
 ${PUBLIC_IP//./-}.sslip.io {
+	encode zstd gzip
 	reverse_proxy 127.0.0.1:${PORT}
 }
 EOF

@@ -13,6 +13,7 @@ import os
 import re
 import sys
 import time
+import unicodedata
 from collections import Counter
 from datetime import timedelta
 from pathlib import Path
@@ -26,19 +27,25 @@ SCHEMA = Path(__file__).with_name("schema.sql")
 DEMO_ARTICLE = 1150  # Suomen sisällissota
 BATCH_BYTES = 16_000_000  # rows sent together; the server allows 64 MB packets
 LINK = re.compile(r"\[\[([^\[\]|#]+)")
-TABLES = {"s": ["s_article", "s_category"], "m": ["m_article", "m_link"]}
+TABLES = {"s": ["s_article", "s_category"], "m": ["m_article", "m_link", "m_article_stats", "m_search"]}
 
 
 def connect():
     return pymysql.connect(
         host=os.environ.get("DB_HOST", "127.0.0.1"), port=int(os.environ.get("DB_PORT", 3309)),
-        user="wiki", password=os.environ.get("DB_PASSWORD", "wiki"), database="wiki", charset="utf8mb4",
+        user="wiki", password=os.environ.get("DB_PASSWORD", "wiki"), database=os.environ.get("DB_NAME", "wiki"),
+        charset="utf8mb4",
     )
 
 
 def normalize(title):
     title = " ".join(title.replace("_", " ").split()).lstrip(":")
     return title[:1].upper() + title[1:]
+
+
+def fold(text):
+    """Lowercase without accents: the form m_search stores and app.py's search compares."""
+    return "".join(c for c in unicodedata.normalize("NFKD", text.lower()) if not unicodedata.combining(c))
 
 
 def create_tables(cur, dataset, reset):
@@ -48,6 +55,19 @@ def create_tables(cur, dataset, reset):
     sql = "\n".join(line for line in SCHEMA.read_text().splitlines() if not line.startswith("--"))
     for statement in filter(str.strip, sql.split(";")):
         cur.execute(statement)
+    # Tables created before these keys were in schema.sql.
+    if dataset == "m":
+        cur.execute("ALTER TABLE m_article ADD INDEX IF NOT EXISTS start_key (page_id, row_start), "
+                    "ADD INDEX IF NOT EXISTS rev_id (rev_id), ADD INDEX IF NOT EXISTS title (title)")
+        cur.execute("ALTER TABLE m_link ADD INDEX IF NOT EXISTS dst (dst)")
+        # Articles loaded before m_article_stats existed.
+        cur.execute("SELECT EXISTS (SELECT 1 FROM m_article_stats)")
+        if not cur.fetchone()[0]:
+            cur.execute("""INSERT INTO m_article_stats (page_id, title, versions, first)
+                           SELECT v.page_id, a.title, v.versions, v.first FROM m_article a
+                           JOIN (SELECT page_id, COUNT(*) AS versions, MIN(row_start) AS first
+                                 FROM m_article FOR SYSTEM_TIME ALL GROUP BY page_id) v USING (page_id)""")
+            cur.connection.commit()
 
 
 def insert_batched(cur, sql, rows, size_of):
@@ -139,6 +159,8 @@ def save_m(cur, page_id, versions, link_targets):
     insert_batched(cur, f"INSERT INTO m_article ({columns}, row_end) VALUES ({', '.join(['%s'] * 12)})",
                    [r + (times[i + 1],) for i, r in enumerate(rows[:-1])], lambda r: len(r[9]) * 2 + 500)
     cur.execute(f"INSERT INTO m_article ({columns}) VALUES ({', '.join(['%s'] * 11)})", rows[-1])
+    cur.execute("REPLACE INTO m_article_stats (page_id, title, versions, first) VALUES (%s,%s,%s,%s)",
+                (page_id, versions[-1]["title"], len(versions), times[0]))
 
     # A link is current from the version that adds it until the version that removes it.
     history, opened = [], {}
@@ -183,6 +205,23 @@ def load_m(con, cur, count):
         print(f"  {number}/{len(todo)} {versions[-1]['title']}: {len(versions)} versions, {links} link rows, "
               f"{time.time() - t0:.1f} s", flush=True)
     print(f"m: {len(todo)} articles, {versions_total} versions, {links_total} link rows, {time.time() - started:.0f} s")
+    fill_search(con, cur)
+
+
+def fill_search(con, cur):
+    """m_search for the articles that have no row yet: the current Finnish S text, else the current M text."""
+    started = time.time()
+    cur.execute("""SELECT s.page_id FROM m_article_stats s LEFT JOIN m_search x USING (page_id)
+                   WHERE x.page_id IS NULL ORDER BY s.page_id""")
+    missing = [p for (p,) in cur.fetchall()]
+    for i in range(0, len(missing), 500):
+        cur.execute("""SELECT a.page_id, IF(s.page_id IS NULL, a.text, s.text) FROM m_article a
+                       LEFT JOIN s_article s ON s.lang = 'fi' AND s.page_id = a.page_id
+                       WHERE a.page_id IN %s""", (missing[i : i + 500],))
+        rows = [(page_id, fold(text).encode()) for page_id, text in cur.fetchall()]
+        insert_batched(cur, "INSERT INTO m_search (page_id, text) VALUES (%s,%s)", rows, lambda r: len(r[1]) * 2 + 100)
+        con.commit()
+    print(f"m_search: {len(missing)} new, {time.time() - started:.1f} s")
 
 
 def main():
@@ -200,7 +239,8 @@ def main():
     started = time.time()
     load_s(con, cur) if args.dataset == "s" else load_m(con, cur, count)
     for table in TABLES[args.dataset]:
-        cur.execute(f"SELECT COUNT(*) FROM {table} FOR SYSTEM_TIME ALL" if table.startswith("m_") else f"SELECT COUNT(*) FROM {table}")
+        versioned = table in ("m_article", "m_link")
+        cur.execute(f"SELECT COUNT(*) FROM {table}" + (" FOR SYSTEM_TIME ALL" if versioned else ""))
         print(f"{table}: {cur.fetchone()[0]} rows")
     print(f"done in {time.time() - started:.0f} s")
     con.close()

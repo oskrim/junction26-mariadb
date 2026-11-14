@@ -1,4 +1,4 @@
-import { getArticle, getArticles, getGraph, getPreview, getTopics } from "./api.js";
+import { getArticle, getGraph, getPreview } from "./api.js";
 
 // Related articles as a slowly turning 3D cloud: the article in the middle, the articles it links
 // with around it, grouped by topic, and a fainter ring of articles one step further out.
@@ -63,20 +63,39 @@ export async function mountExplore(root, { id }) {
   });
 
   const now = Math.floor(Date.now() / 1000);
-  const [articles, graph, topics] = await Promise.all([getArticles(), getGraph(now), getTopics()]);
-  const info = new Map(articles.map((a) => [a.page_id, a]));
-  const nodes = new Map(graph.nodes.map((n) => [n.id, n]));
-  const links = new Map([...nodes.keys()].map((n) => [n, new Set()]));
+  // The part of the link graph loaded so far: each article the map centers on or grows from brings
+  // its own neighborhood.
+  const nodes = new Map();
+  const links = new Map();
   const linksOut = new Set();
-  for (const { source, target } of graph.edges) {
-    links.get(source).add(target);
-    links.get(target).add(source);
-    linksOut.add(`${source}>${target}`);
+  const graphEdges = [];
+  const topics = {};
+  const loaded = new Map();
+  const load = (n) => {
+    if (!loaded.has(n)) loaded.set(n, getGraph(now, n).then(merge));
+    return loaded.get(n);
+  };
+  function merge(g) {
+    for (const node of g.nodes) {
+      if (nodes.has(node.id)) continue;
+      nodes.set(node.id, node);
+      links.set(node.id, new Set());
+      topics[node.id] = node.topic;
+    }
+    for (const e of g.edges) {
+      if (linksOut.has(`${e.source}>${e.target}`)) continue;
+      linksOut.add(`${e.source}>${e.target}`);
+      graphEdges.push(e);
+      links.get(e.source).add(e.target);
+      links.get(e.target).add(e.source);
+    }
   }
+  await load(id);
+  if (!nodes.has(id)) await load(1150);
 
   // Topics always go round the ring in the same order, and each article keeps its spot within its
   // topic, so moving to another article slides the map instead of reshuffling it.
-  const topicOrder = [...new Set(Object.values(topics))].sort();
+  const topicOrder = () => [...new Set(Object.values(topics))].sort();
 
   const previews = new Map();
   const preview = (title) => {
@@ -138,6 +157,7 @@ export async function mountExplore(root, { id }) {
   // --- Layout -------------------------------------------------------------------------------
 
   async function center(nextId, from) {
+    await load(nextId);
     centerId = nextId;
     trail = [];
     grownFrom = new Map();
@@ -165,7 +185,7 @@ export async function mountExplore(root, { id }) {
       const arrive = from ? performance.now() + 250 + (hop.get(n) === 2 ? 450 : 0) + Math.random() * 500 : 0;
       pos.set(n, { ...(from ? start : t), a: 0, arrive });
     }
-    edges = graph.edges.filter((e) => hop.has(e.source) && hop.has(e.target) && e.source !== e.target);
+    edges = graphEdges.filter((e) => hop.has(e.source) && hop.has(e.target) && e.source !== e.target);
 
     buildCards(nextId, chosen, await preview(nodes.get(nextId).title));
     buildPills();
@@ -182,6 +202,7 @@ export async function mountExplore(root, { id }) {
     else if (hop.get(n) === 3 && grownFrom.get(n) === trail.at(-1)) trail.push(n);
     else trail = [n];
     prune();
+    await load(n);
 
     const added = [...links.get(n)]
       .filter((m) => !hop.has(m))
@@ -216,7 +237,7 @@ export async function mountExplore(root, { id }) {
         }
       }
     }
-    edges = graph.edges.filter((e) => hop.has(e.source) && hop.has(e.target) && e.source !== e.target);
+    edges = graphEdges.filter((e) => hop.has(e.source) && hop.has(e.target) && e.source !== e.target);
 
     // The biggest new articles get a card: with their picture if they have one, or just the title.
     const biggest = added.slice(0, GROWN_CARDS);
@@ -237,7 +258,7 @@ export async function mountExplore(root, { id }) {
       grownFrom.delete(m);
     }
     for (const [m, el] of cards) if (!hop.has(m)) dropCard(m, el);
-    edges = graph.edges.filter((e) => hop.has(e.source) && hop.has(e.target) && e.source !== e.target);
+    edges = graphEdges.filter((e) => hop.has(e.source) && hop.has(e.target) && e.source !== e.target);
   }
 
   function dropCard(n, el) {
@@ -254,7 +275,7 @@ export async function mountExplore(root, { id }) {
     const placed = new Map([[cid, { x: 0, y: 0, z: 0 }]]);
     const groups = Map.groupBy(near, (n) => topics[n]);
     let angle = -Math.PI / 2;
-    for (const topic of topicOrder.filter((t) => groups.has(t))) {
+    for (const topic of topicOrder().filter((t) => groups.has(t))) {
       const members = groups.get(topic).sort((a, b) => a - b);
       const span = (members.length / near.length) * Math.PI * 2;
       members.forEach((n, i) => {
@@ -739,7 +760,6 @@ export async function mountExplore(root, { id }) {
   async function openPanel(n, added) {
     shownId = n;
     const node = nodes.get(n);
-    const article = info.get(n);
     const p = await preview(node.title);
     if (shownId !== n) return;
     const isCenter = n === centerId;
@@ -758,8 +778,8 @@ export async function mountExplore(root, { id }) {
         ${added ? `<p class="ex-added">Added ${added} of its linked articles around it. Click one to keep going.</p>` : ""}
         ${p?.extract ? `<p class="ex-extract is-clamped">${p.extract}</p><button class="ex-more" type="button" hidden>Show more</button>` : ""}
         <dl class="ex-stats">
-          <div><dt>Versions</dt><dd>${article.versions.toLocaleString("en-US")}</dd></div>
-          <div><dt>Written</dt><dd>${new Date(article.first * 1000).getUTCFullYear()}</dd></div>
+          <div><dt>Versions</dt><dd>${node.versions.toLocaleString("en-US")}</dd></div>
+          <div><dt>Written</dt><dd>${new Date(node.first * 1000).getUTCFullYear()}</dd></div>
           <div><dt>Links</dt><dd>${links.get(n).size}</dd></div>
         </dl>
         <div class="ex-actions">
@@ -846,7 +866,7 @@ export async function mountExplore(root, { id }) {
       alive = null;
       aliveLinks = null;
     } else {
-      const g = await getGraph(Date.UTC(year, 11, 31, 23, 59) / 1000);
+      const g = await getGraph(Date.UTC(year, 11, 31, 23, 59) / 1000, centerId);
       if (token !== request) return;
       alive = new Set(g.nodes.map((n) => n.id));
       aliveLinks = new Set(g.edges.map((e) => linkKey(e.source, e.target)));

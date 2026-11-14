@@ -14,6 +14,11 @@ main() {
     exec bash "$REPO_DIR/deploy/deploy.sh" --updated
   fi
   echo "deploy: at $(git log -1 --format='%h %s')"
+  if [ "${GEMINI_API_KEY_ON_STDIN:-}" = 1 ]; then
+    local key
+    IFS= read -r key || true
+    if [ -n "$key" ]; then set_env GEMINI_API_KEY "$key"; fi
+  fi
 
   set -a
   # shellcheck source=/dev/null
@@ -28,6 +33,7 @@ main() {
   "${compose[@]}" up -d --wait
   ensure_db_users "${compose[@]}"
 
+  # The loaders and the app use the database named by DB_NAME in the env file.
   if [ -f server/load.py ]; then
     uv run --with pymysql --with pyarrow python server/load.py s
     uv run --with pymysql --with pyarrow python server/load.py m --articles 20
@@ -43,15 +49,29 @@ main() {
   fi
 }
 
-# Teammate logins: wiki.* access, TLS required. Also asserts the server has TLS on.
+# Sets NAME=value in the env file, replacing an earlier value.
+set_env() {
+  local tmp
+  tmp=$(mktemp)
+  grep -v "^$1=" "$ENV_FILE" > "$tmp" || true
+  printf '%s=%s\n' "$1" "$2" >> "$tmp"
+  install -m 600 "$tmp" "$ENV_FILE"
+  rm -f "$tmp"
+}
+
+# The app's database ($DB_NAME) next to wiki, and teammate logins with access to both, TLS required.
+# Also asserts the server has TLS on.
 ensure_db_users() {
-  local sql="" user pw pw_var
+  local db="${DB_NAME:-wiki}" sql="" user pw pw_var
+  sql+="CREATE DATABASE IF NOT EXISTS \`${db}\` CHARACTER SET utf8mb4;"
+  sql+="GRANT ALL PRIVILEGES ON \`${db}\`.* TO 'wiki'@'%';"
   for user in oskari veeti; do
     pw_var="DB_${user^^}_PASSWORD"
     pw="${!pw_var}"
     sql+="CREATE USER IF NOT EXISTS '${user}'@'%' IDENTIFIED BY '${pw}' REQUIRE SSL;"
     sql+="ALTER USER '${user}'@'%' IDENTIFIED BY '${pw}' REQUIRE SSL;"
     sql+="GRANT ALL PRIVILEGES ON wiki.* TO '${user}'@'%';"
+    sql+="GRANT ALL PRIVILEGES ON \`${db}\`.* TO '${user}'@'%';"
   done
   printf '%s' "$sql" | "$@" exec -T mariadb sh -c 'mariadb -uroot -p"$MARIADB_ROOT_PASSWORD"'
   local have_ssl

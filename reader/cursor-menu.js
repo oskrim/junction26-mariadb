@@ -1,5 +1,5 @@
 // A small liquid menu that rides on the pointer. Press Q to open it; the pointer becomes a text
-// cursor you can paint a passage with. Press A, F or V (or click a blob once it settles) and that
+// cursor you can paint a passage with. Press A, F, V or L (or click a blob once it settles) and that
 // blob stretches into a prompt bar; Enter hands the request to onSubmit.
 //
 // States: closed → follow (rides the pointer) → pinned (stays put, blobs clickable) → bar (typing).
@@ -31,6 +31,14 @@ const MODES = [
     placeholder: "What should I show? A model, a chart…",
     fallback: "Show me how this works",
     icon: `<path d="M3 13V8.5M8 13V3.5M13 13V6.5" />`,
+  },
+  {
+    id: "learn",
+    label: "Learn",
+    key: "l",
+    placeholder: "What do you want to understand?",
+    fallback: "Explain the background of this",
+    icon: `<path d="M1.5 6 8 3l6.5 3L8 9Z" /><path d="M4 7.3v3.4c0 1 1.8 2 4 2s4-1 4-2V7.3" />`,
   },
 ];
 
@@ -85,6 +93,11 @@ export function cursorMenu({ root, onSubmit }) {
           e.preventDefault();
           open();
         }
+        return;
+      }
+      if (key === "escape" && state === "bar") {
+        e.preventDefault();
+        backToBlobs();
         return;
       }
       if (key === "escape" || key === OPEN_KEY) {
@@ -236,7 +249,8 @@ export function cursorMenu({ root, onSubmit }) {
     else if (side === "left" && x < innerWidth - 290) side = "right";
     el.root.dataset.side = side;
     const tilt = y < 96 ? 42 : y > innerHeight - 96 ? -42 : 0;
-    return [-48, 0, 48].map((deg) => {
+    return MODES.map((_, i) => {
+      const deg = (i - (MODES.length - 1) / 2) * 40;
       const a = ((deg + tilt) * Math.PI) / 180;
       return { x: x + (side === "right" ? 1 : -1) * REACH * Math.cos(a), y: y + REACH * Math.sin(a) };
     });

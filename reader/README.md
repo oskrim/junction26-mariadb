@@ -16,9 +16,14 @@ python3 -m http.server 5130 -d reader
 
 Then open <http://localhost:5130>. Each view has its own address: `?view=explore` and `?view=history`.
 
-All fake data lives in `fake/`. `fake/api.js` has the same three requests and response shapes as `app.py`,
-plus a few the screens need that `app.py` doesn't have yet; each says so and how a real one could work.
-To use real data, replace each function body with the `fetch` call written above it.
+The data comes from `server/app.py` through `api.js`:
+
+- A page served by `app.py` asks its own server: <https://65-109-75-60.sslip.io>, or `app.py` run locally on port
+  8010 or 8011 (see `server/README.md`).
+- A page served any other way, such as the static server above, asks the cloud at
+  <https://65-109-75-60.sslip.io>. So the static server works as it is, with no database on your machine.
+
+`fake/api.js` is the earlier stand-in for the API, with the same functions and response shapes. Nothing imports it now.
 `wikitext.js` turns the article's `text` field into the page, so it works on real API responses as they are.
 
 ## Explore

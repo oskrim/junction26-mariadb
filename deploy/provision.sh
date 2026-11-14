@@ -133,12 +133,13 @@ write_box_env() {
     echo "WIKI_DATA=/data/mariadb-wikipedia"
     echo "DB_HOST=127.0.0.1"
     echo "DB_PORT=3309"
-    echo "DB_NAME=wiki"
+    echo "DB_NAME=$(ssh_box "sed -n 's/^DB_NAME=//p' /etc/junction-wiki.env 2>/dev/null" | grep . || echo wiki)"
     echo "DB_USER=wiki"
     echo "DB_PASSWORD=$(secret_read junction-wiki-db-password)"
     echo "DB_ROOT_PASSWORD=$(secret_read junction-wiki-db-root-password)"
     echo "DB_OSKARI_PASSWORD=$(secret_read junction-wiki-db-oskari)"
     echo "DB_VEETI_PASSWORD=$(secret_read junction-wiki-db-veeti)"
+    echo "GEMINI_API_KEY=$(secret_read google-aistudio-api-key)"
   } | ssh_box 'umask 077 && cat > /etc/junction-wiki.env'
 }
 

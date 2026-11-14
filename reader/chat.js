@@ -1,5 +1,7 @@
-import { PAST_CHATS, respond } from "./fake/assistant.js";
+import { PAST_CHATS, respond } from "./assistant.js";
+import { citeLinks, learn, sourcesHtml } from "./learn.js";
 import { modelHtml, mountModel } from "./model3d.js";
+import { stepsView } from "./steps.js";
 
 // Chats. Every request from the menu starts a new chat. Open chats are tabs in the tray at the
 // bottom right; closed ones move to History. One window shows the active chat, either floating
@@ -133,19 +135,28 @@ export function chatPanel({ article, onClose }) {
     reply.innerHTML = `<div class="msg-text"><span class="dots"><i></i><i></i><i></i></span></div>`;
     chat.log.append(reply);
     scrollDown(chat.log, true);
+    const body = reply.querySelector(".msg-text");
+    const steps = stepsView(reply);
+    const onStep = (name, data) => {
+      steps.update(name, data);
+      scrollDown(chat.log);
+    };
 
-    const { stream, attachment } = respond({ mode, prompt, context, article, turn: chat.turn });
+    const { stream, attachment } = (mode === "learn" ? learn : respond)({ mode, prompt, context, article, turn: chat.turn, history: (chat.history ??= []), onStep });
     chat.turn++;
     let text = "";
     for await (const piece of stream) {
       text += piece;
+      steps.fold();
       reply.classList.remove("is-thinking");
-      reply.firstElementChild.innerHTML = paragraphs(text);
+      body.innerHTML = paragraphs(text);
       scrollDown(chat.log);
     }
     reply.classList.add("is-done");
-    if (attachment) {
-      reply.insertAdjacentHTML("beforeend", renderAttachment(attachment));
+    const shown = await attachment;
+    if (shown?.type === "sources") body.innerHTML = citeLinks(body.innerHTML, shown);
+    if (shown) {
+      reply.insertAdjacentHTML("beforeend", renderAttachment(shown));
       reply.querySelectorAll("[data-model]").forEach(mountModel);
       scrollDown(chat.log);
     }
@@ -354,6 +365,7 @@ function renderAttachment(a) {
       .join("")}</div>`;
   }
   if (a.type === "model") return modelHtml(a);
+  if (a.type === "sources") return sourcesHtml(a);
   if (a.type === "chart") return `<figure class="attach attach-chart">${lineChart(a)}<figcaption>${a.title}</figcaption></figure>`;
   return "";
 }

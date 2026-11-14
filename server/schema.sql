@@ -37,7 +37,12 @@ CREATE TABLE IF NOT EXISTS m_article (
   row_start TIMESTAMP(6) GENERATED ALWAYS AS ROW START INVISIBLE,
   row_end   TIMESTAMP(6) GENERATED ALWAYS AS ROW END INVISIBLE,
   PERIOD FOR SYSTEM_TIME (row_start, row_end),
-  PRIMARY KEY (page_id)
+  PRIMARY KEY (page_id),
+  -- MariaDB's own index on the versions is (page_id, row_end), so "as of 2005" walks every version that
+  -- ended after 2005. This one finds the last version that started before.
+  KEY start_key (page_id, row_start),
+  KEY (rev_id),
+  KEY (title)
 ) CHARACTER SET utf8mb4 WITH SYSTEM VERSIONING;
 
 -- M: one row per [[link]] from an article to another history-of-Finland article, for as long as the
@@ -48,5 +53,24 @@ CREATE TABLE IF NOT EXISTS m_link (
   row_start TIMESTAMP(6) GENERATED ALWAYS AS ROW START INVISIBLE,
   row_end   TIMESTAMP(6) GENERATED ALWAYS AS ROW END INVISIBLE,
   PERIOD FOR SYSTEM_TIME (row_start, row_end),
-  PRIMARY KEY (src, dst)
+  PRIMARY KEY (src, dst),
+  KEY (dst)
 ) CHARACTER SET utf8mb4 WITH SYSTEM VERSIONING;
+
+-- M: one row per article, written by the loader with its versions: the current title, how many versions
+-- it has and when the first was saved. Counting them in m_article on each request reads every version.
+CREATE TABLE IF NOT EXISTS m_article_stats (
+  page_id  INT UNSIGNED NOT NULL,
+  title    VARCHAR(255) NOT NULL,
+  versions INT UNSIGNED NOT NULL,
+  first    TIMESTAMP(6) NOT NULL,
+  PRIMARY KEY (page_id)
+) CHARACTER SET utf8mb4;
+
+-- M: the text search looks in, one row per article: its current Finnish S text, else its current M text,
+-- lowercased and without accents. A byte search in it is many times faster than LIKE in the original.
+CREATE TABLE IF NOT EXISTS m_search (
+  page_id INT UNSIGNED NOT NULL,
+  text    MEDIUMBLOB   NOT NULL,
+  PRIMARY KEY (page_id)
+);
