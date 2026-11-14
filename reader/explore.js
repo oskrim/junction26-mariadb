@@ -475,7 +475,7 @@ export async function mountExplore(root, { id }) {
   function freeRadius() {
     const w = stage.clientWidth;
     const h = stage.clientHeight;
-    return Math.max(Math.min((w > 900 ? w - 440 : w) - 80, h - 190) / 2, 160);
+    return Math.max(Math.min((w > 900 ? w - 520 : w) - 80, h - 190) / 2, 160);
   }
 
   // Zooms onto an opened article and the links it brought in, so the branch you're on gets the room.
