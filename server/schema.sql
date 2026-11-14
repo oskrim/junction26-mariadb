@@ -66,3 +66,11 @@ CREATE TABLE IF NOT EXISTS m_article_stats (
   first    TIMESTAMP(6) NOT NULL,
   PRIMARY KEY (page_id)
 ) CHARACTER SET utf8mb4;
+
+-- M: the text search looks in, one row per article: its current Finnish S text, else its current M text,
+-- lowercased and without accents. A byte search in it is many times faster than LIKE in the original.
+CREATE TABLE IF NOT EXISTS m_search (
+  page_id INT UNSIGNED NOT NULL,
+  text    MEDIUMBLOB   NOT NULL,
+  PRIMARY KEY (page_id)
+);

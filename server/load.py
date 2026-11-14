@@ -13,6 +13,7 @@ import os
 import re
 import sys
 import time
+import unicodedata
 from collections import Counter
 from datetime import timedelta
 from pathlib import Path
@@ -26,7 +27,7 @@ SCHEMA = Path(__file__).with_name("schema.sql")
 DEMO_ARTICLE = 1150  # Suomen sisällissota
 BATCH_BYTES = 16_000_000  # rows sent together; the server allows 64 MB packets
 LINK = re.compile(r"\[\[([^\[\]|#]+)")
-TABLES = {"s": ["s_article", "s_category"], "m": ["m_article", "m_link", "m_article_stats"]}
+TABLES = {"s": ["s_article", "s_category"], "m": ["m_article", "m_link", "m_article_stats", "m_search"]}
 
 
 def connect():
@@ -40,6 +41,11 @@ def connect():
 def normalize(title):
     title = " ".join(title.replace("_", " ").split()).lstrip(":")
     return title[:1].upper() + title[1:]
+
+
+def fold(text):
+    """Lowercase without accents: the form m_search stores and app.py's search compares."""
+    return "".join(c for c in unicodedata.normalize("NFKD", text.lower()) if not unicodedata.combining(c))
 
 
 def create_tables(cur, dataset, reset):
@@ -199,6 +205,23 @@ def load_m(con, cur, count):
         print(f"  {number}/{len(todo)} {versions[-1]['title']}: {len(versions)} versions, {links} link rows, "
               f"{time.time() - t0:.1f} s", flush=True)
     print(f"m: {len(todo)} articles, {versions_total} versions, {links_total} link rows, {time.time() - started:.0f} s")
+    fill_search(con, cur)
+
+
+def fill_search(con, cur):
+    """m_search for the articles that have no row yet: the current Finnish S text, else the current M text."""
+    started = time.time()
+    cur.execute("""SELECT s.page_id FROM m_article_stats s LEFT JOIN m_search x USING (page_id)
+                   WHERE x.page_id IS NULL ORDER BY s.page_id""")
+    missing = [p for (p,) in cur.fetchall()]
+    for i in range(0, len(missing), 500):
+        cur.execute("""SELECT a.page_id, IF(s.page_id IS NULL, a.text, s.text) FROM m_article a
+                       LEFT JOIN s_article s ON s.lang = 'fi' AND s.page_id = a.page_id
+                       WHERE a.page_id IN %s""", (missing[i : i + 500],))
+        rows = [(page_id, fold(text).encode()) for page_id, text in cur.fetchall()]
+        insert_batched(cur, "INSERT INTO m_search (page_id, text) VALUES (%s,%s)", rows, lambda r: len(r[1]) * 2 + 100)
+        con.commit()
+    print(f"m_search: {len(missing)} new, {time.time() - started:.1f} s")
 
 
 def main():

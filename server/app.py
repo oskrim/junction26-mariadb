@@ -8,6 +8,7 @@ import json
 import os
 import re
 import time
+import unicodedata
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -287,6 +288,11 @@ def snippet(text, q, width=160):
     return shown, [len(prefix) + at - start, len(prefix) + at - start + len(q)]
 
 
+def fold(text):
+    """Lowercase without accents, as load.py stores the text in m_search."""
+    return "".join(c for c in unicodedata.normalize("NFKD", text.lower()) if not unicodedata.combining(c))
+
+
 def search(cur, params):
     """Current M articles whose title, then clean text, contains q (any case or accent).
 
@@ -296,17 +302,21 @@ def search(cur, params):
         raise BadRequest("q is required")
     like = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
     limit = number(params, "limit", 20)
-    # Current rows are reached by key: a plain WHERE on m_article decompresses the text of every version.
-    # IF reads the M wikitext only for articles without S text.
-    cur.execute("""SELECT a.page_id, a.title, s.page_id IS NOT NULL AS clean,
-                          IF(s.page_id IS NULL, a.text, s.text) AS text
-                   FROM (SELECT page_id FROM m_article) c STRAIGHT_JOIN m_article a USING (page_id)
-                   LEFT JOIN s_article s ON s.lang = 'fi' AND s.page_id = a.page_id
-                   WHERE a.title LIKE %s OR IF(s.page_id IS NULL, a.text, s.text) LIKE %s
-                   ORDER BY a.title LIKE %s DESC, a.title LIMIT %s""", (like, like, like, limit))
+    cur.execute("""SELECT s.page_id, s.title FROM m_article_stats s JOIN m_search x USING (page_id)
+                   WHERE s.title LIKE %s OR INSTR(x.text, %s) > 0
+                   ORDER BY s.title LIKE %s DESC, s.title LIMIT %s""", (like, fold(q).encode(), like, limit))
+    found = cur.fetchall()
+    if not found:
+        return []
+    # Text by primary key; IF reads the M wikitext only for articles without S text.
+    cur.execute("""SELECT a.page_id, s.page_id IS NOT NULL AS clean, IF(s.page_id IS NULL, a.text, s.text) AS text
+                   FROM m_article a LEFT JOIN s_article s ON s.lang = 'fi' AND s.page_id = a.page_id
+                   WHERE a.page_id IN %s""", ([r["page_id"] for r in found],))
+    texts = {r["page_id"]: r for r in cur.fetchall()}
     results = []
-    for r in cur.fetchall():
-        text, match = snippet(prose(r["text"]) if r["clean"] else unwiki(r["text"]), q)
+    for r in found:
+        t = texts[r["page_id"]]
+        text, match = snippet(prose(t["text"]) if t["clean"] else unwiki(t["text"]), q)
         results.append({"page_id": r["page_id"], "title": r["title"], "snippet": text, "match": match})
     return results
 
