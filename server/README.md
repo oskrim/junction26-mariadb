@@ -34,6 +34,7 @@ uv run --with pymysql python server/app.py
 ```
 
 Open <http://127.0.0.1:8010>. Set `PORT` to use another port.
+The app and the loader use the database `wiki`; set `DB_NAME` to use another one.
 The JSON API is under `/api/`. See the functions in `app.py` and `reader/api.js`.
 
 ## Scale up M

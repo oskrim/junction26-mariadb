@@ -122,12 +122,13 @@ def change(cur, params):
     return {"added": [line for line in added if line.strip()], "removed": [line for line in removed if line.strip()]}
 
 
-MAX_NODES = 400
+MAX_NEAR = 60  # linked articles on the map
+MAX_FURTHER = 70  # articles two steps away
 
 
 def graph(cur, params):
     """The link graph as of at. With id, only that article's neighborhood: the articles it links with and the
-    articles they link with, at most MAX_NODES, with each one's topic, version count and first edit."""
+    best-connected articles they link with, with each one's topic, version count and first edit."""
     at = stamp(moment(params))
     if "id" in params:
         return neighborhood(cur, number(params, "id"), at)
@@ -140,66 +141,71 @@ def graph(cur, params):
     return {"nodes": nodes, "edges": cur.fetchall()}
 
 
-def links_touching(cur, ids, at):
-    """The links as of at from or to the given articles, as (source, target) page ids."""
-    cur.execute("""SELECT l.src, a.page_id FROM m_link FOR SYSTEM_TIME AS OF TIMESTAMP %s AS l
-                   JOIN m_article FOR SYSTEM_TIME AS OF TIMESTAMP %s AS a ON a.title = l.dst
-                   WHERE l.src IN %s
-                   UNION
-                   SELECT l.src, a.page_id FROM m_article FOR SYSTEM_TIME AS OF TIMESTAMP %s AS a
-                   STRAIGHT_JOIN m_link FOR SYSTEM_TIME AS OF TIMESTAMP %s AS l ON l.dst = a.title
-                   WHERE a.page_id IN %s""", (at, at, ids, at, at, ids))
+def links_touching(cur, ids, at, incoming=True):
+    """The links as of at from (and to) the given articles, as (source, target) page ids. Link targets are
+    matched to the articles' current titles, and only articles that existed at `at` count."""
+    sql = """SELECT l.src, s.page_id FROM m_link FOR SYSTEM_TIME AS OF TIMESTAMP %s AS l
+             JOIN m_article_stats s ON s.title = l.dst
+             WHERE l.src IN %s AND s.first <= %s"""
+    args = [at, ids, at]
+    if incoming:
+        sql += """ UNION
+             SELECT l.src, s.page_id FROM m_article_stats s
+             STRAIGHT_JOIN m_link FOR SYSTEM_TIME AS OF TIMESTAMP %s AS l ON l.dst = s.title
+             WHERE s.page_id IN %s AND s.first <= %s"""
+        args += [at, ids, at]
+    cur.execute(sql, args)
     return {(r["src"], r["page_id"]) for r in cur.fetchall() if r["src"] != r["page_id"]}
 
 
 def neighborhood(cur, center, at):
     edges = links_touching(cur, [center], at)
-    near = {n for edge in edges for n in edge} - {center}
+    adjacent = {n for edge in edges for n in edge}
+    near = adjacent - {center}
+    if len(near) > 2 * MAX_NEAR:
+        # A much-linked article (1150 has ~1,900): first the ones it links to, then the most edited.
+        linked = {target for source, target in edges if source == center}
+        cur.execute("SELECT page_id, versions FROM m_article_stats WHERE page_id IN %s", (sorted(near),))
+        versions = {r["page_id"]: r["versions"] for r in cur.fetchall()}
+        near = set(sorted(near, key=lambda n: (n not in linked, -versions[n]))[: 2 * MAX_NEAR])
     if near:
         edges |= links_touching(cur, sorted(near), at)
-    degree, via = {}, {}
+    degree = {}
+    for source, target in edges:
+        if source in near or source == center:
+            degree[target] = degree.get(target, 0) + 1
+        if target in near or target == center:
+            degree[source] = degree.get(source, 0) + 1
+    # The linked articles that link most with the rest of them, then the articles two steps away that most
+    # of the kept ones link with.
+    near = set(sorted(near, key=lambda n: -degree[n])[:MAX_NEAR])
+    via = {}
     for source, target in edges:
         for n, other in ((source, target), (target, source)):
-            degree[n] = degree.get(n, 0) + 1
-            if n not in near and n != center and other in near:
+            if n not in adjacent and other in near:
                 via[n] = via.get(n, 0) + 1
-    # The best-connected articles one step away, then the ones two steps away that most of them link with.
-    kept = [center] + sorted(near, key=lambda n: -degree[n])[: MAX_NODES - 1]
-    kept += sorted(via, key=lambda n: -via[n])[: MAX_NODES - len(kept)]
-    cur.execute("""SELECT a.page_id AS id, a.title, a.bytes AS chars, s.versions, UNIX_TIMESTAMP(s.first) AS first
-                   FROM m_article FOR SYSTEM_TIME AS OF TIMESTAMP %s AS a JOIN m_article_stats s USING (page_id)
-                   WHERE a.page_id IN %s""", (at, kept))
+    kept = [center, *near, *sorted(via, key=lambda n: -via[n])[:MAX_FURTHER]]
+    # Each article's size as of at: its last version that started by then, found with start_key.
+    cur.execute("""SELECT s.page_id AS id, s.title, a.bytes AS chars, s.versions, UNIX_TIMESTAMP(s.first) AS first,
+                          s.topic
+                   FROM m_article_stats s JOIN m_article FOR SYSTEM_TIME ALL a
+                     ON a.page_id = s.page_id
+                    AND a.row_start = (SELECT MAX(row_start) FROM m_article FOR SYSTEM_TIME ALL
+                                       WHERE page_id = s.page_id AND row_start <= %s)
+                   WHERE s.page_id IN %s""", (at, kept))
     nodes = cur.fetchall()
     ids = {n["id"] for n in nodes}
-    topic = topics_of(cur, sorted(ids))
     for n in nodes:
         n["first"] = int(n["first"])
-        n["topic"] = topic.get(n["id"])
     further = sorted(ids - near - {center})
     if further:  # links between two articles two steps away
-        edges |= links_touching(cur, further, at)
+        edges |= links_touching(cur, further, at, incoming=False)
     return {"nodes": nodes, "edges": [{"source": s, "target": t} for s, t in sorted(edges) if s in ids and t in ids]}
 
 
-def topics_of(cur, ids):
-    """Each article's topic: the category of it that has the most M articles."""
-    if not ids:
-        return {}
-    cur.execute("""SELECT c.page_id, c.category FROM s_category c
-                   JOIN (SELECT c2.category, COUNT(*) AS articles FROM s_category c2
-                         JOIN m_article_stats s ON s.page_id = c2.page_id GROUP BY c2.category) n
-                     ON n.category = c.category
-                   WHERE c.page_id IN %s
-                   ORDER BY c.page_id, n.articles DESC, c.category""", (ids,))
-    result = {}
-    for r in cur.fetchall():
-        result.setdefault(r["page_id"], r["category"])
-    return result
-
-
 def topics(cur, params):
-    cur.execute("SELECT page_id FROM m_article_stats")
-    return topics_of(cur, [r["page_id"] for r in cur.fetchall()])
+    cur.execute("SELECT page_id, topic FROM m_article_stats WHERE topic IS NOT NULL")
+    return {r["page_id"]: r["topic"] for r in cur.fetchall()}
 
 
 def extract(markdown):
