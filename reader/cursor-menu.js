@@ -104,12 +104,17 @@ export function cursorMenu({ root, onSubmit }) {
   addEventListener("mousedown", (e) => {
     if (e.button !== 0 || el.root.contains(e.target) || e.target.closest(".chat, .chat-dock")) return;
     if (state === "pinned" || state === "bar") follow();
+    if (state !== "follow") return;
+    // While the button is held the blobs tuck away, so the passage being painted stays clear.
+    reset();
+    for (const b of blobs) b.phase = "home";
   });
 
   addEventListener("mouseup", (e) => {
     if (e.button !== 0 || state !== "follow") return;
     takeSelection();
     pinAt(e.clientX, e.clientY);
+    blobs.forEach((b, i) => later(i * STAGGER, () => (b.phase = "out")));
   });
 
   for (const button of el.buttons) {
