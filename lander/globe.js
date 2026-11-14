@@ -1,16 +1,25 @@
-// The 3D puzzle globe. A sphere cut into 54 jigsaw pieces (a cube mapped onto a
-// sphere, 3×3 pieces per side). Each piece is its own mesh so it can lift off the ball.
+// The 3D puzzle globe. A sphere cut into 96 jigsaw pieces (a cube mapped onto a
+// sphere, 4×4 pieces per side). Each piece is its own mesh so it can lift off the ball.
 import * as THREE from "./vendor/three.module.min.js";
 
-const N = 3;             // pieces per cube side
-const SEG = 30;          // mesh resolution per piece
-const MARGIN = 0.3;      // extra room around each cell for the tabs
-const TAB_OFF = 0.12;    // how far a tab's centre sits past the edge
-const TAB_R = 0.145;     // tab radius
-const GAP = 0.010;       // hairline gap between pieces
-const MISSING = new Set(["2:0:2", "2:1:2"]); // two pieces gone from the top, like the logo
+const N = 4;             // pieces per cube side
+const SEG = 26;          // mesh resolution per piece
+const MARGIN = 0.26;     // extra room around each cell for the tabs
+const TAB_OFF = 0.078;   // how far a tab's centre sits past the edge (share of the edge length)
+const TAB_R = 0.108;     // tab radius (share of the edge length), jittered per edge
+const NECK = 0.045;      // how soft the neck of each tab is
+const GAP = 0.0045;      // hairline gap between pieces
+const MISSING = new Set(["2:1:3", "2:2:3"]); // two pieces gone from the top, like the logo
 
-const GLYPHS = ["W", "Ω", "И", "維", "ウィ", "و", "위", "वि", "ვ", "ש", "Ꮤ", "ವಿ", "ط", "Ж", "ব", "λ", "ไ", "ዊ", "維", "ኪ", "Ψ", "ⴰ", "ಕಿ", "ཝི", "Ⴅ", "ㅋ", "Я"];
+// The letters on the real logo: "Wiki" in many scripts, each in a matching serif face.
+const SERIF = '"Times New Roman", "Noto Serif", serif';
+const GLYPHS = [
+  ["W", SERIF], ["Ω", SERIF], ["И", SERIF], ["維", '"Hiragino Mincho ProN", serif'],
+  ["ウィ", '"Hiragino Mincho ProN", serif'], ["و", '"Geeza Pro", serif'], ["위", '"AppleMyungjo", serif'],
+  ["वि", '"ITF Devanagari", "Kohinoor Devanagari", serif'], ["ვ", SERIF], ["ו", SERIF],
+  ["ವಿ", '"Kannada Sangam MN", serif'], ["Ж", SERIF], ["ཝི", '"Kailasa", serif'], ["ψ", SERIF],
+  ["ვი", SERIF], ["ウ", '"Hiragino Mincho ProN", serif'], ["ক", '"Bangla MN", serif'], ["Λ", SERIF],
+];
 
 const FACES = [
   { n: [1, 0, 0], u: [0, 0, -1], v: [0, 1, 0] },
@@ -45,26 +54,26 @@ function shapeJS(s, t, dir, u) {
   const px = Math.abs(s - 0.5) - 0.5, py = Math.abs(t - 0.5) - 0.5;
   let d = Math.hypot(Math.max(px, 0), Math.max(py, 0)) + Math.min(Math.max(px, py), 0);
   u.tabs.forEach((sg, k) => {
-    const c = (Math.acos(Math.min(1, dir.dot(u.tabC[k]))) - TAB_R * u.edgeLen[k]) / u.edgeLen[k];
-    d = sg > 0 ? smin(d, c, 0.03) : -smin(-d, c, 0.03);
+    const c = (Math.acos(Math.min(1, dir.dot(u.tabC[k]))) - u.tabR[k]) / u.edgeLen[k];
+    d = sg > 0 ? smin(d, c, NECK) : -smin(-d, c, NECK);
   });
   return d;
 }
 
 const SHAPE_GLSL = /* glsl */ `
-  uniform vec4 uTabs; uniform vec4 uLen; uniform vec3 uC0, uC1, uC2, uC3;
+  uniform vec4 uTabs; uniform vec4 uLen; uniform vec4 uRad; uniform vec3 uC0, uC1, uC2, uC3;
   float smin(float a, float b, float k){ float h = clamp(0.5 + 0.5*(b-a)/k, 0., 1.); return mix(b, a, h) - k*h*(1.-h); }
-  float tabSd(float d, vec3 dir, vec3 c, float len, float sg){
-    float cd = (acos(min(1., dot(dir, c))) - ${TAB_R.toFixed(3)} * len) / len;
-    return sg > 0. ? smin(d, cd, 0.03) : -smin(-d, cd, 0.03);
+  float tabSd(float d, vec3 dir, vec3 c, float len, float rad, float sg){
+    float cd = (acos(min(1., dot(dir, c))) - rad) / len;
+    return sg > 0. ? smin(d, cd, ${NECK.toFixed(3)}) : -smin(-d, cd, ${NECK.toFixed(3)});
   }
   float shape(vec2 p, vec3 dir){
     vec2 q = abs(p - 0.5) - 0.5;
     float d = length(max(q, 0.)) + min(max(q.x, q.y), 0.);
-    d = tabSd(d, dir, uC0, uLen.x, uTabs.x);
-    d = tabSd(d, dir, uC1, uLen.y, uTabs.y);
-    d = tabSd(d, dir, uC2, uLen.z, uTabs.z);
-    d = tabSd(d, dir, uC3, uLen.w, uTabs.w);
+    d = tabSd(d, dir, uC0, uLen.x, uRad.x, uTabs.x);
+    d = tabSd(d, dir, uC1, uLen.y, uRad.y, uTabs.y);
+    d = tabSd(d, dir, uC2, uLen.z, uRad.z, uTabs.z);
+    d = tabSd(d, dir, uC3, uLen.w, uRad.w, uTabs.w);
     return d;
   }`;
 
@@ -83,33 +92,41 @@ const FRAG = /* glsl */ `
   uniform sampler2D uGlyph; uniform float uHover; uniform float uLift;
   varying vec2 vUv; varying vec3 vN; varying vec3 vView; varying vec3 vDir;
   void main(){
-    float d = shape(vUv, normalize(vDir)) + ${GAP.toFixed(3)};
-    float aa = fwidth(d) * 1.2;
+    float d = shape(vUv, normalize(vDir)) + ${GAP.toFixed(4)};
+    // screen-space slope of the outline, used for the bevel; taken before any discard
+    vec2 g = vec2(dFdx(d), dFdy(d));
+    float aa = min(length(g) * 1.3, 0.03);
     float alpha = 1. - smoothstep(-aa, 0., d);
     if (alpha < 0.01) discard;
+    vec2 gn = g / max(length(g), 1e-6);
+    float inside = -d;
 
     vec3 N = normalize(vN);
     vec3 V = normalize(-vView);
-    vec3 L = normalize(vec3(-0.55, 0.75, 0.65));
-    float diff = max(dot(N, L), 0.);
-    float rim = pow(1. - max(dot(N, V), 0.), 2.2);
-    float spec = pow(max(dot(reflect(-L, N), V), 0.), 28.) * 0.18;
+    vec3 L = normalize(vec3(-0.5, 0.62, 0.6));
+    float wrap = clamp(dot(N, L) * 0.5 + 0.5, 0., 1.);
+    float facing = max(dot(N, V), 0.);
 
-    vec3 col = vec3(0.972, 0.972, 0.965) * (0.6 + 0.42 * diff) + spec;
-    col -= rim * 0.16;
+    // paper-white ball that falls off to soft grey away from the light, like the logo
+    vec3 col = mix(vec3(0.47, 0.475, 0.485), vec3(0.99, 0.99, 0.985), pow(wrap, 1.35));
+    col *= mix(0.8, 1., smoothstep(0., 0.6, facing));
+    col += pow(max(dot(reflect(-L, N), V), 0.), 9.) * 0.05;
 
-    // engraved seam just inside the piece edge
-    float seam = 1. - smoothstep(0., 0.02, -d);
-    col = mix(col, col * 0.74, seam);
+    // each piece is slightly pillowed: edges facing the light catch it, the others fall into shadow
+    float band = pow(1. - smoothstep(0., 0.075, inside), 1.6);
+    float lit = dot(gn, normalize(vec2(-0.6, 0.7)));
+    col *= 1. + band * lit * 0.32;
+    // soft groove where pieces meet
+    col *= mix(0.6, 1., smoothstep(0., 0.02, inside));
 
-    // the letter
+    // the letter, printed on the piece
     if (vUv.x > 0. && vUv.x < 1. && vUv.y > 0. && vUv.y < 1.) {
-      float g = texture2D(uGlyph, vUv).a;
-      col = mix(col, vec3(0.07), g * (0.92 - rim * 0.3));
+      float ink = texture2D(uGlyph, vUv).a;
+      col = mix(col, vec3(0.11, 0.11, 0.12), ink * mix(0.55, 0.95, smoothstep(0.05, 0.5, facing)));
     }
 
-    col += uHover * 0.035 + uLift * 0.12;
-    if (!gl_FrontFacing) col = vec3(0.36);
+    col += uHover * 0.03;
+    if (!gl_FrontFacing) col = vec3(0.3);
     gl_FragColor = vec4(col, alpha);
   }`;
 
@@ -118,47 +135,52 @@ function glyphTexture(glyph, rot) {
   c.width = c.height = 256;
   const g = c.getContext("2d");
   if (glyph) {
-    g.translate(128, 132);
+    const [text, font] = glyph;
+    g.translate(128, 130);
     g.rotate(rot);
-    const size = glyph.length > 1 ? 92 : 124;
-    g.font = `500 ${size}px "Linux Libertine", "Times New Roman", "Hiragino Mincho ProN", "Noto Serif", serif`;
+    g.font = `400 ${text.length > 1 ? 84 : 112}px ${font}`;
     g.textAlign = "center";
     g.textBaseline = "middle";
     g.fillStyle = "#000";
-    g.fillText(glyph, 0, 0);
+    g.fillText(text, 0, 0);
   }
   const tex = new THREE.CanvasTexture(c);
-  tex.anisotropy = 4;
+  tex.anisotropy = 8;
   return tex;
 }
 
-// Tiny deterministic hash so both neighbours agree on which side of an edge gets the tab.
-function edgeVector(p) {
+// Tiny deterministic random numbers seeded by an edge's midpoint, so both neighbours
+// agree on everything about the edge they share: which side gets the tab, where, how big.
+function edgeRandom(p) {
   const k = [p.x, p.y, p.z].map((c) => Math.round(c * 1000) + 0).join(",");
   let h = 2166136261;
   for (let i = 0; i < k.length; i++) h = Math.imul(h ^ k.charCodeAt(i), 16777619);
-  const r = (n) => (((h = Math.imul(h ^ (h >>> 13), 1274126177)) >>> 0) / 4294967295) * 2 - 1 + n;
-  return new THREE.Vector3(r(0), r(0), r(0));
+  return () => ((h = Math.imul(h ^ (h >>> 13), 1274126177)) >>> 0) / 4294967295;
 }
 
 function buildPiece(face, fi, i, j, index) {
   const da = 2 / N, a0 = -1 + i * da, b0 = -1 + j * da;
   const toAB = (s, t) => [a0 + s * da, b0 + t * da];
 
-  const tabC = [], edgeLen = [];
+  const tabC = [], edgeLen = [], tabR = [];
   const tabs = EDGES.map((e) => {
     const P = dirOf(face, ...toAB(...e.m));
     const Q = dirOf(face, ...toAB(e.m[0] + e.o[0] * 0.01, e.m[1] + e.o[1] * 0.01));
     // exact perpendicular to the shared edge, pointing out of this piece; the neighbour gets its negative
     const px = Math.abs(e.o[1]) * 0.5, py = Math.abs(e.o[0]) * 0.5;
     const C1 = dirOf(face, ...toAB(e.m[0] - px, e.m[1] - py)), C2 = dirOf(face, ...toAB(e.m[0] + px, e.m[1] + py));
-    const out = new THREE.Vector3().crossVectors(P, C2.sub(C1)).normalize();
+    const len = C1.angleTo(C2);
+    const along = C2.clone().sub(C1);
+    const out = new THREE.Vector3().crossVectors(P, along).normalize();
     if (out.dot(Q.sub(P)) < 0) out.negate();
-    const sg = out.dot(edgeVector(P)) > 0 ? 1 : -1;
-    // both neighbours measure the same edge, so they get the same length and the same circle
-    const len = dirOf(face, ...toAB(e.m[0] - px, e.m[1] - py)).angleTo(dirOf(face, ...toAB(e.m[0] + px, e.m[1] + py)));
-    const th = TAB_OFF * len;
-    tabC.push(P.clone().multiplyScalar(Math.cos(th)).addScaledVector(out, Math.sin(th) * sg).normalize());
+    const rnd = edgeRandom(P);
+    const sg = out.dot(new THREE.Vector3(rnd() - 0.5, rnd() - 0.5, rnd() - 0.5)) > 0 ? 1 : -1;
+    // hand-cut feel: each tab slides a little along its edge and varies in size
+    if (along.x + along.y * 1.7 + along.z * 2.3 < 0) along.negate(); // same direction for both neighbours
+    const mid = P.clone().addScaledVector(along, (rnd() - 0.5) * 0.18).normalize();
+    const th = (TAB_OFF + (rnd() - 0.5) * 0.02) * len;
+    tabC.push(mid.multiplyScalar(Math.cos(th)).addScaledVector(out, Math.sin(th) * sg).normalize());
+    tabR.push(TAB_R * (0.9 + rnd() * 0.2) * len);
     edgeLen.push(len);
     return sg;
   });
@@ -186,7 +208,7 @@ function buildPiece(face, fi, i, j, index) {
   geo.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
   geo.setIndex(idx);
 
-  const glyph = index % 5 === 3 ? null : GLYPHS[index % GLYPHS.length];
+  const glyph = index % 7 === 3 ? null : GLYPHS[(index * 5) % GLYPHS.length];
   const mat = new THREE.ShaderMaterial({
     vertexShader: VERT,
     fragmentShader: FRAG,
@@ -195,14 +217,15 @@ function buildPiece(face, fi, i, j, index) {
     uniforms: {
       uTabs: { value: new THREE.Vector4(...tabs) },
       uLen: { value: new THREE.Vector4(...edgeLen) },
+      uRad: { value: new THREE.Vector4(...tabR) },
       uC0: { value: tabC[0] }, uC1: { value: tabC[1] }, uC2: { value: tabC[2] }, uC3: { value: tabC[3] },
-      uGlyph: { value: glyphTexture(glyph, (((index * 37) % 11) - 5) * 0.05) },
+      uGlyph: { value: glyphTexture(glyph, (((index * 37) % 7) - 3) * 0.04) },
       uHover: { value: 0 },
       uLift: { value: 0 },
     },
   });
   const mesh = new THREE.Mesh(geo, mat);
-  mesh.userData = { tabs, tabC, edgeLen, center: dirOf(face, ...toAB(0.5, 0.5)), lift: 0, vel: 0, hover: 0 };
+  mesh.userData = { tabs, tabC, tabR, edgeLen, center: dirOf(face, ...toAB(0.5, 0.5)), lift: 0, vel: 0, hover: 0 };
   return mesh;
 }
 

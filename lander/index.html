@@ -22,32 +22,37 @@
       <canvas id="globe" aria-label="Spinning puzzle globe. Hover to lift pieces, drag to turn it."></canvas>
     </div>
 
-    <form class="composer" id="composer" autocomplete="off">
-      <label class="sr-only" for="q">Ask Wikipedia</label>
-      <textarea id="q" rows="2" placeholder="Ask anything about how Wikipedia changed…"></textarea>
-      <div class="composer-row">
-        <div class="lang-wrap">
-          <button type="button" class="lang" id="lang" aria-haspopup="listbox" aria-expanded="false" aria-label="Language: English">en</button>
-          <ul class="lang-menu" id="lang-menu" role="listbox" hidden></ul>
+    <div class="composer-wrap">
+      <form class="composer" id="composer" autocomplete="off" role="search">
+        <label class="sr-only" for="q">Search Wikipedia</label>
+        <textarea id="q" rows="1" placeholder="Search Wikipedia or ask a question" aria-autocomplete="list" aria-controls="suggest" aria-expanded="false"></textarea>
+        <div class="controls">
+          <div class="lang-wrap">
+            <button type="button" class="lang" id="lang" aria-haspopup="listbox" aria-expanded="false" aria-label="Language: English"><span id="lang-code">EN</span>
+              <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <ul class="lang-menu" id="lang-menu" role="listbox" hidden></ul>
+          </div>
+          <button type="submit" class="send" id="send" aria-label="Search" disabled>
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="m15 15 5 5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+          </button>
         </div>
-        <button type="submit" class="send" id="send" aria-label="Send" disabled>
-          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 19V5M5.5 11.5 12 5l6.5 6.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </button>
-      </div>
-    </form>
-
-    <div class="suggestions" id="suggestions">
-      <button type="button">What did the Moon page look like in 2005?</button>
-      <button type="button">How did Finland's article grow?</button>
-      <button type="button">When was Climate change edited most?</button>
+      </form>
+      <div class="suggest" id="suggest" role="listbox" hidden></div>
     </div>
 
-    <section class="answer" id="answer" hidden aria-live="polite">
-      <p class="answer-q" id="answer-q"></p>
-      <p class="answer-text" id="answer-text"></p>
-      <div class="answer-sources" id="answer-sources"></div>
-    </section>
+    <div class="examples" id="examples">
+      <span>Try</span>
+      <button type="button">Moon</button>
+      <button type="button">Who broke codes in the war?</button>
+      <button type="button">Where do saunas come from?</button>
+      <button type="button">Which animals make honey?</button>
+    </div>
+
+    <section class="results" id="results" hidden aria-live="polite"></section>
   </main>
+
+  <div class="toast" id="toast" role="status" hidden></div>
 
   <script type="module" src="./main.js"></script>
 </body>

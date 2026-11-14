@@ -30,7 +30,63 @@ const ARTICLES = [
   { page_id: 2633, title: "Leonardo da Vinci", versions: 1401, first: 1069286400 },
   { page_id: 2818, title: "Quantum computing", versions: 5047, first: 1003680653 },
   { page_id: 3006, title: "Rainbow", versions: 433, first: 1118966400 },
+  { page_id: 3120, title: "Moon landing", versions: 812, first: 1086048000 },
+  { page_id: 3141, title: "Apollo 11", versions: 1176, first: 1078531200 },
+  { page_id: 3307, title: "Mars", versions: 1652, first: 1059696000 },
+  { page_id: 3415, title: "Sun", versions: 1890, first: 1055203200 },
+  { page_id: 3522, title: "Helsinki", versions: 905, first: 1066003200 },
+  { page_id: 3610, title: "Sauna", versions: 288, first: 1129852800 },
+  { page_id: 3788, title: "Enigma machine", versions: 517, first: 1102204800 },
+  { page_id: 3801, title: "World War II", versions: 4120, first: 1048204800 },
+  { page_id: 3956, title: "Computer", versions: 2338, first: 1046822400 },
+  { page_id: 4102, title: "Honey", versions: 402, first: 1114041600 },
+  { page_id: 4233, title: "Tide", versions: 367, first: 1121644800 },
+  { page_id: 4318, title: "Gravity", versions: 1210, first: 1068076800 },
+  { page_id: 4470, title: "Mona Lisa", versions: 655, first: 1095811200 },
+  { page_id: 4529, title: "Renaissance", versions: 984, first: 1081296000 },
+  { page_id: 4688, title: "Tyrannosaurus", versions: 742, first: 1099353600 },
+  { page_id: 4790, title: "Olympic Games", versions: 1533, first: 1071100800 },
 ];
+
+// First lines of each page. A real version would search the article text in MariaDB.
+const SUMMARY = {
+  13: "The Moon is Earth's only natural satellite. It causes the tides and was first visited by people in 1969.",
+  219: "Earth is the third planet from the Sun and the only planet known to have life.",
+  487: "Albert Einstein was a German-born scientist best known for the theory of relativity and the equation E = mc².",
+  512: "Photosynthesis is how plants make food from sunlight, water and carbon dioxide, giving off oxygen.",
+  618: "A volcano is an opening in the Earth's crust where hot melted rock, called lava, comes out.",
+  744: "Finland is a country in Northern Europe. Its capital city is Helsinki and the sauna is part of its culture.",
+  802: "The Internet is a large network of computers that are connected to each other around the world.",
+  911: "Ancient Egypt was a civilization along the Nile river, famous for its pyramids and pharaohs.",
+  1187: "Alan Turing was an English mathematician who helped break German codes in the Second World War and imagined the first computers.",
+  1304: "Climate change is the long change of the weather patterns of the whole Earth, mostly caused by burning fossil fuels.",
+  1452: "The honey bee lives in large groups called colonies and makes honey from the nectar of flowers.",
+  1620: "Mount Everest is the highest mountain on Earth above sea level, on the border of Nepal and China.",
+  1778: "Music is a form of art that uses sound organised in time, with rhythm, melody and harmony.",
+  1903: "A black hole is a place in space where gravity pulls so much that even light cannot get out.",
+  2051: "Chess is a board game for two players. Each player starts with sixteen pieces and tries to checkmate the king.",
+  2290: "Coffee is a drink made from the roasted seeds of the coffee plant. It first came from Ethiopia.",
+  2417: "Dinosaurs were a group of reptiles that lived on Earth for about 165 million years before they died out.",
+  2633: "Leonardo da Vinci was an Italian painter, scientist and inventor of the Renaissance who painted the Mona Lisa.",
+  2818: "Quantum computing uses qubits, which can be zero and one at the same time, to solve some problems much faster.",
+  3006: "A rainbow is an arc of colours that appears when sunlight shines through raindrops.",
+  3120: "A Moon landing is when a spacecraft arrives on the surface of the Moon. People first walked there in 1969.",
+  3141: "Apollo 11 was the spaceflight that first landed people on the Moon, in July 1969. Neil Armstrong walked first.",
+  3307: "Mars is the fourth planet from the Sun. It is called the Red Planet because of the iron rust on its surface.",
+  3415: "The Sun is the star at the centre of the Solar System. It gives Earth light and heat.",
+  3522: "Helsinki is the capital and largest city of Finland, on the coast of the Baltic Sea.",
+  3610: "A sauna is a small hot room for sweating and bathing. Saunas come from Finland and are thousands of years old.",
+  3788: "The Enigma machine was used by Germany to send secret codes in the Second World War. Alan Turing helped break it.",
+  3801: "World War II, or the Second World War, was a war from 1939 to 1945 that involved most of the world's countries.",
+  3956: "A computer is a machine that follows instructions, called programs, to work with information.",
+  4102: "Honey is a sweet food made by bees from the nectar of flowers. People have eaten it for thousands of years.",
+  4233: "Tides are the rise and fall of the sea. They are caused mostly by the gravity of the Moon.",
+  4318: "Gravity is the force that pulls things toward each other. It keeps the Moon going around Earth.",
+  4470: "The Mona Lisa is a painting by Leonardo da Vinci. It hangs in the Louvre in Paris.",
+  4529: "The Renaissance was a time in Europe, from about 1400 to 1600, when art and science grew quickly.",
+  4688: "Tyrannosaurus was a large meat-eating dinosaur that walked on two legs and had very small arms.",
+  4790: "The Olympic Games are a sports event held every four years, where athletes from many countries compete.",
+};
 
 // Opening lines used for the drifting background text, written in Simple English style.
 export const SNIPPETS = [
@@ -85,7 +141,7 @@ export async function getArticle(id, at) {
       user: ["Auntof6", "Macdonald-ross", "Eptalon", "Chenzw", "Griffinofwales"][i % 5],
       comment: "copyedit",
       row_start: stamp,
-      text: SNIPPETS[i % SNIPPETS.length],
+      text: SUMMARY[id],
     },
   };
 }
@@ -99,38 +155,60 @@ export async function getGraph(at) {
   return { sql: [], nodes, edges };
 }
 
-// ── Fake chat ───────────────────────────────────────────────────────────────
+// ── Fake search ─────────────────────────────────────────────────────────────
+// Not in app.py yet. Two kinds:
+//   suggestPages(text)  → quick title matches while typing (could be a LIKE on page titles)
+//   searchPages(text)   → title matches + pages whose text answers a question (full-text search)
 
-const ANSWERS = [
-  {
-    match: /moon/i,
-    text: "The Moon article was started in September 2003 as two short sentences. It has been saved 1,984 times since. It grew fastest in 2009, around the 40th anniversary of the first Moon landing, when it gained sections on tides and on the Apollo missions.",
-    sources: [13, 219],
-  },
-  {
-    match: /finland|suomi/i,
-    text: "Finland first appeared in June 2003. The early version only named the capital and the language. Over 1,517 saves, it gained history, saunas and the 1952 Olympics. The biggest single edit came in 2017, for Finland's 100th year of independence.",
-    sources: [744],
-  },
-  {
-    match: /climate/i,
-    text: "Climate change is one of the most-edited pages here, with 3,402 saves since 2005. Edits come in waves that match big news: the 2007 IPCC report, Paris in 2015 and the 2019 school strikes. In 2019 alone the article was protected twice to stop edit wars.",
-    sources: [1304, 219],
-  },
-];
+// Where a page opens. The combined app can point this at the reader.
+export const pageUrl = (a) => `#/page/${a.page_id}`;
 
-const FALLBACK = {
-  text: "Good question. Across 642 articles and 23 years of edits, I can show you any page as it looked on any day, who changed it, and which pages linked to it at the time. Try asking about the Moon, Finland or climate change.",
-  sources: [13, 744, 1304],
-};
+const STOP = new Set("a an the of in on at to for and or is was were are be been did do does how what who whom which when where why with about from by it its this that there their they i me my you your can could would should much many most first ever".split(" "));
+const words = (text) => text.toLowerCase().normalize("NFKD").replace(/[^a-z0-9\s-]/g, " ").split(/\s+/).filter(Boolean);
+export const stem = (w) => w.replace(/(ies|es|s|ing|ed)$/, "").slice(0, 6);
+export const looksLikeQuestion = (text) => /\?\s*$/.test(text) || /^(what|who|why|how|when|where|which|did|does|is|are|can)\b/i.test(text.trim());
 
-// Streams a canned answer word by word. Swap for a real chat endpoint later.
-export async function* askWikipedia(question, lang = "en") {
-  const hit = ANSWERS.find((a) => a.match.test(question)) ?? FALLBACK;
-  await delay(650);
-  for (const word of hit.text.split(/(\s+)/)) {
-    await delay(word.trim() ? 28 + Math.random() * 40 : 0);
-    yield { token: word };
-  }
-  yield { sources: hit.sources.map((id) => ARTICLES.find((a) => a.page_id === id)) };
+function titleScore(title, q) {
+  const t = title.toLowerCase();
+  if (!q) return -1;
+  if (t === q) return 0;
+  if (t.startsWith(q)) return 1;
+  if (t.split(/\s+/).some((w) => w.startsWith(q))) return 2;
+  if (q.length > 2 && t.includes(q)) return 3;
+  return -1;
+}
+
+export async function suggestPages(text) {
+  await delay(40);
+  const q = text.trim().toLowerCase();
+  return ARTICLES.map((a) => ({ a, s: titleScore(a.title, q) }))
+    .filter((x) => x.s >= 0)
+    .sort((x, y) => x.s - y.s || y.a.versions - x.a.versions)
+    .slice(0, 6)
+    .map((x) => ({ ...x.a, summary: SUMMARY[x.a.page_id] }));
+}
+
+export async function searchPages(text) {
+  await delay(260);
+  const q = text.trim().toLowerCase().replace(/[?!.]+$/, "");
+  const terms = [...new Set(words(q).filter((w) => !STOP.has(w) && w.length > 1))];
+  const stems = terms.map(stem);
+
+  // 1. pages whose title matches the whole text or one of its words
+  const byTitle = ARTICLES.map((a) => {
+    let s = titleScore(a.title, q);
+    if (s < 0 && terms.some((t) => words(a.title).some((w) => stem(w) === stem(t)))) s = 4;
+    return { a, s };
+  }).filter((x) => x.s >= 0).sort((x, y) => x.s - y.s || y.a.versions - x.a.versions);
+
+  // 2. pages whose text shares the most words with the question
+  const shown = new Set(byTitle.map((x) => x.a.page_id));
+  const byText = ARTICLES.filter((a) => !shown.has(a.page_id)).map((a) => {
+    const ws = words(SUMMARY[a.page_id]).map(stem);
+    const hits = stems.filter((st) => ws.includes(st)).length;
+    return { a, s: hits / Math.max(stems.length, 1) };
+  }).filter((x) => x.s > 0).sort((x, y) => y.s - x.s || y.a.versions - x.a.versions);
+
+  const pack = (x) => ({ ...x.a, summary: SUMMARY[x.a.page_id] });
+  return { terms, pages: byTitle.slice(0, 4).map(pack), related: byText.slice(0, 5).map(pack) };
 }
