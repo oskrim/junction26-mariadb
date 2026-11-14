@@ -85,7 +85,9 @@ export async function mountExplore(root, { id }) {
   };
 
   // What is on the map, where everything is heading, and where it is right now.
-  let centerId = nodes.has(id) ? id : 1150;
+  // An article that isn't in the link graph falls back to the default one, then to the best-connected.
+  let centerId =
+    [id, 1150].find((n) => nodes.has(n)) ?? [...links].sort((a, b) => b[1].size - a[1].size)[0][0];
   let hop = new Map();
   let target = new Map();
   let edges = [];
