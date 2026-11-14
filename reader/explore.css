@@ -388,7 +388,20 @@ body[data-view="explore"] {
 }
 
 .ex-panel-body {
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
   padding: 22px 24px 24px;
+}
+
+/* The panel is a column, so the buttons sit at its bottom when the text is short. */
+.ex-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.ex-panel-media {
+  flex: none;
 }
 
 .ex-panel h3 {
@@ -434,8 +447,8 @@ body[data-view="explore"] {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin: 20px -24px -24px;
-  padding: 12px 24px 20px;
+  margin: auto -24px -24px;
+  padding: 16px 24px 20px;
   background: #fff;
   box-shadow: 0 -1px 0 rgb(0 0 0 / 0), 0 -10px 16px -14px rgb(0 0 0 / 0);
   transition: box-shadow 0.2s;
