@@ -20,7 +20,8 @@ const STEP = 300;
 const ROUND_HOLD = 250;
 const QUIET_ROUND = 550;
 const MIN_TRIP = 1600;
-const ZOOM_YEARS = 5;
+// Years the strip shows at a time; Infinity shows the article's whole life.
+const ZOOM_YEARS = Infinity;
 const ERASE = 550;
 const REVEAL = 900;
 // Rounds of a war shown at most, and how fast ordinary versions and war rounds play, at 1×.
@@ -49,19 +50,19 @@ const HANDS_OFF = 6000;
 
 const DOCK = `
   <div class="hp-war" hidden></div>
-  <div class="minimap hp-map">
-    <div class="hp-map-inner">
-      <div class="hp-swords"></div>
-      <svg class="minimap-svg" preserveAspectRatio="none"></svg>
-      <div class="minimap-now"></div>
-      <div class="minimap-years"></div>
-    </div>
-  </div>
   <div class="hp-row">
     <button type="button" class="hp-play" aria-label="Pause">${PAUSE}</button>
     <div class="hp-when">
       <p class="hp-date">Loading history…</p>
       <p class="hp-who"></p>
+    </div>
+    <div class="minimap hp-map">
+      <div class="hp-map-inner">
+        <div class="hp-swords"></div>
+        <svg class="minimap-svg" preserveAspectRatio="none"></svg>
+        <div class="minimap-now"></div>
+        <div class="minimap-years"></div>
+      </div>
     </div>
     <button type="button" class="hp-speed" aria-label="Playback speed">1×</button>
     <button type="button" class="hp-close" aria-label="Back to today's article">×</button>
@@ -85,8 +86,7 @@ export function startHistoryPlay({ id, body, onClose }) {
   const dock = document.createElement("div");
   dock.className = "hp-dock";
   dock.innerHTML = DOCK;
-  // Under the road, or along the bottom of the window when the road has no room.
-  side.append(dock);
+  document.body.append(dock);
   document.body.classList.add("hp-mode");
   // The war note sits at the top of the road panel, above the fight.
   side.append(dock.querySelector(".hp-war"));

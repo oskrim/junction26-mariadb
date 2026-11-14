@@ -260,7 +260,8 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
     for (const b of blocks) {
       if (!b.k || inWar.has(stops[b.k]) || stopZ[b.k] < camZ + NEAR || stopZ[b.k - 1] > camZ + FAR) continue;
       const [h, sat, light] = b.color;
-      const a = calm * fog(Math.max(stopZ[b.k - 1], camZ + NEAR) - camZ);
+      // Only the far fog: the near fade would blank a whole road as soon as its start passed the camera.
+      const a = calm * (1 - smoothstep(FAR * 0.45, FAR, stopZ[b.k - 1] - camZ));
       if (a < 0.01) continue;
       const done = b.k < stopNow;
       const walking = b.k === stopNow;
