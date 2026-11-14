@@ -22,6 +22,7 @@ import ask
 import learn
 
 READER = Path(__file__).resolve().parent.parent / "reader"
+LANDER = Path(__file__).resolve().parent.parent / "lander"
 TYPES = {".html": "text/html", ".js": "text/javascript", ".json": "application/json", ".css": "text/css",
          ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
          ".gz": "application/gzip", ".ico": "image/x-icon"}
@@ -404,10 +405,14 @@ class Handler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         if url.path.startswith("/api/"):
             return self.api(url)
-        path = (READER / url.path.lstrip("/")).resolve()
+        # The landing page is the home page at /home/; the bare address, with no article picked, opens it.
+        if (url.path == "/" and not url.query) or url.path == "/home":
+            return self.send(302, None, b"", (("Location", "/home/"),))
+        root, rel = (LANDER, url.path[len("/home/"):]) if url.path.startswith("/home/") else (READER, url.path.lstrip("/"))
+        path = (root / rel).resolve()
         if path.is_dir():
             path = path / "index.html"
-        if READER not in path.parents or not path.is_file():
+        if root not in path.parents or not path.is_file():
             return self.send(404, "application/json", b'{"error": "not found"}')
         body = path.read_bytes()
         # Files change on deploy, so the browser asks every time, and a revisit costs a 304 without a body.
