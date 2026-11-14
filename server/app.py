@@ -3,9 +3,11 @@
     uv run --with pymysql python server/app.py      # http://127.0.0.1:8010 ($PORT)
 """
 import difflib
+import html
 import json
 import os
 import re
+import time
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -30,8 +32,10 @@ class BadRequest(Exception):
 def connect():
     con = pymysql.connect(
         host=os.environ.get("DB_HOST", "127.0.0.1"), port=int(os.environ.get("DB_PORT", 3309)),
-        user="wiki", password=os.environ.get("DB_PASSWORD", "wiki"), database="wiki", charset="utf8mb4",
-        cursorclass=pymysql.cursors.DictCursor,
+        user=os.environ.get("DB_USER", "wiki"), password=os.environ.get("DB_PASSWORD", "wiki"), database="wiki",
+        charset="utf8mb4", cursorclass=pymysql.cursors.DictCursor,
+        # The server's certificate is self-signed, so the connection is encrypted but not verified.
+        ssl={"verify_mode": False} if os.environ.get("DB_SSL") == "1" else None,
     )
     con.cursor().execute("SET time_zone = '+00:00'")
     return con
@@ -67,9 +71,12 @@ def articles(cur, params):
 
 
 def article(cur, params):
+    # The ORDER BY makes MariaDB read start_key backwards; without it, it may walk the (page_id, row_end)
+    # index and decompress the text of every version that ended later.
     sql = cur.mogrify("""SELECT title, rev_id, IFNULL(user, '') AS user, IFNULL(comment, '') AS comment, row_start, text
 FROM m_article FOR SYSTEM_TIME AS OF TIMESTAMP %s
-WHERE page_id = %s""", (stamp(moment(params)), number(params, "id")))
+WHERE page_id = %s
+ORDER BY row_start DESC LIMIT 1""", (stamp(moment(params)), number(params, "id")))
     cur.execute(sql)
     version = cur.fetchone()
     if version:
@@ -170,17 +177,40 @@ def preview(cur, params):
     return {"title": found["title"], "extract": extract(s["text"]) if s else "", "thumbnail": thumbnail}
 
 
+def plain(wikitext):
+    """Wiki markup as plain text, roughly: for search snippets."""
+    text = "\n".join(line for line in wikitext.splitlines() if not line.lstrip().startswith(("|", "{", "}", "!")))
+    text = re.sub(r"<ref[^>]*/>|<ref[^>]*>.*?</ref>|<[^>]+>|\{\{[^{}]*\}\}|'{2,}", "", html.unescape(text), flags=re.S)
+    text = re.sub(r"\[\[(?:[^|\]]*\|)?([^\]]*)\]\]", r"\1", text)
+    return " ".join(re.sub(r"[\[\]{}|=*#]", " ", text).split())
+
+
+def snippet(text, q, width=160):
+    at = max(0, text.lower().find(q.lower()))
+    start = max(0, at - width // 3)
+    return ("…" if start else "") + text[start:start + width] + ("…" if start + width < len(text) else "")
+
+
 def search(cur, params):
+    """The current M articles whose title, then text, contains q (any case). ?in=s searches S instead."""
     q = params.get("q", [""])[0].strip()
     if not q:
         raise BadRequest("q is required")
     like = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
-    cur.execute("""SELECT lang, page_id, title, url,
-                          SUBSTRING(text, GREATEST(1, LOCATE(%s, text) - 80), 200) AS snippet
-                   FROM s_article WHERE title LIKE %s OR text LIKE %s
-                   ORDER BY title LIKE %s DESC, title LIMIT %s""",
-                (q, like, like, like, number(params, "limit", 20)))
-    return cur.fetchall()
+    limit = number(params, "limit", 20)
+    if params.get("in", ["m"])[0] == "s":
+        cur.execute("""SELECT lang, page_id, title, url,
+                              SUBSTRING(text, GREATEST(1, LOCATE(%s, text) - 80), 200) AS snippet
+                       FROM s_article WHERE title LIKE %s OR text LIKE %s
+                       ORDER BY title LIKE %s DESC, title LIMIT %s""", (q, like, like, like, limit))
+        return cur.fetchall()
+    # Current rows are reached by key: a plain WHERE on m_article decompresses the text of every version.
+    cur.execute("""SELECT a.page_id, a.title, SUBSTRING(a.text, GREATEST(1, LOCATE(%s, a.text) - 300), 800) AS around
+                   FROM (SELECT page_id FROM m_article) c STRAIGHT_JOIN m_article a USING (page_id)
+                   WHERE a.title LIKE %s OR a.text LIKE %s
+                   ORDER BY a.title LIKE %s DESC, a.title LIMIT %s""", (q, like, like, like, limit))
+    return [{"page_id": r["page_id"], "title": r["title"], "snippet": snippet(plain(r["around"]), q)}
+            for r in cur.fetchall()]
 
 
 ROUTES = {"/api/articles": articles, "/api/article": article, "/api/history": history, "/api/change": change,
@@ -188,7 +218,19 @@ ROUTES = {"/api/articles": articles, "/api/article": article, "/api/history": hi
 
 
 class Handler(BaseHTTPRequestHandler):
+    status = "-"
+
     def do_GET(self):
+        started = time.perf_counter()
+        try:
+            self.route()
+        finally:
+            self.log_message('"%s" %s %.0f ms', self.requestline, self.status, (time.perf_counter() - started) * 1000)
+
+    def log_request(self, code="-", size="-"):
+        self.status = getattr(code, "value", code)  # logged with the duration once the request is done
+
+    def route(self):
         url = urlparse(self.path)
         if url.path.startswith("/api/"):
             return self.api(url)
@@ -217,6 +259,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", f"{kind}; charset=utf-8" if kind.startswith(("text", "application/json")) else kind)
         self.send_header("Content-Length", str(len(body)))
+        if self.path.startswith("/api/"):
+            self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(body)
 

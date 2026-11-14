@@ -48,6 +48,10 @@ def create_tables(cur, dataset, reset):
     sql = "\n".join(line for line in SCHEMA.read_text().splitlines() if not line.startswith("--"))
     for statement in filter(str.strip, sql.split(";")):
         cur.execute(statement)
+    # Tables created before these keys were in schema.sql.
+    if dataset == "m":
+        cur.execute("ALTER TABLE m_article ADD INDEX IF NOT EXISTS start_key (page_id, row_start), "
+                    "ADD INDEX IF NOT EXISTS rev_id (rev_id)")
 
 
 def insert_batched(cur, sql, rows, size_of):

@@ -2,12 +2,14 @@ import { fileUrl, getArticle, getArticles, getPreview } from "./api.js";
 import { chatPanel } from "./chat.js";
 import { cursorMenu } from "./cursor-menu.js";
 import { hoverCard } from "./hover-card.js";
+import { setUpSearch } from "./search.js";
 import { renderWikitext } from "./wikitext.js";
 
 const DEFAULT_ARTICLE = 1150;
 
 const id = Number(new URLSearchParams(location.search).get("id") ?? DEFAULT_ARTICLE);
 setUpViews();
+setUpSearch(document.querySelector(".bar .search"));
 const now = Math.floor(Date.now() / 1000);
 const [articles, { version }] = await Promise.all([getArticles(), getArticle(id, now)]);
 const summary = articles.find((a) => a.page_id === id);

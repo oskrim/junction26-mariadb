@@ -37,7 +37,11 @@ CREATE TABLE IF NOT EXISTS m_article (
   row_start TIMESTAMP(6) GENERATED ALWAYS AS ROW START INVISIBLE,
   row_end   TIMESTAMP(6) GENERATED ALWAYS AS ROW END INVISIBLE,
   PERIOD FOR SYSTEM_TIME (row_start, row_end),
-  PRIMARY KEY (page_id)
+  PRIMARY KEY (page_id),
+  -- MariaDB's own index on the versions is (page_id, row_end), so "as of 2005" walks every version that
+  -- ended after 2005. This one finds the last version that started before.
+  KEY start_key (page_id, row_start),
+  KEY (rev_id)
 ) CHARACTER SET utf8mb4 WITH SYSTEM VERSIONING;
 
 -- M: one row per [[link]] from an article to another history-of-Finland article, for as long as the

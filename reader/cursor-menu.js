@@ -87,6 +87,11 @@ export function cursorMenu({ root, onSubmit }) {
         }
         return;
       }
+      if (key === "escape" && state === "bar") {
+        e.preventDefault();
+        backToBlobs();
+        return;
+      }
       if (key === "escape" || key === OPEN_KEY) {
         e.preventDefault();
         close();
