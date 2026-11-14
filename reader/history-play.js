@@ -444,11 +444,19 @@ export function startHistoryPlay({ id, body, onClose }) {
     travel = null;
     // Playing again before this version has loaded starts from here, not from where it was.
     at = i;
-    if (playing) play(i);
-    else {
-      looping = false;
-      show(i, ++run, false);
-    }
+    // A jump doesn't replay the writing: the article dims, becomes that version at once, and comes back;
+    // when playing, playback carries on from the version after it.
+    const token = ++run;
+    looping = playing;
+    const column = document.querySelector(".layout .column");
+    column.getAnimations().forEach((a) => a.cancel());
+    column.animate([{ opacity: 1 }, { opacity: 0.15 }], { duration: 140, fill: "forwards" });
+    show(i, token, false).then(() => {
+      column.getAnimations().forEach((a) => a.cancel());
+      column.animate([{ opacity: 0.15 }, { opacity: 1 }], { duration: 260, easing: "ease-out" });
+      if (token === run && playing && i + 1 < frames.length) play(i + 1);
+      else if (token === run) looping = false;
+    });
   }
 
   function setPlaying(on) {
