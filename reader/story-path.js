@@ -17,7 +17,6 @@ const NAMED = 2600; // editors are shown on blocks nearer than this
 const ROAD = 30; // half the road's width once the article is at its longest
 const STEP_Z = 520; // road between two stops; a little more inside a war, so the fight has room
 const LANE_H = 10; // how high the lane and its side roads stand off the floor
-const WAR_REACH = 64; // how far an edit war's two branches run from the lane
 const SWORD = 150; // swords sign height above the road
 const GRID = 340; // floor grid spacing
 
@@ -308,42 +307,6 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
       }
     }
 
-    // An edit war splits the lane in two: both fighters' branches leave it at once, one each side, and
-    // run alongside through the war. At the end the winner's branch joins the lane again and the loser's
-    // runs out. Each revert leaps from the reverter's branch across to the other's.
-    for (const war of wars) {
-      const [z0, z1] = warSpan(war);
-      if (z1 + 300 < camZ + NEAR || z0 - 300 > camZ + FAR) continue;
-      const inside = nowZ >= z0 - 300 && nowZ <= z1 + 300;
-      const winner = winnerOf(war);
-      for (const k of [0, 1]) {
-        const lost = winner !== null && winner !== k;
-        const end = lost ? z1 + 40 : z1 + 300;
-        const alpha = ink(z0, inside ? 0.9 : 0.55);
-        slab(z0 - 300, end, (wz) => roadX(wz) + warOffset(war, k, wz), (wz) => 7 * (lost ? 1 - smoothstep(z1 - 200, z1 + 40, wz) : 1), LANE_H,
-          hexAlpha(FIGHTER_COLORS[k], alpha * 0.45), hexAlpha(FIGHTER_COLORS[k], alpha * 0.8));
-      }
-      for (const e of war.edits) {
-        if (e.revertsTo === null) continue;
-        const f = war.fighters.indexOf(e.user);
-        if (f !== 0 && f !== 1) continue;
-        const wz = z[e.index];
-        if (wz < camZ + NEAR || wz > camZ + FAR) continue;
-        const a = ink(wz, inside ? 0.9 : 0.6) * fog(wz - camZ) * smoothstep(NEAR, NEAR + 900, wz - camZ);
-        const from = roadX(wz) + warOffset(war, f, wz);
-        const to = roadX(wz) + warOffset(war, 1 - f, wz);
-        ctx.strokeStyle = hexAlpha(FIGHTER_COLORS[f], a);
-        ctx.lineWidth = Math.max(0.8, Math.min(2.5, 2.6 * project(0, 0, wz).s));
-        ctx.beginPath();
-        for (let u = 0; u <= 1.001; u += 0.1) {
-          const q = project(from + (to - from) * u, LANE_H + Math.sin(Math.PI * u) * (inside ? 50 : 34), wz);
-          if (u) ctx.lineTo(q.x, q.y);
-          else ctx.moveTo(q.x, q.y);
-        }
-        ctx.stroke();
-      }
-    }
-
     // Editors and swords signs stand up from the floor, so they are drawn far to near. An editor stands
     // at the far point of their detour, or walks it while their version is being written.
     const standing = [];
@@ -497,11 +460,14 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
       const ang = angleOf(k);
       const won = f.winner === k;
       const striking = f.by === k && !ended;
-      const dist = R * (striking ? 2.3 - 1.05 * poke : 2.3) + (won ? Math.sin(now / 160) * 3 : 0);
-      const x = cx + Math.cos(ang) * dist;
-      const y = cy + Math.sin(ang) * dist;
+      // Everyone sways a little all the time, each at their own pace.
+      const sway = Math.sin(now / 420 + k * 1.7) * 4 + (won ? Math.sin(now / 160) * 3 : 0);
+      const dist = R * (striking ? 2.3 - 1.05 * poke : 2.3) + sway;
+      const wob = ang + Math.sin(now / 610 + k * 2.3) * 0.06;
+      const x = cx + Math.cos(wob) * dist;
+      const y = cy + Math.sin(wob) * dist;
       ctx.globalAlpha = focus * (ended && !won ? 0.25 : striking || ended ? 1 : 0.75);
-      cursorArrow(x, y, ang + Math.PI, colorFor(k), striking ? 1.15 : 1);
+      cursorArrow(x, y, ang + Math.PI + Math.sin(now / 530 + k) * 0.08, colorFor(k), striking ? 1.15 : 1);
       // The name outside the cursor.
       const label = shorten(censor(user)) + (won ? " wins" : "");
       ctx.font = `${striking || won ? 700 : 600} 11px Inter, system-ui, sans-serif`;
@@ -563,42 +529,29 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
     ctx.restore();
   }
 
-  // A mouse cursor with its tip at (x, y), pointing along `ang`.
+  // The replay's cursor (a rounded arrowhead) with its tip at (x, y), pointing along `ang`.
   function cursorArrow(x, y, ang, color, scale) {
     ctx.save();
     ctx.translate(x, y);
-    ctx.rotate(ang - Math.PI * 0.75);
-    ctx.scale(scale * 1.3, scale * 1.3);
+    // The shape's tip is at (2, 1.5) and it points up and to the left, along -45°.
+    ctx.rotate(ang + Math.PI * 0.75);
+    ctx.scale(scale * 1.6, scale * 1.6);
+    ctx.translate(-2, -1.5);
     ctx.beginPath();
-    ctx.moveTo(0, 0);
-    ctx.lineTo(0, 17);
-    ctx.lineTo(4.5, 13);
-    ctx.lineTo(8, 20);
-    ctx.lineTo(10.5, 19);
-    ctx.lineTo(7, 12);
-    ctx.lineTo(12.5, 12);
+    ctx.moveTo(2, 1.5);
+    ctx.lineTo(14, 7);
+    ctx.lineTo(8.6, 8.6);
+    ctx.lineTo(6.4, 14);
     ctx.closePath();
     ctx.fillStyle = color;
-    ctx.strokeStyle = "#fff";
-    ctx.lineWidth = 1.4;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.6;
     ctx.lineJoin = "round";
     ctx.fill();
     ctx.stroke();
     ctx.restore();
   }
 
-  // Where an edit war's branches leave the lane and join it again: a little before its first round, and
-  // at its last.
-  function warSpan(war) {
-    return [z[war.edits[0].index] - 120, z[war.edits.at(-1).index]];
-  }
-
-  // How far fighter k's branch is from the lane at `wz`: out through a rounded corner as the war begins,
-  // alongside through it, and back after it ends.
-  function warOffset(war, k, wz) {
-    const [z0, z1] = warSpan(war);
-    return (k ? 1 : -1) * WAR_REACH * smoothstep(z0 - 300, z0, wz) * (1 - smoothstep(z1, z1 + 300, wz));
-  }
 
   // How far a version's detour is from the lane at `wz`: like a side road, it turns off through a rounded
   // corner, runs alongside the lane as far out as the change was big, and turns back in the same way.
@@ -720,15 +673,6 @@ function initials(user, kind) {
 
 function shorten(name) {
   return name.length > 18 ? `${name.slice(0, 17)}…` : name;
-}
-
-// Whoever made the war's last edit among its two fighters: the one whose text stood when it ended.
-function winnerOf(war) {
-  for (let k = war.edits.length - 1; k >= 0; k--) {
-    const f = war.fighters.indexOf(war.edits[k].user);
-    if (f === 0 || f === 1) return f;
-  }
-  return null;
 }
 
 // Whoever of all the war's fighters made its last edit.
