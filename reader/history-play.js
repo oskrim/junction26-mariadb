@@ -490,6 +490,8 @@ export function startHistoryPlay({ id, body, onClose }) {
         setPan(drag.pan - (event.clientX - drag.x));
         return;
       }
+      // The strip holds still under the pointer while the marker is scrubbed.
+      panHeld = performance.now() + PAN_HOLD;
       moveMarker(time, 0);
       path.setTime(time);
       $(".hp-date").textContent = formatDate(time);
