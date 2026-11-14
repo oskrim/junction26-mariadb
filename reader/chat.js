@@ -26,7 +26,7 @@ function topLine() {
   return (document.querySelector(".bar")?.getBoundingClientRect().bottom ?? 0) + 21;
 }
 
-export function chatPanel({ article, onClose }) {
+export function chatPanel({ article, onClose, onLearn }) {
   const el = build();
   document.body.append(el.panel, el.tray, el.history);
 
@@ -87,6 +87,7 @@ export function chatPanel({ article, onClose }) {
   // A request from the menu: a new chat, opened beside where it came from.
   function ask({ mode, label, prompt, context, from }) {
     const chat = create({ title: shorten(prompt, 38) });
+    chat.from = from;
     show(chat, { from });
     send(chat, { mode, label, prompt, context });
   }
@@ -170,6 +171,13 @@ export function chatPanel({ article, onClose }) {
       });
       bubble.insertAdjacentHTML("afterbegin", `<span class="msg-mode">${label}</span>`);
       renderTray();
+      // A new request to learn something opens a lesson in the wide sheet instead of a chat.
+      if (mode === "learn" && chat.turn === 0 && chat.from && onLearn) {
+        chat.busy = false;
+        if (chats.includes(chat)) closeChat(chat);
+        onLearn({ prompt, context, from: chat.from });
+        return;
+      }
     }
 
     const { stream, attachment } = (mode === "learn" ? learn : respond)({ mode, prompt, context, article, turn: chat.turn, history: (chat.history ??= []), onStep });
