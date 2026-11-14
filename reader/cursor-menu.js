@@ -102,7 +102,7 @@ export function cursorMenu({ root, onSubmit }) {
   );
 
   addEventListener("mousedown", (e) => {
-    if (e.button !== 0 || el.root.contains(e.target) || e.target.closest(".chat, .chat-dock")) return;
+    if (e.button !== 0 || el.root.contains(e.target) || e.target.closest(".chat, .chat-tray, .chat-history")) return;
     if (state === "pinned" || state === "bar") follow();
     if (state !== "follow") return;
     // While the button is held the blobs tuck away, so the passage being painted stays clear.

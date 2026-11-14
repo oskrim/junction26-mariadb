@@ -94,3 +94,44 @@ async function* typeOut(text) {
 }
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Chats from earlier visits, shown under History. A live version would load the person's saved chats.
+export const PAST_CHATS = [
+  {
+    title: "When was the History section added?",
+    label: "Ask",
+    when: "Yesterday",
+    messages: [
+      { role: "user", text: "When was the History section added?" },
+      {
+        role: "ai",
+        text: `The History section was added on 9 June 2011 by Auntof6. It started as four sentences about Richard Feynman's 1981 talk on simulating physics with computers.
+
+It has been edited 312 times since, about one in six of all edits to the article.`,
+      },
+    ],
+  },
+  {
+    title: "Edits by Quantumavenger",
+    label: "Find",
+    when: "3 Nov",
+    messages: [
+      { role: "user", text: "Edits by Quantumavenger" },
+      {
+        role: "ai",
+        text: `Quantumavenger has edited this article 41 times since March 2023, mostly in “State of affairs” and “Engineering”.
+
+Their latest edit, on 3 November 2026, updated the error-correction milestones.`,
+      },
+    ],
+  },
+  {
+    title: "Show edits per year",
+    label: "Visualise",
+    when: "28 Oct",
+    messages: [
+      { role: "user", text: "Show edits per year" },
+      { role: "ai", text: "2019 was the busiest year with 214 edits, followed by 2021 with 167. Before 2010 the article saw fewer than 40 edits a year." },
+    ],
+  },
+];

@@ -1,40 +1,61 @@
-import { respond } from "./fake/assistant.js";
+import { PAST_CHATS, respond } from "./fake/assistant.js";
 
-// A floating chat window. It opens beside where the request came from, stays fully on screen,
-// can be dragged by its header, minimised to a pill, expanded, or closed.
+// Chats. Every request from the menu starts a new chat. Open chats are tabs in the tray at the
+// bottom right; closed ones move to History. One window shows the active chat, either floating
+// beside where the request came from (drag it by the header) or docked to the right as a side panel.
 
 const W = 400;
 const H = 560;
 const EDGE = 16;
 const GAP = 12;
+const TRAY = 60;
+const SIDE_W = 420;
 
 export function chatPanel({ article, onClose }) {
   const el = build();
-  document.body.append(el.panel, el.dock);
+  document.body.append(el.panel, el.tray, el.history);
 
-  let turn = 0;
+  const chats = [];
+  const past = PAST_CHATS.map((p) => ({ ...p, log: null }));
+  let active = null;
+  let docked = false;
   let place = null;
-  let busy = false;
 
-  el.close.addEventListener("click", close);
-  el.minimise.addEventListener("click", minimise);
-  el.dock.addEventListener("click", restore);
-  el.expand.addEventListener("click", () => {
-    el.panel.classList.add("is-resizing");
-    el.panel.classList.toggle("is-expanded");
-    el.expand.setAttribute("aria-label", el.panel.classList.contains("is-expanded") ? "Shrink" : "Expand");
-    layout();
-    setTimeout(() => el.panel.classList.remove("is-resizing"), 320);
+  el.close.addEventListener("click", () => closeChat(active));
+  el.minimise.addEventListener("click", hide);
+  el.dock.addEventListener("click", () => setDocked(!docked));
+  el.newChat.addEventListener("click", () => show(create({ title: "New chat" })));
+  el.historyButton.addEventListener("click", () => toggleHistory());
+  el.tabs.addEventListener("click", (e) => {
+    const tab = e.target.closest(".chat-tab");
+    if (!tab) return;
+    const chat = chats.find((c) => c.id === tab.dataset.id);
+    if (e.target.closest(".chat-tab-close")) closeChat(chat);
+    else if (chat === active && !el.panel.hidden) hide();
+    else show(chat);
   });
+  el.history.addEventListener("click", (e) => {
+    const item = e.target.closest("[data-index]");
+    if (!item) return;
+    const [chat] = past.splice(Number(item.dataset.index), 1);
+    toggleHistory(false);
+    chats.push(chat);
+    show(chat);
+  });
+  addEventListener("mousedown", (e) => {
+    if (!el.history.hidden && !e.target.closest(".chat-history, .tray-history")) toggleHistory(false);
+  });
+  addEventListener("keydown", (e) => e.key === "Escape" && toggleHistory(false));
   el.compose.addEventListener("submit", (e) => {
     e.preventDefault();
     const prompt = el.textarea.value.trim();
-    if (!prompt || busy) return;
+    if (!prompt || !active || active.busy) return;
     el.textarea.value = "";
     grow();
-    send({ mode: "ask", label: "Ask", prompt, context: null });
+    send(active, { mode: "ask", label: "Ask", prompt, context: null });
   });
   el.textarea.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") el.textarea.blur();
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
       el.compose.requestSubmit();
@@ -43,64 +64,160 @@ export function chatPanel({ article, onClose }) {
   el.textarea.addEventListener("input", grow);
   addEventListener("resize", () => !el.panel.hidden && layout());
   dragByHeader();
+  renderTray();
 
   return { ask };
 
-  // Opens the window (or reuses it) and sends the first message of a request from the menu.
+  // A request from the menu: a new chat, opened beside where it came from.
   function ask({ mode, label, prompt, context, from, avoid }) {
-    if (el.panel.hidden && el.dock.hidden) {
-      turn = 0;
-      el.log.innerHTML = "";
-      el.title.textContent = "New chat";
-      el.panel.classList.remove("is-expanded");
-      place = spotNear(from, avoid);
-      el.panel.hidden = false;
-      layout();
-      growFrom(from);
-    } else restore();
-    send({ mode, label, prompt, context });
+    const chat = create({ title: shorten(prompt, 38) });
+    show(chat, { from, avoid });
+    send(chat, { mode, label, prompt, context });
   }
 
-  async function send({ mode, label, prompt, context }) {
-    busy = true;
-    if (turn === 0) el.title.textContent = shorten(prompt, 38);
-    el.log.insertAdjacentHTML(
-      "beforeend",
-      `<div class="msg msg-user">
-        ${context ? `<blockquote class="msg-quote">${escape(shorten(context, 180))}</blockquote>` : ""}
-        <p class="msg-bubble">${turn === 0 ? `<span class="msg-mode">${label}</span>` : ""}${escape(prompt)}</p>
-      </div>`,
-    );
+  function create({ title }) {
+    const chat = { id: String(Date.now() + Math.random()), title, turn: 0, busy: false, log: null };
+    chats.push(chat);
+    return chat;
+  }
+
+  function show(chat, { from, avoid } = {}) {
+    active = chat;
+    if (!chat.log) chat.log = makeLog(chat);
+    for (const c of chats) if (c.log) c.log.hidden = c !== chat;
+    if (!chat.log.isConnected) el.logs.append(chat.log);
+    el.title.textContent = chat.title;
+    const wasHidden = el.panel.hidden;
+    el.panel.hidden = false;
+    if (!docked && (from || !place)) place = from ? spotNear(from, avoid) : spotNear(el.tray.getBoundingClientRect());
+    layout();
+    if (!docked && from) growFrom(from);
+    else if (wasHidden) popIn();
+    renderTray();
+    // Chats from the menu leave the keyboard alone, so Q keeps opening the menu right away.
+    if (!from) el.textarea.focus({ preventScroll: true });
+    chat.log.scrollTop = chat.log.scrollHeight;
+  }
+
+  function hide() {
+    el.panel.hidden = true;
+    sync();
+    renderTray();
+  }
+
+  function closeChat(chat) {
+    if (!chat) return;
+    chats.splice(chats.indexOf(chat), 1);
+    chat.log?.remove();
+    if (chat.turn > 0 || chat.messages) past.unshift({ ...chat, label: chat.label ?? "Ask", when: chat.when ?? "Just now" });
+    if (chat === active) {
+      active = null;
+      hide();
+    } else renderTray();
+    onClose?.();
+  }
+
+  async function send(chat, { mode, label, prompt, context }) {
+    chat.busy = true;
+    chat.label ??= label;
+    if (chat.turn === 0) {
+      chat.title = shorten(prompt, 38);
+      if (chat === active) el.title.textContent = chat.title;
+    }
+    renderTray();
+    chat.log.insertAdjacentHTML("beforeend", userMessage({ prompt, context, label: chat.turn === 0 ? label : null }));
     const reply = document.createElement("div");
     reply.className = "msg msg-ai is-thinking";
     reply.innerHTML = `<div class="msg-text"><span class="dots"><i></i><i></i><i></i></span></div>`;
-    el.log.append(reply);
-    scrollDown(true);
+    chat.log.append(reply);
+    scrollDown(chat.log, true);
 
-    const { stream, attachment } = respond({ mode, prompt, context, article, turn });
-    turn++;
+    const { stream, attachment } = respond({ mode, prompt, context, article, turn: chat.turn });
+    chat.turn++;
     let text = "";
     for await (const piece of stream) {
       text += piece;
       reply.classList.remove("is-thinking");
       reply.firstElementChild.innerHTML = paragraphs(text);
-      scrollDown();
+      scrollDown(chat.log);
     }
     reply.classList.add("is-done");
     if (attachment) {
       reply.insertAdjacentHTML("beforeend", renderAttachment(attachment));
-      scrollDown();
+      scrollDown(chat.log);
     }
-    busy = false;
+    chat.busy = false;
+    renderTray();
+  }
+
+  // Past chats arrive as plain messages; their log is built the first time they're opened.
+  function makeLog(chat) {
+    const log = document.createElement("div");
+    log.className = "chat-log";
+    log.setAttribute("aria-live", "polite");
+    for (const m of chat.messages ?? []) {
+      log.insertAdjacentHTML(
+        "beforeend",
+        m.role === "user"
+          ? userMessage({ prompt: m.text, label: chat.label })
+          : `<div class="msg msg-ai is-done"><div class="msg-text">${paragraphs(m.text)}</div></div>`,
+      );
+    }
+    chat.turn ||= chat.messages ? 1 : 0;
+    return log;
+  }
+
+  function renderTray() {
+    const open = !el.panel.hidden;
+    el.tabs.innerHTML = chats
+      .map(
+        (c) => `
+        <span class="chat-tab${c === active && open ? " is-active" : ""}" data-id="${c.id}">
+          <button type="button" class="chat-tab-open" title="${escape(c.title)}">
+            <span class="chat-tab-dot${c.busy ? " is-busy" : ""}"></span><span class="chat-tab-title">${escape(c.title)}</span>
+          </button>
+          <button type="button" class="chat-tab-close" aria-label="Close ${escape(c.title)}">
+            <svg viewBox="0 0 16 16"><path d="M5 5l6 6M11 5l-6 6" /></svg>
+          </button>
+        </span>`,
+      )
+      .join("");
+    el.historyButton.classList.toggle("has-items", past.length > 0);
+  }
+
+  function toggleHistory(force) {
+    const open = force ?? el.history.hidden;
+    if (open) {
+      el.history.innerHTML = past.length
+        ? `<p class="chat-history-label">Earlier chats</p><ul>${past
+            .map(
+              (p, i) => `
+              <li><button type="button" data-index="${i}">
+                <span class="chat-history-title">${escape(p.title)}</span>
+                <span class="chat-history-meta">${p.label} · ${p.when}</span>
+              </button></li>`,
+            )
+            .join("")}</ul>`
+        : `<p class="chat-history-empty">No earlier chats yet.</p>`;
+    }
+    el.history.hidden = !open;
+    el.historyButton.setAttribute("aria-expanded", String(open));
+  }
+
+  function setDocked(next) {
+    docked = next;
+    el.panel.classList.add("is-resizing");
+    layout();
+    setTimeout(() => el.panel.classList.remove("is-resizing"), 340);
   }
 
   // Tries below, above, right and left of the source, then the window's sides, preferring a spot
   // that leaves the painted passage visible; if nothing fits, keeps it inside the window.
   function spotNear(from, avoid) {
-    const w = Math.min(W, innerWidth - EDGE * 2);
-    const h = Math.min(H, innerHeight - EDGE * 2);
+    const { w, h } = floatSize();
+    const bottom = innerHeight - TRAY;
     const x = clamp(from.left, EDGE, innerWidth - EDGE - w);
-    const y = clamp(from.top + from.height / 2 - h / 2, EDGE, innerHeight - EDGE - h);
+    const y = clamp(from.top + from.height / 2 - h / 2, EDGE, bottom - h);
     const options = [
       { x, y: from.bottom + GAP },
       { x, y: from.top - GAP - h },
@@ -109,21 +226,34 @@ export function chatPanel({ article, onClose }) {
       { x: innerWidth - EDGE - w, y },
       { x: EDGE, y },
     ];
-    const fits = (o) => o.x >= EDGE && o.y >= EDGE && o.x + w <= innerWidth - EDGE && o.y + h <= innerHeight - EDGE;
+    const fits = (o) => o.x >= EDGE && o.y >= EDGE && o.x + w <= innerWidth - EDGE && o.y + h <= bottom;
     const clear = (o) => !avoid || o.x > avoid.right || o.x + w < avoid.left || o.y > avoid.bottom || o.y + h < avoid.top;
-    return (
-      options.find((o) => fits(o) && clear(o)) ??
-      options.find(fits) ?? { x, y: clamp(from.bottom + GAP, EDGE, innerHeight - EDGE - h) }
-    );
+    return options.find((o) => fits(o) && clear(o)) ?? options.find(fits) ?? { x, y: clamp(from.bottom + GAP, EDGE, bottom - h) };
+  }
+
+  function floatSize() {
+    return { w: Math.min(W, innerWidth - EDGE * 2), h: Math.min(H, innerHeight - EDGE - TRAY) };
   }
 
   function layout() {
-    const expanded = el.panel.classList.contains("is-expanded");
-    const w = Math.min(expanded ? 760 : W, innerWidth - EDGE * 2);
-    const h = Math.min(expanded ? innerHeight * 0.86 : H, innerHeight - EDGE * 2);
-    const x = expanded ? (innerWidth - w) / 2 : clamp(place.x, EDGE, innerWidth - EDGE - w);
-    const y = expanded ? (innerHeight - h) / 2 : clamp(place.y, EDGE, innerHeight - EDGE - h);
-    Object.assign(el.panel.style, { left: `${x}px`, top: `${y}px`, width: `${w}px`, height: `${h}px` });
+    el.panel.classList.toggle("is-docked", docked);
+    el.dock.setAttribute("aria-label", docked ? "Float" : "Dock to side");
+    if (docked) {
+      const w = Math.min(SIDE_W, innerWidth - 24);
+      Object.assign(el.panel.style, { left: `${innerWidth - 12 - w}px`, top: "12px", width: `${w}px`, height: `${innerHeight - 12 - TRAY}px` });
+    } else {
+      const { w, h } = floatSize();
+      const x = clamp(place.x, EDGE, innerWidth - EDGE - w);
+      const y = clamp(place.y, EDGE, innerHeight - TRAY - h);
+      Object.assign(el.panel.style, { left: `${x}px`, top: `${y}px`, width: `${w}px`, height: `${h}px` });
+    }
+    sync();
+  }
+
+  // The article makes room for the side panel while it's showing.
+  function sync() {
+    document.documentElement.classList.toggle("chat-docked", docked && !el.panel.hidden);
+    document.documentElement.style.setProperty("--chat-side", `${SIDE_W + 24}px`);
   }
 
   // The window swells out of the prompt bar it replaces.
@@ -138,40 +268,48 @@ export function chatPanel({ article, onClose }) {
         },
         { transform: "none", borderRadius: "20px", opacity: 1 },
       ],
-      { duration: matchMedia("(prefers-reduced-motion: reduce)").matches ? 1 : 420, easing: "cubic-bezier(0.22, 1, 0.36, 1)" },
+      { duration: reduceMotion() ? 1 : 420, easing: "cubic-bezier(0.22, 1, 0.36, 1)" },
     );
-    el.textarea.focus({ preventScroll: true });
   }
 
-  function minimise() {
-    el.panel.hidden = true;
-    el.dock.querySelector(".chat-dock-title").textContent = el.title.textContent;
-    el.dock.hidden = false;
+  // Reopening from the tray rises up out of it.
+  function popIn() {
+    el.panel.animate(
+      [
+        { transform: "translateY(12px) scale(0.98)", opacity: 0 },
+        { transform: "none", opacity: 1 },
+      ],
+      { duration: reduceMotion() ? 1 : 260, easing: "cubic-bezier(0.22, 1, 0.36, 1)" },
+    );
   }
 
-  function restore() {
-    el.dock.hidden = true;
-    el.panel.hidden = false;
-    layout();
-  }
-
-  function close() {
-    el.panel.hidden = true;
-    el.dock.hidden = true;
-    onClose?.();
-  }
-
+  // Dragging floats the window; letting go near the right edge docks it.
   function dragByHeader() {
     el.head.addEventListener("pointerdown", (e) => {
-      if (e.target.closest("button") || el.panel.classList.contains("is-expanded")) return;
+      if (e.target.closest("button")) return;
+      if (docked) {
+        const box = el.panel.getBoundingClientRect();
+        docked = false;
+        place = { x: e.clientX - floatSize().w / 2, y: box.top };
+        layout();
+      }
       const start = { x: e.clientX - place.x, y: e.clientY - place.y };
       el.head.setPointerCapture(e.pointerId);
       const move = (m) => {
         place = { x: m.clientX - start.x, y: m.clientY - start.y };
         layout();
+        el.panel.classList.toggle("is-snapping", m.clientX > innerWidth - 32);
       };
       el.head.addEventListener("pointermove", move);
-      el.head.addEventListener("pointerup", () => el.head.removeEventListener("pointermove", move), { once: true });
+      el.head.addEventListener(
+        "pointerup",
+        (u) => {
+          el.head.removeEventListener("pointermove", move);
+          el.panel.classList.remove("is-snapping");
+          if (u.clientX > innerWidth - 32) setDocked(true);
+        },
+        { once: true },
+      );
     });
   }
 
@@ -179,11 +317,18 @@ export function chatPanel({ article, onClose }) {
     el.textarea.style.height = "auto";
     el.textarea.style.height = `${Math.min(el.textarea.scrollHeight, 120)}px`;
   }
+}
 
-  function scrollDown(force) {
-    const near = el.log.scrollHeight - el.log.scrollTop - el.log.clientHeight < 80;
-    if (force || near) el.log.scrollTop = el.log.scrollHeight;
-  }
+function userMessage({ prompt, context, label }) {
+  return `<div class="msg msg-user">
+    ${context ? `<blockquote class="msg-quote">${escape(shorten(context, 180))}</blockquote>` : ""}
+    <p class="msg-bubble">${label ? `<span class="msg-mode">${label}</span>` : ""}${escape(prompt)}</p>
+  </div>`;
+}
+
+function scrollDown(log, force) {
+  const near = log.scrollHeight - log.scrollTop - log.clientHeight < 80;
+  if (force || near) log.scrollTop = log.scrollHeight;
 }
 
 function renderAttachment(a) {
@@ -251,11 +396,14 @@ function build() {
       <h2 class="chat-title">New chat</h2>
       <div class="chat-tools">
         <button type="button" class="chat-tool" data-act="minimise" aria-label="Minimise"><svg viewBox="0 0 16 16"><path d="M4 8.5h8" /></svg></button>
-        <button type="button" class="chat-tool" data-act="expand" aria-label="Expand"><svg viewBox="0 0 16 16"><path d="M9.5 3H13v3.5M13 3 9 7M6.5 13H3V9.5M3 13l4-4" /></svg></button>
+        <button type="button" class="chat-tool" data-act="dock" aria-label="Dock to side">
+          <svg class="icon-dock" viewBox="0 0 16 16"><rect x="2.5" y="3" width="11" height="10" rx="2" /><path d="M9.5 3v10" /></svg>
+          <svg class="icon-float" viewBox="0 0 16 16"><rect x="2.5" y="3" width="11" height="10" rx="2" /><rect x="7.5" y="7.5" width="4" height="3" rx="0.8" /></svg>
+        </button>
         <button type="button" class="chat-tool" data-act="close" aria-label="Close"><svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" /></svg></button>
       </div>
     </header>
-    <div class="chat-log" aria-live="polite"></div>
+    <div class="chat-logs"></div>
     <form class="chat-compose">
       <textarea rows="1" placeholder="Ask a follow-up…" aria-label="Message"></textarea>
       <div class="chat-compose-row">
@@ -263,22 +411,38 @@ function build() {
         <button type="submit" class="chat-send" aria-label="Send"><svg viewBox="0 0 16 16"><path d="M8 13V3.5M4 7.5l4-4 4 4" /></svg></button>
       </div>
     </form>`;
-  const dock = document.createElement("button");
-  dock.type = "button";
-  dock.className = "chat-dock";
-  dock.hidden = true;
-  dock.innerHTML = `<span class="chat-dock-dot"></span><span class="chat-dock-title"></span>`;
+
+  const tray = document.createElement("nav");
+  tray.className = "chat-tray";
+  tray.setAttribute("aria-label", "Chats");
+  tray.innerHTML = `
+    <div class="chat-tabs"></div>
+    <button type="button" class="tray-btn tray-new">
+      <svg viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9" /></svg>New chat
+    </button>
+    <button type="button" class="tray-btn tray-history" aria-label="History" aria-expanded="false">
+      <svg viewBox="0 0 16 16"><path d="M2.8 8a5.2 5.2 0 1 0 1.5-3.7M2.5 2.5v2.3h2.3M8 5.5V8l1.8 1.3" /></svg>
+    </button>`;
+
+  const history = document.createElement("div");
+  history.className = "chat-history";
+  history.hidden = true;
+
   return {
     panel,
-    dock,
+    tray,
+    history,
     head: panel.querySelector(".chat-head"),
     title: panel.querySelector(".chat-title"),
     close: panel.querySelector('[data-act="close"]'),
     minimise: panel.querySelector('[data-act="minimise"]'),
-    expand: panel.querySelector('[data-act="expand"]'),
-    log: panel.querySelector(".chat-log"),
+    dock: panel.querySelector('[data-act="dock"]'),
+    logs: panel.querySelector(".chat-logs"),
     compose: panel.querySelector(".chat-compose"),
     textarea: panel.querySelector("textarea"),
+    tabs: tray.querySelector(".chat-tabs"),
+    newChat: tray.querySelector(".tray-new"),
+    historyButton: tray.querySelector(".tray-history"),
   };
 }
 
@@ -288,5 +452,6 @@ const paragraphs = (text) =>
     .map((p) => `<p>${escape(p)}</p>`)
     .join("");
 const escape = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const reduceMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
 const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
 const shorten = (text, max) => (text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text);
