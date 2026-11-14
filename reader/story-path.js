@@ -2,11 +2,12 @@ import { censor } from "./censor.js";
 import { FIGHTER_COLORS } from "./timeline3d.js";
 
 // The narrow 3D road beside "Watch it being written": the article's life laid out ahead of you, with the
-// camera moving along it as the article is rewritten. Along the road stand blocks, one per sitting (an
-// editor's edits in a row, less than a day apart): as tall as the text they changed, in the editor's own
-// color, with the editor standing on top. Cuts are pale red and reverts red. The road widens as the
-// article grows, years lie across it, and each edit war is a braid with a swords sign that can be clicked.
-// What is still to come is faint glass until it has been written.
+// camera moving along it as the article is rewritten. The road tells the same story as the text: it has
+// one stop per version the text plays, evenly spaced, and at each stands a block for that version, in its
+// editor's color with the editor on top, as tall as the text that changed since the stop before. Cuts are
+// pale red and reverts red. The road widens as the article grows, years lie across it where they fall
+// between stops, and each edit war is a braid from its first stop to its last, with a swords sign that can
+// be clicked. What is still to come is only outlined until it has been written.
 
 const EYE = 360; // camera height
 const BACK = 760; // camera distance behind the moment shown
@@ -16,23 +17,25 @@ const NAMED = 2600; // editors are shown on blocks nearer than this
 const ROAD = 30; // half the road's width once the article is at its longest
 const KERB = 26; // gap between the road's edge and the blocks
 const BLOCK_W = 46;
-const MIN_DEPTH = 26;
-const MIN_BLOCK = 120; // characters a sitting must change to get a block; smaller ones are dots on the road
-const WAR_STRETCH = 40; // extra road per edit inside a war, so a fight gets room for its braid
+const BLOCK_D = 56;
+const STEP_Z = 520; // road between two stops; twice that inside a war, so the fight has room
 const SWORD = 150; // swords sign height above the road
 const GRID = 340; // floor grid spacing
 
-export function createStoryPath({ canvas, edits, wars, onPick, onTime = () => {} }) {
+export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = () => {} }) {
   const ctx = canvas.getContext("2d");
 
-  // Distance along the road: a step per edit plus the time between edits, so busy years and quiet years
-  // both read. Edits inside a war are spaced out further.
+  // Distance along the road: the stops (edit indexes, oldest first) are evenly spaced, and the edits
+  // between two stops are spread evenly between them.
   const inWar = new Map();
   for (const war of wars) for (const e of war.edits) inWar.set(e.index, war);
+  const stopZ = [0];
+  for (let k = 1; k < stops.length; k++) stopZ.push(stopZ[k - 1] + (inWar.has(stops[k]) ? 2 : 1) * STEP_Z);
   const z = new Float64Array(edits.length);
-  for (let i = 1; i < edits.length; i++) {
-    const days = (edits[i].time - edits[i - 1].time) / 86_400_000;
-    z[i] = z[i - 1] + 16 + Math.min(520, Math.sqrt(days) * 44) + (inWar.has(i) ? WAR_STRETCH : 0);
+  for (let k = 0; k < stops.length; k++) {
+    const from = k ? stops[k - 1] : 0;
+    const to = stops[k];
+    for (let i = from; i <= to; i++) z[i] = k ? stopZ[k - 1] + ((stopZ[k] - stopZ[k - 1]) * (i - from)) / Math.max(1, to - from) : 0;
   }
   const maxChars = Math.max(...edits.map((e) => e.chars));
   const years = [];
@@ -41,38 +44,27 @@ export function createStoryPath({ canvas, edits, wars, onPick, onTime = () => {}
   }
   const signs = wars.map((war) => ({ war, z: z[war.edits[0].index], hit: null }));
 
-  // Sittings: an editor's consecutive edits less than a day apart.
-  const sittings = [];
-  for (const e of edits) {
-    const last = sittings.at(-1);
-    if (last && last.user === e.user && e.time - edits[last.to].time < 86_400_000) {
-      last.to = e.index;
-      last.net += e.delta;
-      last.changed += Math.abs(e.delta);
-      last.reverts += e.revertsTo !== null ? 1 : 0;
-    } else {
-      sittings.push({
-        user: e.user,
-        kind: e.kind,
-        from: e.index,
-        to: e.index,
-        net: e.delta,
-        changed: Math.abs(e.delta),
-        reverts: e.revertsTo !== null ? 1 : 0,
-      });
-    }
-  }
-  const blocks = sittings.filter((s) => s.changed >= MIN_BLOCK || s.from === 0);
-  blocks.forEach((b, k) => {
-    b.k = k;
-    b.z0 = z[b.from];
-    b.z1 = Math.max(z[b.to], b.z0 + MIN_DEPTH);
-    b.side = k % 2 ? 1 : -1;
-    b.h = Math.min(260, 14 + 1.5 * Math.sqrt(b.changed));
-    b.color = b.reverts ? [0, 62, 58] : b.net < -100 ? [0, 45, 78] : userColor(b.user, b.kind);
+  // A block per stop, for the edits since the stop before.
+  const blocks = stops.map((to, k) => {
+    const from = k ? stops[k - 1] + 1 : 0;
+    const span = edits.slice(from, to + 1);
+    const e = edits[to];
+    const changed = k ? span.reduce((n, x) => n + Math.abs(x.delta), 0) : e.chars;
+    const net = k ? span.reduce((n, x) => n + x.delta, 0) : e.chars;
+    const reverts = e.revertsTo !== null;
+    return {
+      k,
+      user: e.user,
+      kind: e.kind,
+      from: to,
+      z0: stopZ[k] - BLOCK_D / 2,
+      z1: stopZ[k] + BLOCK_D / 2,
+      side: k % 2 ? 1 : -1,
+      changed,
+      h: Math.min(260, 14 + 1.5 * Math.sqrt(changed)),
+      color: reverts ? [0, 62, 58] : net < -100 ? [0, 45, 78] : userColor(e.user, e.kind),
+    };
   });
-  const blockOf = new Int32Array(edits.length).fill(-1);
-  for (const b of blocks) for (let i = b.from; i <= b.to; i++) blockOf[i] = b.k;
 
   let width = 0;
   let height = 0;
@@ -82,6 +74,8 @@ export function createStoryPath({ canvas, edits, wars, onPick, onTime = () => {}
   let trip = null;
   let nowZ = 0;
   let current = null;
+  // The stop whose version is on screen; its block rises as the camera drives up to it.
+  let stopNow = 0;
   let frame = 0;
   let stopped = false;
 
@@ -247,20 +241,9 @@ export function createStoryPath({ canvas, edits, wars, onPick, onTime = () => {}
       }
     }
 
-    // Small edits are dots on the road.
-    for (let i = first; i <= last; i++) {
-      if (blockOf[i] >= 0) continue;
-      const wz = z[i];
-      const p = project(roadX(wz), 0, wz);
-      ctx.fillStyle = `rgba(${rgb(edits[i].revertsTo !== null ? [0, 62, 58] : [210, 4, 52])},${ink(wz, 0.7) * fog(p.dz)})`;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, Math.max(0.6, Math.min(3, 3.5 * p.s)), 0, Math.PI * 2);
-      ctx.fill();
-    }
-
     // Blocks and swords signs stand up from the floor, so they are drawn far to near.
     const standing = [];
-    const nowBlock = blockOf[nowIndex] >= 0 ? blocks[blockOf[nowIndex]] : null;
+    const nowBlock = blocks[stopNow];
     for (const b of blocks) {
       if (b.z1 < camZ + NEAR || b.z0 > camZ + FAR) continue;
       standing.push({ z: b.z0, draw: () => drawBlock(b, b === nowBlock) });
@@ -301,9 +284,13 @@ export function createStoryPath({ canvas, edits, wars, onPick, onTime = () => {}
       const x0 = b.side > 0 ? inner : inner - BLOCK_W;
       const x1 = x0 + BLOCK_W;
       // Blocks fade as they come close, so a tall one never fills the view.
-      const a = fog(z0 - camZ) * (0.25 + 0.75 * smoothstep(NEAR, NEAR + 900, z0 - camZ));
+      // The block of the version on screen is always solid.
+      const a = isNow ? 1 : fog(z0 - camZ) * (0.25 + 0.75 * smoothstep(NEAR, NEAR + 600, z0 - camZ));
       if (a < 0.01) return;
-      const done = written(b.z0);
+      const done = b.k <= stopNow;
+      // The block being written rises with the camera's approach.
+      const rise = isNow && b.k ? smoothstep(stopZ[b.k - 1], stopZ[b.k], nowZ + 1) : 1;
+      const bh = Math.max(2, b.h * (0.08 + 0.92 * rise));
       // Blocks still to come are only outlines.
       const alpha = (done ? 1 : 0.07) * a;
       const [h, sat, light] = b.color;
@@ -323,18 +310,18 @@ export function createStoryPath({ canvas, edits, wars, onPick, onTime = () => {}
       // front, and the top.
       const sh = [P(x0 + 10 * b.side, 0, z0 + 8), P(x1 + 10 * b.side, 0, z0 + 8), P(x1 + 10 * b.side, 0, b.z1 + 8), P(x0 + 10 * b.side, 0, b.z1 + 8)];
       quad(sh, `rgba(32,33,34,${0.05 * alpha})`);
-      if (camX < x0) quad([P(x0, 0, z0), P(x0, b.h, z0), P(x0, b.h, b.z1), P(x0, 0, b.z1)], shade(-14));
-      if (camX > x1) quad([P(x1, 0, z0), P(x1, b.h, z0), P(x1, b.h, b.z1), P(x1, 0, b.z1)], shade(-14));
-      quad([P(x0, 0, z0), P(x1, 0, z0), P(x1, b.h, z0), P(x0, b.h, z0)], shade(-4));
-      quad([P(x0, b.h, z0), P(x1, b.h, z0), P(x1, b.h, b.z1), P(x0, b.h, b.z1)], shade(12));
+      if (camX < x0) quad([P(x0, 0, z0), P(x0, bh, z0), P(x0, bh, b.z1), P(x0, 0, b.z1)], shade(-14));
+      if (camX > x1) quad([P(x1, 0, z0), P(x1, bh, z0), P(x1, bh, b.z1), P(x1, 0, b.z1)], shade(-14));
+      quad([P(x0, 0, z0), P(x1, 0, z0), P(x1, bh, z0), P(x0, bh, z0)], shade(-4));
+      quad([P(x0, bh, z0), P(x1, bh, z0), P(x1, bh, b.z1), P(x0, bh, b.z1)], shade(12));
 
       // The editor standing on top: a disc with their initials, and their name when there is room. Only
       // near blocks that have been written get one, so the distance stays quiet.
       const near = 1 - smoothstep(NAMED * 0.75, NAMED, z0 - camZ);
       if (!done || near < 0.02) return;
-      const top = P((x0 + x1) / 2, b.h, (z0 + b.z1) / 2);
+      const top = P((x0 + x1) / 2, bh, (z0 + b.z1) / 2);
       const r = Math.max(2.5, Math.min(isNow ? 14 : 11, 22 * top.s));
-      const stand = P((x0 + x1) / 2, b.h, (z0 + b.z1) / 2);
+      const stand = P((x0 + x1) / 2, bh, (z0 + b.z1) / 2);
       const cy = stand.y - r - 2;
       ctx.fillStyle = `hsla(${h},${Math.max(sat, 10)}%,${Math.max(18, light - 30)}%,${near * a})`;
       ctx.beginPath();
@@ -382,7 +369,7 @@ export function createStoryPath({ canvas, edits, wars, onPick, onTime = () => {}
       const inside = nowZ >= z0 - 40 && nowZ <= z[war.edits.at(-1).index] + 120;
       war.fighters.slice(0, 2).forEach((user, k) => {
         const sideSign = k ? 1 : -1;
-        const x = roadX(zm) + sideSign * (roadHalf(war.edits[0].index) + 70);
+        const x = roadX(zm) + sideSign * (roadHalf(war.edits[0].index) + 34);
         const foot = project(x, 0, zm);
         const head = project(x, 90, zm);
         const alpha = (reached ? 1 : 0.3) * a;
@@ -523,6 +510,9 @@ export function createStoryPath({ canvas, edits, wars, onPick, onTime = () => {}
     setWar(war) {
       current = war;
     },
+    setStop(k) {
+      stopNow = k;
+    },
     stop() {
       stopped = true;
       cancelAnimationFrame(frame);
@@ -547,16 +537,6 @@ function initials(user, kind) {
 
 function shorten(name) {
   return name.length > 18 ? `${name.slice(0, 17)}…` : name;
-}
-
-function rgb([h, s, l]) {
-  // HSL to "r,g,b" for the few colors set as HSL above.
-  const a = (s / 100) * Math.min(l / 100, 1 - l / 100);
-  const f = (n) => {
-    const k = (n + h / 30) % 12;
-    return Math.round(255 * (l / 100 - a * Math.max(-1, Math.min(k - 3, 9 - k, 1))));
-  };
-  return `${f(0)},${f(8)},${f(4)}`;
 }
 
 function lowerBound(list, value, key = (v) => v) {

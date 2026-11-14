@@ -119,6 +119,7 @@ export function startHistoryPlay({ id, body, onClose }) {
       canvas: side.querySelector("canvas"),
       edits,
       wars,
+      stops: frames.map((f) => f.edit.index),
       onTime: showMoment,
       onPick: (war) => {
         setPlaying(false);
@@ -175,14 +176,13 @@ export function startHistoryPlay({ id, body, onClose }) {
     looping = true;
     for (let i = from; i < frames.length; i++) {
       for (let k = i + 1; k <= i + 3 && k < frames.length; k++) load(frames[k]);
-      const next = frames[i + 1];
+      const time = frames[i].edit.time;
       const hold = (frames[i].war ? WAR_HOLD : STEP) / speed;
-      // As soon as this version knows how long its writing will take, the trip to the next one starts,
-      // timed to arrive as the writing and the pause after it end.
-      await show(i, token, true, (ms) => next && travelTo(next.edit.time, ms + hold));
+      // While a version is written, the marker and the road travel to it: as soon as it knows how long
+      // its writing will take, the trip starts, timed to arrive as the writing and the pause after it end.
+      await show(i, token, true, (ms) => travelTo(time, ms + hold));
       if (token !== run) return;
-      if (!next) break;
-      if (travel?.time !== next.edit.time) travelTo(next.edit.time, hold);
+      if (travel?.time !== time) travelTo(time, hold);
       const waited = await wait(Math.max(0, travel.end - performance.now()), token);
       if (!waited) return;
     }
@@ -257,9 +257,10 @@ export function startHistoryPlay({ id, body, onClose }) {
     const renderMath = await loadMath(version.text);
     if (token !== run || closed) return;
     at = i;
-    // During playback the marker and road are already here, unless playing started from a jump.
-    if (animate && travel?.time === frame.edit.time) travel = null;
-    else if (!$(".hp-map").classList.contains("is-dragging")) {
+    // During playback the marker and road travel here while the version is written; after a jump they
+    // glide over at once.
+    path.setStop(i);
+    if (!animate && !$(".hp-map").classList.contains("is-dragging")) {
       travel = null;
       moveMarker(frame.edit.time, 450, "cubic-bezier(0.25, 0.8, 0.25, 1)");
       path.setTime(frame.edit.time);
