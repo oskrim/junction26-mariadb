@@ -74,21 +74,6 @@
   mask-composite: intersect;
 }
 
-/* Which way the side roads turn */
-.hp-key {
-  position: absolute;
-  top: 24px;
-  right: 16px;
-  left: calc(var(--extra-left, 0px) + 56px);
-  display: flex;
-  justify-content: space-between;
-  margin: 0;
-  font: 500 11px var(--sans);
-  letter-spacing: 0.02em;
-  color: var(--ink-3);
-  pointer-events: none;
-}
-
 @keyframes hp-path-in {
   from {
     opacity: 0;
@@ -606,11 +591,6 @@
 }
 
 
-
-/* The key makes way for the war title */
-.hp-path.is-fight .hp-key {
-  visibility: hidden;
-}
 
 /* A sword raised a row has a hairline down to its bar */
 .hp-sword::before {

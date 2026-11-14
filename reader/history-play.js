@@ -76,8 +76,7 @@ export function startHistoryPlay({ id, body, onClose }) {
   side.className = "hp-path";
   side.setAttribute("aria-label", "The article's life as a road");
   side.innerHTML = `
-    <canvas></canvas>
-    <p class="hp-key"><span>← cuts</span><span>adds →</span></p>`;
+    <canvas></canvas>`;
   document.querySelector(".layout").append(side);
   const dock = document.createElement("div");
   dock.className = "hp-dock";
