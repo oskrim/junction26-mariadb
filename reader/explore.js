@@ -167,7 +167,7 @@ export async function mountExplore(root, { id }) {
     // A small article gets a tight cluster and the view moves in; a big one spreads out.
     fitView();
     target = placeInSpace(nextId, near, further, new Set(chosen.map(({ n }) => n)));
-    const start = from ? { ...pos.get(from) } : { x: 0, y: 0, z: 0 };
+    const start = from && pos.has(from) ? { ...pos.get(from) } : { x: 0, y: 0, z: 0 };
     for (const [n, t] of target) {
       if (pos.has(n)) continue;
       // After a move, new articles wait a moment and then bloom out from the middle, nearest first.
@@ -726,13 +726,18 @@ export async function mountExplore(root, { id }) {
     await exploreFrom(n);
   }
 
+  // Only the part of the path that differs is opened again, quietly, and the camera moves once at the end,
+  // so the view goes straight back instead of flying through every step on the way.
   async function undo() {
+    if (moving || !undoStack.length) return;
     const state = undoStack.pop();
     backButton.hidden = undoStack.length === 0;
-    if (!state || moving) return;
     if (state.center !== centerId) await exploreFrom(state.center);
-    if (!state.path.length) await select(centerId);
-    for (const m of state.path) if (hop.has(m)) await select(m);
+    const path = state.path.filter((m) => hop.has(m));
+    let same = 0;
+    while (same < path.length && path[same] === trail[same]) same++;
+    for (const m of path.slice(same, -1)) await select(m, { quiet: true });
+    await select(path.at(-1) ?? centerId);
     if (state.selected === null) deselect();
   }
 
@@ -789,10 +794,11 @@ export async function mountExplore(root, { id }) {
   }
 
   // Opening an article grows the map from it; the middle article stays put.
-  async function select(n) {
+  // quiet: grow the map but leave the camera and the panel where they are (undo opens several in a row).
+  async function select(n, { quiet = false } = {}) {
     selectedId = n;
     const count = await grow(n);
-    if (selectedId !== n) return;
+    if (selectedId !== n || quiet) return;
     if (n === centerId) {
       cam.focusTo = { x: 0, y: 0, z: 0 };
       cam.distTo = fitDist;
@@ -868,11 +874,14 @@ export async function mountExplore(root, { id }) {
     if (moving) return;
     moving = true;
     selectedId = n;
-    cam.focusTo = { ...target.get(n) };
-    await wait(700);
+    // Glide over to it first when it is on the map (going back, the earlier middle article may not be).
+    if (target.has(n)) {
+      cam.focusTo = { ...target.get(n) };
+      await wait(700);
+    }
 
     // Re-anchor everything on the new article, so the next layout starts from where things are now.
-    const shift = { ...pos.get(n) };
+    const shift = pos.has(n) ? { ...pos.get(n) } : { x: 0, y: 0, z: 0 };
     const move = (p) => Object.assign(p, { x: p.x - shift.x, y: p.y - shift.y, z: p.z - shift.z });
     for (const p of pos.values()) move(p);
     for (const p of target.values()) move(p);
