@@ -55,7 +55,7 @@ export function startHistoryPlay({ id, body, onClose }) {
   const side = document.createElement("aside");
   side.className = "hp-path";
   side.setAttribute("aria-label", "The article's life as a road");
-  side.innerHTML = `<canvas></canvas>`;
+  side.innerHTML = `<canvas></canvas><div class="hp-moment"><p class="hp-year"></p><p class="hp-month"></p></div>`;
   document.querySelector(".layout").append(side);
   const dock = document.createElement("div");
   dock.className = "hp-dock";
@@ -70,6 +70,8 @@ export function startHistoryPlay({ id, body, onClose }) {
   let edits = [];
   let minimap = null;
   let path = null;
+  // The marker and the road travel at an even pace toward the next version while this one is written.
+  let travel = null;
   let at = -1;
   let playing = true;
   let looping = false;
@@ -101,6 +103,7 @@ export function startHistoryPlay({ id, body, onClose }) {
       canvas: side.querySelector("canvas"),
       edits,
       wars,
+      onTime: showMoment,
       onPick: (war) => {
         setPlaying(false);
         jump(frames.findIndex((f) => f.war === war));
@@ -156,12 +159,15 @@ export function startHistoryPlay({ id, body, onClose }) {
     looping = true;
     for (let i = from; i < frames.length; i++) {
       for (let k = i + 1; k <= i + 3 && k < frames.length; k++) load(frames[k]);
-      await show(i, token, true);
-      if (token !== run) return;
-      if (i === frames.length - 1) break;
+      const next = frames[i + 1];
       const hold = (frames[i].war ? WAR_HOLD : STEP) / speed;
-      moveMarker(frames[i + 1].edit.time, hold);
-      const waited = await wait(hold, token);
+      // As soon as this version knows how long its writing will take, the trip to the next one starts,
+      // timed to arrive as the writing and the pause after it end.
+      await show(i, token, true, (ms) => next && travelTo(next.edit.time, ms + hold));
+      if (token !== run) return;
+      if (!next) break;
+      if (travel?.time !== next.edit.time) travelTo(next.edit.time, hold);
+      const waited = await wait(Math.max(0, travel.end - performance.now()), token);
       if (!waited) return;
     }
     if (token === run) {
@@ -189,22 +195,64 @@ export function startHistoryPlay({ id, body, onClose }) {
     });
   }
 
-  async function show(i, token, animate) {
+  function travelTo(time, ms) {
+    travel = { time, end: performance.now() + ms, left: 0 };
+    moveMarker(time, ms);
+    path.glide(time, ms);
+  }
+
+  // Pausing stops the marker and the road where they are; playing again carries on with the time left.
+  function freezeTravel() {
+    if (!travel) return;
+    travel.left = Math.max(0, travel.end - performance.now());
+    const marker = $(".minimap-now");
+    marker.style.left = getComputedStyle(marker).left;
+    marker.style.transitionDuration = "0ms";
+    path.freeze();
+  }
+
+  function resumeTravel() {
+    if (travel?.left > 0) travelTo(travel.time, travel.left);
+  }
+
+  // The year in large type above the road, with the month under it; the year rolls in when it changes.
+  let momentYear = null;
+  let momentMonth = null;
+  function showMoment(time) {
+    const d = new Date(time);
+    const year = d.getUTCFullYear();
+    const month = d.toLocaleString("en-GB", { month: "long", timeZone: "UTC" });
+    if (month !== momentMonth) side.querySelector(".hp-month").textContent = momentMonth = month;
+    if (year === momentYear) return;
+    const el = side.querySelector(".hp-year");
+    const up = momentYear === null || year > momentYear;
+    momentYear = year;
+    el.textContent = year;
+    el.animate([{ opacity: 0, transform: `translateY(${up ? 18 : -18}px)` }, { opacity: 1, transform: "none" }], {
+      duration: 450,
+      easing: "cubic-bezier(0.2, 0.8, 0.2, 1)",
+    });
+  }
+
+  async function show(i, token, animate, onPlan = () => {}) {
     const frame = frames[i];
     const version = await load(frame);
     if (token !== run || closed || !version) return;
     const renderMath = await loadMath(version.text);
     if (token !== run || closed) return;
     at = i;
-    // During playback the marker is already on its way here; after a jump it glides over.
-    if (animate) moveMarker(frame.edit.time, 0);
-    else if (!$(".hp-map").classList.contains("is-dragging")) moveMarker(frame.edit.time, 350, "ease");
-    path.setTime(frame.edit.time, { instant: !animate });
+    // During playback the marker and road are already here, unless playing started from a jump.
+    if (animate && travel?.time === frame.edit.time) travel = null;
+    else if (!$(".hp-map").classList.contains("is-dragging")) {
+      travel = null;
+      moveMarker(frame.edit.time, 450, "cubic-bezier(0.25, 0.8, 0.25, 1)");
+      path.setTime(frame.edit.time);
+    }
     path.setWar(frame.war ?? null);
     $(".hp-date").textContent = formatDate(parseRowStart(version.row_start));
     $(".hp-who").innerHTML = `${escape(censor(version.user))} <span>· version ${(frame.edit.index + 1).toLocaleString("en-US")} of ${edits.length.toLocaleString("en-US")}</span>`;
     if (!frame.war && announced && frame.edit.time > announced.end) announce(null);
-    await render(version, renderMath, token, animate);
+    await render(version, renderMath, token, animate, onPlan);
     if (frame.war && token === run && !closed) announce(frame.war);
   }
 
@@ -288,6 +336,7 @@ export function startHistoryPlay({ id, body, onClose }) {
   function jump(i) {
     if (i < 0) return;
     closeWar();
+    travel = null;
     if (playing) play(i);
     else {
       looping = false;
@@ -299,8 +348,12 @@ export function startHistoryPlay({ id, body, onClose }) {
     playing = on;
     playButton.innerHTML = on ? PAUSE : PLAY;
     playButton.setAttribute("aria-label", on ? "Pause" : "Play");
-    if (!on) return;
+    if (!on) {
+      freezeTravel();
+      return;
+    }
     closeWar();
+    if (looping) resumeTravel();
     if (!looping) play(at >= frames.length - 1 ? 0 : Math.max(0, at));
   }
 
@@ -308,7 +361,7 @@ export function startHistoryPlay({ id, body, onClose }) {
   // visited in turn: the page glides there, new paragraphs open up and are written in, changed ones show
   // their new words before settling, and cut ones close. Only the biggest few places get a visit; the rest
   // change at the same time as the last one, so a version never takes too long.
-  async function render(version, renderMath, token, animate) {
+  async function render(version, renderMath, token, animate, onPlan) {
     const { html } = renderWikitext(version.text, { fileUrl, renderMath });
     const box = document.createElement("div");
     box.innerHTML = html;
@@ -318,6 +371,7 @@ export function startHistoryPlay({ id, body, onClose }) {
     // A version that replaced most of the article fades over instead.
     if (!shown || (changed > 8 && changed > blocks.length * 0.6)) {
       const swap = () => body.replaceChildren(...blocks.map((b) => b.el));
+      onPlan(500 / speed);
       if (animate && shown) await fadeOver(swap);
       else swap();
       shown = blocks;
@@ -374,6 +428,9 @@ export function startHistoryPlay({ id, body, onClose }) {
         .slice(0, VISITS),
     );
     const ordered = places.filter((p) => visits.has(p));
+    // About how long the visits will take, so the road can be timed to it.
+    const visitMs = (p) => 500 + (p.rewrites.length ? SHUT + READ + SHUT : p.adds.length ? GROW : SHUT);
+    onPlan((animate ? ordered.reduce((sum, p) => sum + visitMs(p), 0) : 0) / speed);
     for (const place of places) if (!visits.has(place)) applyNow(place, animate && !place.quiet);
     for (const place of ordered) {
       if (!animate || token !== run || closed) {
@@ -595,7 +652,9 @@ function textOf(el) {
 // A changed paragraph, as plain text for now, with its new words written in and the cut ones struck.
 // Anything that isn't a paragraph of prose is just swapped and marked.
 function rewrite(prev, next) {
-  if (next.tagName !== "P" || next.querySelector(".katex, img")) {
+  // Old versions sometimes hold table markup the renderer leaves as text; a word diff of that is noise.
+  const markup = /\{\||\|-|style=|<\/?t[dhr]\b/.test(next.textContent + prev.textContent);
+  if (next.tagName !== "P" || markup || next.querySelector(".katex, img")) {
     if (!next.matches("ol.references")) next.classList.add("hp-changed");
     return next;
   }

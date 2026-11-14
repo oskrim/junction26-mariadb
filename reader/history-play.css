@@ -63,6 +63,30 @@
   height: 100%;
 }
 
+/* The year the road is at, large above it */
+.hp-moment {
+  position: absolute;
+  top: 28px;
+  left: 40px;
+  pointer-events: none;
+}
+
+.hp-year {
+  margin: 0;
+  font: 400 64px/1 var(--serif);
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  font-variant-numeric: lining-nums tabular-nums;
+}
+
+.hp-month {
+  margin: 6px 0 0 3px;
+  font: 500 12px var(--sans);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
 @keyframes hp-path-in {
   from {
     opacity: 0;
