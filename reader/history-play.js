@@ -89,6 +89,15 @@ export function startHistoryPlay({ id, body, onClose }) {
   document.body.classList.add("hp-mode");
   // The war note sits at the top of the road panel, above the fight.
   side.append(dock.querySelector(".hp-war"));
+  // It is pinned to the top of the window over the road, so it stays in view when the road scrolls
+  // up with the end of the article.
+  const placeNote = () => {
+    const r = side.getBoundingClientRect();
+    side.style.setProperty("--note-left", `${r.left + 48}px`);
+    side.style.setProperty("--note-width", `${Math.max(0, r.width - 64)}px`);
+  };
+  requestAnimationFrame(placeNote);
+  addEventListener("resize", placeNote);
   const $ = (selector) => dock.querySelector(selector) ?? side.querySelector(selector);
   const playButton = $(".hp-play");
   const speedButton = $(".hp-speed");
@@ -910,6 +919,7 @@ export function startHistoryPlay({ id, body, onClose }) {
   // note says who fought, with a way to watch the fight right there.
   function announce(war) {
     announced = war;
+    side.classList.toggle("is-fight", !!war);
     const note = $(".hp-war");
     for (const s of dock.querySelectorAll(".hp-sword")) s.classList.toggle("is-on", s.dataset.war === war?.id);
     if (!war) {
@@ -918,10 +928,12 @@ export function startHistoryPlay({ id, body, onClose }) {
     }
     const heading = warHeading(body, war);
     const [a, b] = war.fighters.map(censor);
+    // Just a title over the fight, set like the year, with the round under it; the cursors carry the names.
     note.innerHTML = `
-      <span class="hp-war-icon">${SWORDS}</span>
-      <span><b>${escape(a)}</b> vs <b>${escape(b)}</b><span class="hp-war-where"></span></span>
-      <span class="hp-war-round"></span>`;
+      <p class="hp-war-title">Edit war</p>
+      <p class="hp-war-round"></p>
+      <span class="hp-war-where"></span>`;
+    note.setAttribute("aria-label", `Edit war: ${a} vs ${b}`);
     note.hidden = false;
     note.classList.remove("is-new");
     void note.offsetWidth;
@@ -950,6 +962,7 @@ export function startHistoryPlay({ id, body, onClose }) {
     closeWar();
     body.replaceChildren(...saved.body);
     path?.stop();
+    removeEventListener("resize", placeNote);
     side.remove();
     document.body.classList.remove("hp-mode");
     dock.classList.add("is-leaving");

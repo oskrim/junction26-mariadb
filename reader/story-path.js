@@ -122,7 +122,9 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
     // During a war everything but the fight fades back; the fighters fade out after it.
     focus += ((fight ? 1 : 0) - focus) * 0.06;
     if (fight) shownFight = fight;
-    nowZ = camZ + BACK;
+    // The moment shown follows the trip exactly; only the camera behind it is smoothed, so the walker,
+    // their road and the dot never lag or run ahead of each other.
+    nowZ = targetZ + BACK;
     draw(now);
     onTime(timeAtZ(nowZ));
   }
@@ -136,7 +138,10 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
     const f = height * 0.95;
     const horizon = height * 0.1;
     // The view stays on the lane while the detour being walked goes off to the side.
-    const nowBlock = blocks[stopNow];
+    // Whose road the moment shown is on. The road can run a little behind the text when versions come
+    // quickly, as in a war; the road then shows where it is, not where the text is.
+    const walkK = Math.min(stopNow, Math.max(0, lowerBound(stopZ, nowZ - 1)));
+    const nowBlock = blocks[walkK];
     const nowOffset = nowBlock?.k ? branchOffset(nowBlock, nowZ) : 0;
     const camX = roadX(camZ + BACK) * 0.9;
     const project = (x, y, wz) => {
@@ -262,8 +267,8 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
       // Only the far fog: the near fade would blank a whole road as soon as its start passed the camera.
       const a = calm * (1 - smoothstep(FAR * 0.45, FAR, stopZ[b.k - 1] - camZ));
       if (a < 0.01) continue;
-      const done = b.k < stopNow;
-      const walking = b.k === stopNow;
+      const done = b.k < walkK;
+      const walking = b.k === walkK;
       const road = (to, alpha) =>
         slab(stopZ[b.k - 1], to, (wz) => roadX(wz) + branchOffset(b, wz), (wz) => branchHalf(b, wz), LANE_H,
           `hsla(${h},${sat}%,${light}%,${alpha * a})`, `hsla(${h},${sat}%,${light - 22}%,${alpha * a})`);
@@ -282,7 +287,7 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
         if (wz > nowZ || wz < camZ + NEAR || wz > camZ + FAR) continue;
         const e = edits[i];
         if (Math.abs(e.delta) < 20) continue;
-        const grow = Math.min(1, (nowZ - wz) / 260);
+        const grow = Math.min(1, (nowZ - wz) / 260) * smoothstep(NEAR, NEAR + 500, wz - camZ);
         const len = (8 + 9 * Math.log10(1 + Math.abs(e.delta))) * grow;
         // Standing on the road: up for text added, down through it for text cut.
         const up = e.delta > 0 ? 1 : -1;
@@ -313,10 +318,10 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
     // The next two editors already wait, faintly, on the roads ahead. On a road carried on over several
     // versions the editor is shown once.
     for (const b of blocks) {
-      if (!b.k || b.k > stopNow + 2 || inWar.has(stops[b.k])) continue;
-      const walking = b.k === stopNow;
-      const ahead = b.k > stopNow;
-      if (!walking && b.joinPrev && b.joinPrev.k !== stopNow) continue;
+      if (!b.k || b.k > walkK + 2 || inWar.has(stops[b.k])) continue;
+      const walking = b.k === walkK;
+      const ahead = b.k > walkK;
+      if (!walking && b.joinPrev && b.joinPrev.k !== walkK) continue;
       // A walker walks their whole road, back to where it joins the lane, and the next editor sets off
       // from there; editors done stand at their road's far point.
       const wz = walking ? Math.min(stopZ[b.k], Math.max(stopZ[b.k - 1], nowZ)) : (stopZ[b.k - 1] + stopZ[b.k]) / 2;
@@ -382,7 +387,7 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
         ctx.fillText(initials(b.user, b.kind), foot.x, cy + 0.5);
         ctx.textBaseline = "alphabetic";
       }
-      if (!walking && !(ahead && b.k === stopNow + 1) && (r < 8 || b.changed < 1500)) return;
+      if (!walking && !(ahead && b.k === walkK + 1) && (r < 8 || b.changed < 1500)) return;
       const name = shorten(censor(b.user));
       ctx.font = `${walking ? 600 : 500} 11px Inter, system-ui, sans-serif`;
       const w = ctx.measureText(name).width;
@@ -462,25 +467,26 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
       const striking = f.by === k && !ended;
       // Everyone sways a little all the time, each at their own pace.
       const sway = Math.sin(now / 420 + k * 1.7) * 4 + (won ? Math.sin(now / 160) * 3 : 0);
-      const dist = R * (striking ? 2.3 - 1.05 * poke : 2.3) + sway;
+      const dist = R * (striking ? 3 - 1.75 * poke : 3) + sway;
       const wob = ang + Math.sin(now / 610 + k * 2.3) * 0.06;
-      const x = cx + Math.cos(wob) * dist;
-      const y = cy + Math.sin(wob) * dist;
+      // The ring is an upright oval: the panel is narrow, and names need room at the sides.
+      const x = cx + Math.cos(wob) * dist * 0.62;
+      const y = cy + Math.sin(wob) * dist * 1.15;
       ctx.globalAlpha = focus * (ended && !won ? 0.25 : striking || ended ? 1 : 0.75);
-      cursorArrow(x, y, ang + Math.PI + Math.sin(now / 530 + k) * 0.08, colorFor(k), striking ? 1.15 : 1);
+      cursorArrow(x, y, Math.atan2(cy - y, cx - x) + Math.sin(now / 530 + k) * 0.08, colorFor(k), striking ? 1.15 : 1);
       // The name outside the cursor.
       const label = shorten(censor(user)) + (won ? " wins" : "");
       ctx.font = `${striking || won ? 700 : 600} 11px Inter, system-ui, sans-serif`;
-      const lx = cx + Math.cos(ang) * (dist + 26);
-      const ly = cy + Math.sin(ang) * (dist + 26);
-      // Names stay inside the panel's clear middle, away from its faded edges.
+      // The name sits beyond its cursor, kept inside the panel's clear middle, away from its faded edges.
       const tw = ctx.measureText(label).width;
-      const left = Math.cos(ang) > 0.3 ? lx : Math.cos(ang) < -0.3 ? lx - tw : lx - tw / 2;
-      const x0 = Math.max(width * 0.15, Math.min(width * 0.85 - tw, left));
-      ctx.textAlign = "left";
+      // Out past the arrow's tail, along the line to the globe.
+      const out = 30 + Math.abs(Math.cos(ang)) * tw * 0.5;
+      const ly = y + Math.sin(wob) * out * 0.7;
+      const lx = Math.max(width * 0.12 + tw / 2, Math.min(width * 0.88 - tw / 2, x + Math.cos(wob) * out));
+      ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.fillStyle = colorFor(k);
-      ctx.fillText(label, x0, ly);
+      ctx.fillText(label, lx, ly);
       ctx.textBaseline = "alphabetic";
       if (striking && f.revert && hit > 0) {
         ctx.globalAlpha = focus * hit;
@@ -511,7 +517,8 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
     if (GLOBE.complete && GLOBE.naturalWidth) {
       const w = R * 1.55;
       const h = (w * GLOBE.naturalHeight) / GLOBE.naturalWidth;
-      ctx.drawImage(GLOBE, -w / 2, -h / 2, w, h);
+      // The logo's top piece is missing, so the globe itself sits a little below the picture's middle.
+      ctx.drawImage(GLOBE, -w / 2, -h / 2 - h * 0.05, w, h);
     }
     ctx.restore();
   }

@@ -377,25 +377,28 @@
 /* The note above the dock while a war breaks out */
 /* At the top of the road panel, above the fight; the key makes way for it */
 .hp-war {
-  position: absolute;
-  top: 20px;
-  right: 16px;
-  left: 48px;
-  z-index: 1;
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 10px 12px;
-  border: 1px solid #f0c4c4;
-  border-radius: 12px;
-  background: var(--paper);
-  box-shadow: 0 6px 24px rgb(0 0 0 / 0.08);
-  font: 13px/1.45 var(--sans);
-  color: var(--ink-2);
+  position: fixed;
+  top: 28px;
+  left: var(--note-left, 48px);
+  width: var(--note-width, 280px);
+  z-index: 26;
+  text-align: center;
+  pointer-events: none;
 }
 
-.hp-path:has(.hp-war:not([hidden])) .hp-key {
-  visibility: hidden;
+.hp-war-title {
+  margin: 0;
+  font: 400 44px/1 var(--serif);
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+
+.hp-war .hp-war-round {
+  margin: 8px 0 0;
+  font: 500 12px var(--sans);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
 }
 
 .hp-war[hidden] {
@@ -404,16 +407,6 @@
 
 .war-mode .hp-war {
   display: none;
-}
-
-.hp-war > span:nth-child(2) {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.hp-war b {
-  font-weight: 600;
-  color: #b42323;
 }
 
 .hp-war.is-new {
@@ -634,25 +627,13 @@
   position: relative;
 }
 
-/* The war note: the two fighters and the round */
-.hp-war {
-  align-items: center;
-  padding: 6px 10px 6px 6px;
-  border-radius: 999px;
-  font-size: 12px;
-}
-
-.hp-war b {
-  color: var(--ink);
-}
-
 .hp-war-where {
   display: none;
 }
 
-.hp-war-round {
-  flex: none;
-  margin-left: auto;
-  font-variant-numeric: tabular-nums;
-  color: var(--ink-3);
+
+
+/* The key makes way for the war title */
+.hp-path.is-fight .hp-key {
+  visibility: hidden;
 }
