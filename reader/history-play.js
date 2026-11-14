@@ -537,7 +537,7 @@ export function startHistoryPlay({ id, body, onClose }) {
     });
     while (body.children.length > out.length) body.lastElementChild.remove();
     shown = kept;
-    path.setTags(tagsFor(places));
+    path.setTags(at, tagsFor(places));
 
     // In a war, a change in the section fought over is visited first, whatever its size.
     const fought = war ? sectionElements(warHeading(body, war)) : new Set();

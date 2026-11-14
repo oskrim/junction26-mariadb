@@ -98,7 +98,8 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
   let fight = null;
   let shownFight = null;
   let focus = 0;
-  let tags = [];
+  // Notes on what each version changed, by stop; they stay on their road once dropped.
+  const tagsOf = new Map();
   const thumbs = new Map();
   const thumb = (src) => {
     if (!thumbs.has(src)) thumbs.set(src, Object.assign(new Image(), { src }));
@@ -359,13 +360,15 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
       if (sign.z < camZ + NEAR || sign.z > camZ + FAR) continue;
       standing.push({ z: sign.z, draw: () => drawSign(sign) });
     }
-    // The notes on the road being walked stand at points spread along it.
-    const tagged = blocks[walkK];
-    if (tagged?.k && !inWar.has(stops[tagged.k])) {
-      const z0 = stopZ[tagged.k - 1];
-      const z1 = stopZ[tagged.k];
-      tags.forEach((tag, j) => {
-        const wz = z0 + (z1 - z0) * (0.3 + (0.5 * (j + 0.5)) / Math.max(1, tags.length));
+    // Each road's notes stand at points spread along it, dropped in as the walker passed.
+    for (const [k, list] of tagsOf) {
+      const tagged = blocks[k];
+      if (!tagged?.k || k > walkK || inWar.has(stops[k])) continue;
+      const z0 = stopZ[k - 1];
+      const z1 = stopZ[k];
+      if (z1 < camZ + NEAR || z0 > camZ + NAMED) continue;
+      list.forEach((tag, j) => {
+        const wz = z0 + (z1 - z0) * (0.3 + (0.5 * (j + 0.5)) / Math.max(1, list.length));
         standing.push({ z: wz, draw: () => drawTag(tagged, { ...tag, k: j }, wz) });
       });
     }
@@ -752,8 +755,8 @@ export function createStoryPath({ canvas, edits, wars, stops, onPick, onTime = (
       current = war;
     },
     // Notes on what the version being walked changed, shown under its editor.
-    setTags(list) {
-      tags = list.map((t) => (t.image ? { ...t, image: thumb(t.image) } : t));
+    setTags(k, list) {
+      tagsOf.set(k, list.map((t) => (t.image ? { ...t, image: thumb(t.image) } : t)));
     },
     setStop(k) {
       stopNow = k;
