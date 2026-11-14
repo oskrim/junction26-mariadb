@@ -74,38 +74,6 @@
   mask-composite: intersect;
 }
 
-/* The article's totals, small, at the top of the road; an edit war's note takes their place */
-.hp-stats {
-  display: flex;
-  justify-content: center;
-  gap: 20px;
-  width: var(--note-width, 280px);
-  margin: 20px 0 0 var(--note-left, 48px);
-  font-family: var(--sans);
-}
-
-.hp-path:has(.hp-war:not([hidden])) .hp-stats {
-  visibility: hidden;
-}
-
-.hp-stats div {
-  display: flex;
-  flex-direction: column-reverse;
-  align-items: center;
-}
-
-.hp-stats dt {
-  font-size: 11px;
-  color: var(--ink-3);
-}
-
-.hp-stats dd {
-  margin: 0;
-  font: 400 17px var(--serif);
-  color: var(--ink-2);
-  font-variant-numeric: tabular-nums;
-}
-
 @keyframes hp-path-in {
   from {
     opacity: 0;
