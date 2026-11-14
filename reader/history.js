@@ -62,7 +62,7 @@ export async function mountHistory(root, { id }) {
   const [articles, rows] = await Promise.all([getArticles(id), getHistory(id)]);
   const article = articles.find((a) => a.page_id === id);
   if (!rows.length || !article) {
-    root.innerHTML = `<p class="history-empty">The prototype only has the edit history of Quantum computing.</p>`;
+    root.innerHTML = `<p class="history-empty">No edit history for this article.</p>`;
     return { hide() {} };
   }
   root.innerHTML = MARKUP;

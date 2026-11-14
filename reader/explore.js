@@ -369,7 +369,7 @@ export async function mountExplore(root, { id }) {
     if (meta) meta.textContent = `${total} linked articles`;
     const shown = near < total ? `${near} of ${total} linked articles` : `${total} linked articles`;
     summary = isAlive(centerId)
-      ? `${shown}${added ? ` · ${added} you added` : ""}${year < LAST_YEAR ? ` · in ${year}` : ""}`
+      ? `${shown}${year < LAST_YEAR ? ` · in ${year}` : ""}`
       : `Not written yet in ${year}`;
     const line = panel.querySelector(".ex-sub");
     if (line) line.textContent = summary;
@@ -743,8 +743,7 @@ export async function mountExplore(root, { id }) {
       <div class="ex-panel-body">
         <p class="ex-kicker">${isCenter ? "Related articles" : topics[n]}</p>
         <h3>${node.title}</h3>
-        ${isCenter ? `<p class="ex-sub">${summary}</p>` : `<p class="ex-relation">${relation(n)}</p>`}
-        ${added ? `<p class="ex-added">Added ${added} of its linked articles around it. Click one to keep going.</p>` : ""}
+        ${isCenter ? `<p class="ex-sub">${summary}</p>` : ""}
         ${p?.extract ? `<p class="ex-extract is-clamped">${p.extract}</p><button class="ex-more" type="button" hidden>Show more</button>` : ""}
         <dl class="ex-stats">
           <div><dt>Versions</dt><dd>${node.versions.toLocaleString("en-US")}</dd></div>
@@ -775,18 +774,6 @@ export async function mountExplore(root, { id }) {
     if (version && shownId === n) panel.querySelector(".ex-btn.is-primary").hidden = false;
   }
 
-  function relation(n) {
-    const name = nodes.get(centerId).title;
-    if (n === centerId) return `${links.get(n).size} articles link with it.`;
-    const out = linksOut.has(`${centerId}>${n}`);
-    const back = linksOut.has(`${n}>${centerId}`);
-    if (out && back) return `${name} links here, and it links back.`;
-    if (out) return `Linked from ${name}.`;
-    if (back) return `Links to ${name}.`;
-    if (grownFrom.has(n)) return `Linked from ${nodes.get(grownFrom.get(n)).title}, which you opened.`;
-    const through = [...links.get(n)].filter((m) => hop.get(m) === 1).map((m) => nodes.get(m).title);
-    return `One step away, through ${through.slice(0, 2).join(" and ")}${through.length > 2 ? ` and ${through.length - 2} more` : ""}.`;
-  }
 
   // Moving to another article happens in three steps you can follow: it lights up, the view
   // glides over until it sits in the middle, and then its own links bloom out around it.
