@@ -80,11 +80,14 @@ export function createTimeline({ stage, canvas, layer, spacer, edits, stops, ren
   camZ = targetZ;
 
   requestAnimationFrame(function frame(now) {
+    requestAnimationFrame(frame);
+    // Nothing to draw while the History view is hidden; size up again when it comes back.
+    if (!stage.getClientRects().length) return;
+    if (stage.clientWidth !== width || stage.clientHeight !== height) resize();
     camZ += (targetZ - camZ) * 0.1;
     camX += (pathX(camZ + 900) * 0.8 - camX) * 0.08;
     inset += (targetInset - inset) * 0.14;
     draw(now);
-    requestAnimationFrame(frame);
   });
 
   function draw(now) {

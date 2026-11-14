@@ -32,7 +32,7 @@ if (!version || !summary) {
       <span aria-hidden="true">·</span>
       ${summary.versions.toLocaleString("en-US")} versions since ${new Date(summary.first * 1000).getUTCFullYear()}
       <span aria-hidden="true">·</span>
-      <a class="meta-link" href="./history.html?id=${id}">View history</a>
+      <a class="meta-link" href="./?id=${id}&view=history" data-view-link="history">View history</a>
     </p>`;
   body.innerHTML = doc.html;
   toc.innerHTML = renderToc(doc.toc);
@@ -60,37 +60,53 @@ if (!version || !summary) {
   const menu = cursorMenu({ root: body, onSubmit: (request) => chat.ask(request) });
 }
 
-// Article and Explore share the page. Explore loads the first time it's opened, and can move to
-// another article; switching back to Article then opens that one.
+// Article, Explore and History share the page; each keeps its own scroll position. Explore and History
+// load the first time they're opened. Explore can move to another article; switching back to Article
+// then opens that one.
 function setUpViews() {
-  const layout = document.querySelector(".layout");
-  const explore = document.querySelector(".explore");
+  const views = {
+    article: { el: document.querySelector(".layout"), mounted: null },
+    explore: { el: document.querySelector(".explore"), mounted: null },
+    history: { el: document.querySelector(".history-view"), mounted: null },
+  };
+  const loaders = {
+    explore: (el) => import("./explore.js").then((m) => m.mountExplore(el, { id })),
+    history: (el) => import("./history.js").then((m) => m.mountHistory(el, { id })),
+  };
+  const scrolls = {};
   const buttons = document.querySelectorAll(".views button");
-  let mounted = null;
+  let current = null;
 
   const show = (view) => {
     const url = new URL(location.href);
-    const current = Number(url.searchParams.get("id") ?? DEFAULT_ARTICLE);
-    if (view === "article" && current !== id) {
-      url.searchParams.delete("view");
+    const shownId = Number(url.searchParams.get("id") ?? DEFAULT_ARTICLE);
+    if (view !== "explore" && shownId !== id) {
+      url.searchParams.set("view", view);
       location.href = url;
       return;
     }
-    if (view === "explore") url.searchParams.set("view", "explore");
-    else url.searchParams.delete("view");
+    if (view === "article") url.searchParams.delete("view");
+    else url.searchParams.set("view", view);
     history.replaceState(null, "", url);
+    if (current) scrolls[current] = scrollY;
+    if (current === "history") views.history.mounted?.then((h) => h.hide());
+    current = view;
     document.body.dataset.view = view;
-    layout.hidden = view === "explore";
-    explore.hidden = view !== "explore";
+    for (const [name, v] of Object.entries(views)) v.el.hidden = name !== view;
     for (const b of buttons) b.setAttribute("aria-pressed", String(b.dataset.view === view));
-    if (view === "explore") {
-      scrollTo(0, 0);
-      mounted ??= import("./explore.js").then((m) => m.mountExplore(explore, { id }));
-    }
+    if (loaders[view]) views[view].mounted ??= loaders[view](views[view].el);
+    requestAnimationFrame(() => scrollTo({ top: scrolls[view] ?? 0, behavior: "instant" }));
   };
 
   for (const b of buttons) b.addEventListener("click", () => show(b.dataset.view));
-  show(new URLSearchParams(location.search).get("view") === "explore" ? "explore" : "article");
+  document.addEventListener("click", (event) => {
+    const link = event.target.closest("[data-view-link]");
+    if (!link) return;
+    event.preventDefault();
+    show(link.dataset.viewLink);
+  });
+  const requested = new URLSearchParams(location.search).get("view");
+  show(requested in views ? requested : "article");
 }
 
 function formatDate(rowStart) {

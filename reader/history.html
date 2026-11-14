@@ -2,80 +2,13 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Edit history · Wikipedia</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,500;0,8..60,600;1,8..60,400&display=swap"
-      rel="stylesheet"
-    />
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
-    <link rel="stylesheet" href="./styles.css" />
-    <link rel="stylesheet" href="./history.css" />
+    <script>
+      // History is now a view of the main page.
+      const url = new URL("./", location.href);
+      url.search = location.search;
+      url.searchParams.set("view", "history");
+      location.replace(url);
+    </script>
   </head>
-  <body class="history">
-    <header class="bar">
-      <a class="wordmark" href="./">Wikipedia</a>
-      <label class="search">
-        <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5" /><path d="M10.5 10.5 14 14" /></svg>
-        <input type="search" placeholder="Search articles" />
-      </label>
-    </header>
-
-    <aside class="panel" aria-label="Article at this moment">
-      <div class="panel-scroll">
-        <header class="panel-head">
-          <button type="button" class="panel-close" aria-label="Hide article">×</button>
-          <div class="panel-meta"></div>
-        </header>
-        <article class="panel-doc"></article>
-      </div>
-      <section class="panel-fight" aria-label="Edit war replay"></section>
-    </aside>
-
-    <div class="stage">
-      <canvas class="stage-canvas"></canvas>
-      <div class="stage-cards"></div>
-
-      <div class="hud-top">
-        <div class="hud-title">
-          <a class="hud-back" href="./">← <span class="hud-article"></span></a>
-          <h1>Edit history</h1>
-          <button type="button" class="panel-toggle" aria-pressed="false">
-            <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2.5" width="12" height="11" rx="1.5"/><path d="M6 2.5v11"/></svg>
-            Show article
-          </button>
-        </div>
-        <div class="views" role="tablist">
-          <button type="button" role="tab" aria-selected="true">Timeline</button>
-          <button type="button" role="tab" aria-selected="false" disabled title="Coming next">Replay</button>
-        </div>
-        <dl class="hud-stats"></dl>
-      </div>
-
-      <div class="hud-date">
-        <p class="hud-month"></p>
-        <div class="hud-row">
-          <div class="spacing" role="radiogroup" aria-label="Spacing">
-            <span>Spacing</span>
-            <button type="button" role="radio" data-spacing="tight" aria-checked="true">Tight</button>
-            <button type="button" role="radio" data-spacing="normal" aria-checked="false">Normal</button>
-            <button type="button" role="radio" data-spacing="roomy" aria-checked="false">Roomy</button>
-          </div>
-          <p class="hud-hint">Scroll to travel · ← → jump between cards</p>
-        </div>
-      </div>
-
-      <div class="minimap">
-        <svg class="minimap-svg" preserveAspectRatio="none"></svg>
-        <div class="minimap-now"></div>
-        <div class="minimap-years"></div>
-      </div>
-    </div>
-    <div class="scroll-spacer"></div>
-
-    <script type="module" src="./history.js"></script>
-  </body>
 </html>

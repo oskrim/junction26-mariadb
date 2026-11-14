@@ -1,23 +1,30 @@
-# Reader
+# Wikipedia, reimagined
 
-A calm reading view for one article: contents on the left, text in the middle, images in the right margin.
+One page with three views of an article, switched in the top bar:
+
+- **Article**: a calm reading view with contents on the left and images in the margin. Hover a link for a preview.
+  Press Q for the liquid cursor menu (Ask, Find, Visualise) and its chats.
+- **Explore**: the article's related articles as a 3D map you can grow outward.
+- **History**: the article's whole edit history as a 3D path you fly along, with the article as it read at
+  each moment in a sidebar, and edit wars you can watch being fought.
 
 Run it from the repo root:
 
 ```bash
-python3 -m http.server 5100 -d reader
+python3 -m http.server 5130 -d reader
 ```
 
-Then open <http://localhost:5100>.
+Then open <http://localhost:5130>. Each view has its own address: `?view=explore` and `?view=history`.
 
-All fake data lives in `fake/`. `fake/api.js` has the same three requests and response shapes as `app.py`.
+All fake data lives in `fake/`. `fake/api.js` has the same three requests and response shapes as `app.py`,
+plus a few the screens need that `app.py` doesn't have yet; each says so and how a real one could work.
 To use real data, replace each function body with the `fetch` call written above it.
 `wikitext.js` turns the article's `text` field into the page, so it works on real API responses as they are.
 
 ## Explore
 
 The **Explore** switch in the top bar shows the article's related articles as a slowly turning 3D map
-(`explore.js`, `explore.css`). Open it directly at <http://localhost:5100/?view=explore>.
+(`explore.js`, `explore.css`). Open it directly at <http://localhost:5130/?view=explore>.
 
 - The article sits in the middle. Articles it links with are grouped by topic around it, and a fainter
   ring of articles one step further sits on the outside. The best-connected articles that have a picture show as cards.
@@ -29,13 +36,19 @@ The **Explore** switch in the top bar shows the article's related articles as a 
 
 ## Cursor menu
 
-This branch adds a liquid menu that rides on the pointer. Run it on its own port:
-
-```bash
-python3 -m http.server 5120 -d reader
-```
-
 - `cursor-menu.js` and `cursor-menu.css`: the menu and its prompt bar. Press Q to open it (no browser uses a bare Q).
 - `chat.js`: the chats: a floating window or side panel, with a tray of tabs and a history list.
 - `model3d.js`: the 3D qubit that Visualise shows, drawn on a canvas.
 - `fake/assistant.js`: every canned answer and the earlier chats in History. Replace the body of `respond()` with a real call to go live.
+
+## History
+
+The **History** view (`history.js`) is built from:
+
+- `history-model.js`: finds reverts (a version whose text matches an older one exactly), groups them into edit
+  wars, and picks the edits that get a card.
+- `timeline3d.js`, `history-cards.js`, `minimap.js`: the 3D path, its cards and the year strip.
+- `article-panel.js` and `diff.js`: the article at the current moment, with what changed marked.
+- `war-replay.js`: the edit war replay, with each fighter's cursor. `censor.js` masks slurs in shown text.
+- It reads `getHistory()` (every version without its text) and `/api/article` for the text at a moment.
+  The prototype stores the text of about 400 of the 5,047 versions in `fake/versions/` and `fake/wars/`.

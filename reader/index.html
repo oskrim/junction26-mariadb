@@ -15,6 +15,7 @@
     <link rel="stylesheet" href="./styles.css" />
     <link rel="stylesheet" href="./explore.css" />
     <link rel="stylesheet" href="./cursor-menu.css" />
+    <link rel="stylesheet" href="./history.css" />
   </head>
   <body>
     <header class="bar">
@@ -22,6 +23,7 @@
       <nav class="views" aria-label="View">
         <button type="button" data-view="article" aria-pressed="true">Article</button>
         <button type="button" data-view="explore" aria-pressed="false">Explore</button>
+        <button type="button" data-view="history" aria-pressed="false">History</button>
       </nav>
       <label class="search">
         <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5" /><path d="M10.5 10.5 14 14" /></svg>
@@ -38,6 +40,7 @@
     </div>
 
     <section class="explore" aria-label="Related articles" hidden></section>
+    <section class="history-view" aria-label="Edit history" hidden></section>
 
     <div class="card card-preview" role="tooltip"></div>
     <div class="card card-ref" role="tooltip"></div>
