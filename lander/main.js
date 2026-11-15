@@ -23,11 +23,8 @@ const thumb = (a, cls) => a.thumbnail
 // ── language
 const LANGS = [
   { code: "en", name: "English", hint: "Search Wikipedia or ask a question" },
-  { code: "simple", label: "SIMPLE", name: "Simple English", hint: "Search or ask a question" },
   { code: "fi", name: "Suomi", hint: "Hae Wikipediasta tai kysy jotain" },
-  { code: "de", name: "Deutsch", hint: "Wikipedia durchsuchen oder etwas fragen" },
-  { code: "ja", name: "日本語", hint: "ウィキペディアを検索、または質問" },
-  { code: "es", name: "Español", hint: "Busca en Wikipedia o haz una pregunta" },
+  { code: "sv", name: "Svenska", hint: "Sök på Wikipedia eller ställ en fråga" },
 ];
 let lang = LANGS[0];
 langMenu.innerHTML = LANGS.map((l) => `<li role="option" tabindex="0" data-code="${l.code}">${l.name}<span>${l.code}</span></li>`).join("");
@@ -195,7 +192,7 @@ form.addEventListener("submit", async (e) => {
   found = new Map([...pages, ...related].map((a) => [a.page_id, a]));
   const question = looksLikeQuestion(text);
   let html = "";
-  if (pages.length) html += `<h2>Pages</h2>` + pages.map((a, i) => hitHTML(a, terms, i)).join("");
+  if (pages.length) html += pages.map((a, i) => hitHTML(a, terms, i)).join("");
   if (related.length) html += `<h2>${question ? "Might answer your question" : "Pages that mention it"}</h2>` + related.map((a, i) => hitHTML(a, terms, i + pages.length)).join("");
   if (!html) html = `<p class="empty">No pages match “${esc(text)}”.<br>Try one word, like <em>Moon</em>, or ask a question.</p>`;
   results.innerHTML = html;

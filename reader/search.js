@@ -13,6 +13,20 @@ export function highlight(snippet, match) {
 
 // The top bar's search box: matching titles in a list under it. Choosing one opens it in the current view;
 // Enter with none chosen hands the words to onFind (the Find palette), when there is one.
+// What an empty box offers, as on the home page (lander/index.html): four articles and a question.
+// An empty box lists Finnish Wikipedia's most-read articles of 2025 (Wikimedia pageviews, monthly tops summed),
+// keeping those whose full edit history we hold, most read first
+const SUGGESTIONS = [
+  { page_id: 11396, title: "Alexander Stubb", snippet: "Suomalainen kokoomustaustainen poliitikko ja Suomen tasavallan presidentti" },
+  { page_id: 1275, title: "Urho Kekkonen", snippet: "Suomalainen poliitikko ja Suomen tasavallan presidentti 1956–1982" },
+  { page_id: 1256, title: "Talvisota", snippet: "Suomen ja Neuvostoliiton sota 30. marraskuuta 1939 – 13. maaliskuuta 1940" },
+  { page_id: 1394958, title: "Eemeli Peltonen", snippet: "Suomalainen sosiaalidemokraattinen poliitikko ja kansanedustaja" },
+  { page_id: 440, title: "Jatkosota", snippet: "Suomen ja Neuvostoliiton sota 25. kesäkuuta 1941 – 19. syyskuuta 1944" },
+  { page_id: 1069, title: "Suomen tasavallan presidentti", snippet: "Suomen kansan valitsema valtionpäämies" },
+  { page_id: 15295, title: "Eppu Normaali", snippet: "Suomalainen rockyhtye, aloitti uuden aallon punk-yhtyeenä vuonna 1976" },
+  { page_id: 1150, title: "Suomen sisällissota", snippet: "Senaatin ja kansanvaltuuskunnan joukkojen sota 27. tammikuuta – 15. toukokuuta 1918" },
+].map((r) => ({ ...r, match: null }));
+
 export function setUpSearch(box) {
   const input = box.querySelector("input");
   const list = document.createElement("ul");
@@ -30,9 +44,11 @@ export function setUpSearch(box) {
 
   function render() {
     const query = input.value.trim();
-    // Results that arrive after the box was left (Enter opened Find, or Escape) stay hidden.
-    list.hidden = !query || document.activeElement !== input;
+    // Results that arrive after the box was left (Enter opened Find, or Escape) stay hidden. An empty box shows
+    // the home page's suggestions.
+    list.hidden = (!query && !results.length) || document.activeElement !== input;
     list.innerHTML =
+      (!query && results.length ? `<li class="search-head">Most read</li>` : "") +
       (results.length
         ? results
             .map(
@@ -52,7 +68,7 @@ export function setUpSearch(box) {
     const q = input.value.trim();
     const token = ++request;
     if (!q) {
-      results = [];
+      results = pageLang() === "fi" ? SUGGESTIONS : [];
       shownFor = null;
       failed = openFirst = false;
       return render();
@@ -124,7 +140,7 @@ export function setUpSearch(box) {
     } else return;
     event.preventDefault();
   });
-  input.addEventListener("focus", () => input.value.trim() && (list.hidden = false));
+  input.addEventListener("focus", () => (input.value.trim() ? (list.hidden = false) : run()));
   // "/" anywhere else on the page goes to the box, as in many search boxes.
   addEventListener("keydown", (event) => {
     if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey) return;

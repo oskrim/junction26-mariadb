@@ -933,7 +933,7 @@ export async function mountExplore(root, { id }) {
       const next = Number(range.value) + 1;
       showYear(next);
       if (next >= LAST_YEAR) stopPlaying();
-    }, 650);
+    }, 250);
   });
 
   function stopPlaying() {
