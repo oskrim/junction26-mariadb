@@ -1,4 +1,4 @@
-import { searchArticles } from "./api.js";
+import { pageLang, searchArticles } from "./api.js";
 import { loadPictures, paint, thumbHtml } from "./pictures.js";
 
 export const escape = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -54,7 +54,7 @@ export function setUpSearch(box, { onFind = null } = {}) {
       results = [];
       return render();
     }
-    const found = await searchArticles(q).catch(() => []);
+    const found = await searchArticles(q, 8, pageLang()).catch(() => []);
     if (token !== request) return;
     results = found;
     active = -1;
@@ -79,9 +79,12 @@ export function setUpSearch(box, { onFind = null } = {}) {
     }
   }
 
+  // A result is a Finnish article unless it says otherwise (a Swedish or English search's results carry lang).
   function open(result) {
     const url = new URL(location.href);
     url.searchParams.set("id", result.page_id);
+    if (result.lang && result.lang !== "fi") url.searchParams.set("lang", result.lang);
+    else url.searchParams.delete("lang");
     location.href = url;
   }
 

@@ -17,7 +17,10 @@
           depth: ["concepts.js", "depth.js"],
           history: ["history.js", "article-panel.js", "diff.js", "history-cards.js", "history-model.js", "minimap.js", "timeline3d.js", "war-replay.js"],
         };
-        const answers = [`/api/articles?id=${id}`, `/api/article?id=${id}&at=${at}`];
+        const lang = ["sv", "en"].includes(params.get("lang")) ? params.get("lang") : null; // pageLang() in api.js
+        const answers = lang
+          ? [`/api/article?id=${id}&lang=${lang}`, `/api/tellings?id=${id}&lang=${lang}`]
+          : [`/api/articles?id=${id}`, `/api/article?id=${id}&at=${at}`];
         if (view === "explore") answers.push(`/api/graph?at=${at}&id=${id}`);
         if (view === "history") answers.push(`/api/history?id=${id}`);
         const preload = (attrs) => document.head.append(Object.assign(document.createElement("link"), attrs));

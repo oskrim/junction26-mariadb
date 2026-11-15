@@ -28,11 +28,21 @@ export const getArticles = (id) => get(id == null ? "/api/articles" : `/api/arti
 // The current time for `at`, in whole minutes so that views opened within a minute share cached answers.
 export const now = () => Math.floor(Date.now() / 60000) * 60;
 
-export const getArticle = (id, at) => get(`/api/article?id=${id}&at=${at}`);
+// The language of the article the page shows (?lang=sv|en), else "fi". Swedish and English articles are the
+// current version only, under their own wiki's page id.
+export function pageLang() {
+  const lang = new URLSearchParams(location.search).get("lang");
+  return lang === "sv" || lang === "en" ? lang : "fi";
+}
 
-// The article in Finnish, Swedish and English Wikipedia: { languages: [{ lang, name, title, url, words }],
-// sections: [{ section, fi_words, others: { sv|en: { words, paragraphs: [{ section, text }] } } }] }.
-export const getTellings = (id) => get(`/api/tellings?id=${id}`);
+// A Finnish article as of at, or a Swedish or English one (current version; at is ignored).
+export const getArticle = (id, at, lang = "fi") =>
+  get(lang === "fi" ? `/api/article?id=${id}&at=${at}` : `/api/article?id=${id}&lang=${lang}`);
+
+// The article in Finnish, Swedish and English Wikipedia: { languages: [{ lang, page_id, name, title, url, words }],
+// sections: [{ section, fi_words, others: { sv|en: { words, paragraphs: [{ section, text }] } } }] }. With lang
+// sv|en, id is that wiki's page id and sections is empty.
+export const getTellings = (id, lang = "fi") => get(lang === "fi" ? `/api/tellings?id=${id}` : `/api/tellings?id=${id}&lang=${lang}`);
 
 // Previews asked for within PREVIEW_WAIT ms go out as one /api/previews request: Explore asks for ~20 at once.
 const PREVIEW_WAIT = 10;
@@ -80,7 +90,9 @@ export const getChange = (revId) => get(`/api/change?rev=${revId}`);
 
 // The loaded articles whose title, then text, contains q: [{ page_id, title, snippet, match }], where match
 // is q's [start, end) in snippet (code points), or null when the snippet is the article's first sentence.
-export const searchArticles = (q, limit = 8) => get(`/api/search?q=${encodeURIComponent(q)}&limit=${limit}`);
+// With lang sv|en, that wiki's articles (results may then carry their lang).
+export const searchArticles = (q, limit = 8, lang = "fi") =>
+  get(`/api/search?q=${encodeURIComponent(q)}&limit=${limit}${lang === "fi" ? "" : `&lang=${lang}`}`);
 
 // Not an API request: turns a [[File:...]] name from the article text into its upload.wikimedia.org
 // thumbnail, 330 px wide (a standard width). Special:FilePath would cost two redirects. Mirrors

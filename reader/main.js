@@ -1,4 +1,4 @@
-import { fileUrl, getArticle, getArticles, getPreview, now } from "./api.js";
+import { fileUrl, getArticle, getArticles, getPreview, getTellings, now, pageLang } from "./api.js";
 import { chatPanel } from "./chat.js";
 import { cursorMenu } from "./cursor-menu.js";
 import { hoverCard } from "./hover-card.js";
@@ -9,19 +9,30 @@ import { renderWikitext } from "./wikitext.js";
 
 const DEFAULT_ARTICLE = 1150;
 
+const LANGUAGE_NAMES = { fi: "Finnish", sv: "Swedish", en: "English" };
+
 const id = Number(new URLSearchParams(location.search).get("id") ?? DEFAULT_ARTICLE);
+// A Swedish or English article (?lang=sv|en, id in that wiki) is its current version: no history, so no
+// Explore, History, edit-war marks or "Watch it being written".
+const lang = pageLang();
+const foreign = lang !== "fi";
+if (foreign) {
+  document.body.classList.add("is-foreign");
+  document.querySelector(".bar .search input").placeholder = `Search ${LANGUAGE_NAMES[lang]} articles`;
+}
 setUpViews();
 // Enter in the top bar's search opens Find with what was typed, once the article view has set it up.
 let openFind = null;
 setUpSearch(document.querySelector(".bar .search"), { onFind: (query) => openFind?.(query) });
-const [articles, { version }] = await Promise.all([getArticles(id), getArticle(id, now())]);
-const summary = articles.find((a) => a.page_id === id);
+const [articles, { version }] = await Promise.all([foreign ? [] : getArticles(id), getArticle(id, now(), lang)]);
+// What the chat, Learn and Find are about: a Swedish or English article's Finnish counterpart, when there is one.
+const summary = foreign ? await finnishCounterpart() : articles.find((a) => a.page_id === id);
 
 const head = document.querySelector(".head");
 const body = document.querySelector(".body");
 const toc = document.querySelector(".toc");
 
-if (!version || !summary) {
+if (!version || (!foreign && !summary)) {
   head.innerHTML = `<h1>Not found</h1><p class="dek">Article not found.</p>`;
 } else {
   const doc =
@@ -30,9 +41,9 @@ if (!version || !summary) {
       : renderWikitext(version.text, { fileUrl, renderMath: await loadMath(version.text) });
   document.title = `${version.title} · Wikipedia`;
   head.innerHTML = `
-    <h1>${version.title}</h1>
+    <div class="head-title"><h1${foreign ? ` lang="${lang}"` : ""}>${version.title}</h1></div>
     ${doc.description ? `<p class="dek">${doc.description}</p>` : ""}
-    <p class="meta">
+    ${foreign ? foreignMeta(version) : `<p class="meta">
       Last edited ${formatDate(version.row_start)}${version.user ? ` by ${version.user}` : ""}
       <span aria-hidden="true">·</span>
       ${summary.versions === 1 ? "1 version, from" : `${summary.versions.toLocaleString("en-US")} versions since`} ${new Date(summary.first * 1000).getUTCFullYear()}
@@ -42,16 +53,17 @@ if (!version || !summary) {
     <button type="button" class="hp-start">
       <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3.2v9.6L12.6 8z"/></svg>
       Watch it being written
-    </button>`;
+    </button>`}`;
+  if (foreign) body.lang = lang;
   body.innerHTML = doc.html;
   toc.innerHTML = renderToc(doc.toc);
   document.body.classList.add("is-ready");
   trackActiveSection(doc.toc);
-  import("./war-inline.js").then((m) => m.addWarMarkers({ body, id }));
-  import("./tellings.js").then((m) => m.addTellings({ head, body, id }));
+  if (!foreign) import("./war-inline.js").then((m) => m.addWarMarkers({ body, id }));
+  import("./tellings.js").then((m) => m.addTellings({ head, body, id, lang }));
   // The article rewrites itself from its first version, with a timeline of its edits and wars at the bottom.
   const start = head.querySelector(".hp-start");
-  start.addEventListener("click", async () => {
+  start?.addEventListener("click", async () => {
     const { startHistoryPlay } = await import("./history-play.js");
     start.disabled = true;
     startHistoryPlay({ id, body, onClose: () => (start.disabled = false) });
@@ -80,6 +92,11 @@ if (!version || !summary) {
     if (target?.id) location.href = `?id=${target.id}`;
     else window.open(`https://fi.wikipedia.org/wiki/${encodeURIComponent(link.dataset.title.replace(/ /g, "_"))}`, "_blank", "noopener");
   });
+  if (summary) setUpAssistants();
+}
+
+// The chat, Learn and Find, and the menu at the cursor that opens them.
+function setUpAssistants() {
   const chat = chatPanel({ article: summary, onClose: () => menu.clearPaint() });
   // Learn opens a lesson and Find its articles, each in a wide sheet at the top; Ask opens a chat. A sheet
   // tucks the open chat away into its tray.
@@ -122,6 +139,7 @@ function setUpViews() {
   let current = null;
 
   const show = (view) => {
+    if (foreign) view = "article"; // the other views need the Finnish history
     const url = new URL(location.href);
     const shownId = Number(url.searchParams.get("id") ?? DEFAULT_ARTICLE);
     if (view !== "explore" && view !== "depth" && shownId !== id) {
@@ -151,6 +169,25 @@ function setUpViews() {
   });
   const requested = new URLSearchParams(location.search).get("view");
   show(requested in views ? requested : "article");
+}
+
+// The Finnish article a Swedish or English one is the same as ({ page_id, title }), or null.
+async function finnishCounterpart() {
+  const tellings = await getTellings(id, lang).catch(() => null);
+  const fi = tellings?.languages.find((l) => l.lang === "fi");
+  return fi ? { page_id: fi.page_id, title: fi.title } : null;
+}
+
+// "English Wikipedia · current version, 19 August 2025 · Read on en.wikipedia.org"
+function foreignMeta(version) {
+  const host = new URL(version.url).host;
+  return `<p class="meta meta-foreign">
+      <b class="meta-source"><span class="meta-code">${lang.toUpperCase()}</span>${LANGUAGE_NAMES[lang]} Wikipedia</b>
+      <span aria-hidden="true">·</span>
+      current version, edited ${formatDate(version.row_start)}
+      <span aria-hidden="true">·</span>
+      <a class="meta-link" href="${version.url}" target="_blank" rel="noopener">Read on ${host} ↗</a>
+    </p>`;
 }
 
 function formatDate(rowStart) {

@@ -146,18 +146,22 @@ def languages(cur):
 
 
 def serve(cur, params):
-    """GET /api/tellings?id=<Finnish page id>: how long the article is in each language, and per Finnish section
-    the Swedish and English paragraphs closest to it (only for articles `build` has done). Empty when the
-    tables are not there yet."""
+    """GET /api/tellings?id=<Finnish page id>: how long the article is in each language (with each one's page
+    id in its own wiki), and per Finnish section the Swedish and English paragraphs closest to it (only for
+    articles `build` has done). Empty when the tables are not there yet. With lang=sv|en, id is that wiki's page
+    id and only the languages come back: the sections are told from the Finnish side."""
     import pymysql
     page_id = int(params["id"][0])
+    lang = params.get("lang", ["fi"])[0]
+    if lang not in LANGUAGE_NAMES:
+        lang = "fi"
     found = []
     try:
-        cur.execute("""SELECT o.lang, o.title, o.url, o.words FROM article_language f
+        cur.execute("""SELECT o.lang, o.page_id, o.title, o.url, o.words FROM article_language f
                        JOIN article_language o ON o.wikidata_id = f.wikidata_id
-                       WHERE f.lang = 'fi' AND f.page_id = %s ORDER BY o.lang = 'fi' DESC, o.words DESC""", (page_id,))
+                       WHERE f.lang = %s AND f.page_id = %s ORDER BY o.lang = 'fi' DESC, o.words DESC""", (lang, page_id))
         found = [{**r, "name": LANGUAGE_NAMES[r["lang"]]} for r in cur.fetchall()]
-        if len(found) < 2:
+        if len(found) < 2 or lang != "fi":
             return {"languages": found, "sections": []}
         cur.execute("""SELECT f.section, f.position, f.words AS fi_words, o.lang, o.section AS their_section,
                               o.position AS their_position, o.words, o.text

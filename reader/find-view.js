@@ -299,6 +299,7 @@ function articleUrl(pageId) {
   const url = new URL(location.href);
   url.searchParams.set("id", pageId);
   url.searchParams.delete("at");
+  url.searchParams.delete("lang"); // Find's results are Finnish articles
   return url.href;
 }
 

@@ -104,6 +104,13 @@ def articles(cur, params):
 
 
 def article(cur, params):
+    """The Finnish article as of at (m_article, with its history), or with lang=sv|en the current Swedish or
+    English article of that wiki's page id (s_article: one Markdown version, no history)."""
+    lang = params.get("lang", ["fi"])[0]
+    if lang in ("sv", "en"):
+        return foreign_article(cur, lang, number(params, "id"))
+    if lang != "fi":
+        raise BadRequest("lang must be fi, sv or en")
     # The ORDER BY makes MariaDB read start_key backwards; without it, it may walk the (page_id, row_end)
     # index and decompress the text of every version that ended later.
     sql = cur.mogrify("""SELECT title, rev_id, IFNULL(user, '') AS user, IFNULL(comment, '') AS comment, row_start, text,
@@ -111,6 +118,18 @@ def article(cur, params):
 FROM m_article FOR SYSTEM_TIME AS OF TIMESTAMP %s
 WHERE page_id = %s
 ORDER BY row_start DESC LIMIT 1""", (stamp(moment(params)), number(params, "id")))
+    cur.execute(sql)
+    version = cur.fetchone()
+    if version:
+        version["row_start"] = stamp(version["row_start"])
+    return {"sql": sql, "version": version}
+
+
+def foreign_article(cur, lang, page_id):
+    """A Swedish or English article in the shape of a Finnish Markdown version, plus its lang and url."""
+    sql = cur.mogrify("""SELECT title, rev_id, '' AS user, '' AS comment, date_modified AS row_start, text,
+       'markdown' AS format, lang, url
+FROM s_article WHERE lang = %s AND page_id = %s""", (lang, page_id))
     cur.execute(sql)
     version = cur.fetchone()
     if version:

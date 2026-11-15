@@ -449,6 +449,173 @@ a {
   text-decoration: underline;
 }
 
+/* The title row: the title, and at its top right the languages button (tellings.js), as on Wikipedia */
+
+.head-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px 24px;
+}
+
+.lang-picker {
+  position: relative;
+  flex: none;
+  margin-top: 10px;
+}
+
+.lang-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 9px 5px 8px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: none;
+  font: 500 13px var(--sans);
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.lang-button:hover,
+.lang-button[aria-expanded="true"] {
+  border-color: var(--rule);
+  background: #f8f9fa;
+  color: var(--ink);
+}
+
+.lang-icon {
+  font-size: 13px;
+  letter-spacing: -0.04em;
+  color: var(--ink);
+}
+
+.lang-chevron {
+  width: 10px;
+  height: 10px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  transition: transform 0.15s ease;
+}
+
+.lang-button[aria-expanded="true"] .lang-chevron {
+  transform: rotate(180deg);
+}
+
+.lang-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  width: 264px;
+  padding: 10px 0 0;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--paper);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.1);
+  font-family: var(--sans);
+}
+
+.lang-menu-label {
+  margin: 0 14px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.lang-menu ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lang-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 7px 14px;
+  font-size: 14px;
+  color: var(--link);
+  text-decoration: none;
+}
+
+.lang-item:hover {
+  background: #f8f9fa;
+}
+
+.lang-item:hover .lang-native {
+  text-decoration: underline;
+}
+
+.lang-item.is-current {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.lang-item.is-current:hover .lang-native {
+  text-decoration: none;
+}
+
+.lang-words {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.lang-check {
+  width: 12px;
+  height: 12px;
+  align-self: center;
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 1.6;
+}
+
+.lang-item:not(.is-current)::after {
+  content: "";
+  width: 12px; /* the check's room, so the counts line up */
+}
+
+.lang-menu-foot {
+  margin: 6px 0 0;
+  padding: 9px 14px 11px;
+  border-top: 1px solid var(--rule);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink-3);
+}
+
+/* A Swedish or English article: where it is from, instead of its history */
+
+/* Explore and History need the Finnish history */
+.is-foreign .views {
+  display: none;
+}
+
+.meta-foreign .meta-source {
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.meta .meta-code {
+  display: inline-block;
+  margin: 0 6px 0 0;
+  padding: 1px 5px;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--ink-2);
+  vertical-align: 1px;
+}
+
 /* Reading column */
 
 .body {
@@ -899,6 +1066,19 @@ sup.ref a:hover {
 
   .head h1 {
     font-size: 40px;
+  }
+
+  .head-title {
+    flex-direction: column-reverse;
+  }
+
+  .lang-picker {
+    margin: 0 0 4px -9px;
+  }
+
+  .lang-menu {
+    right: auto;
+    left: 0;
   }
 
   .body {

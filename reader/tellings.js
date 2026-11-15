@@ -1,11 +1,13 @@
-// Other tellings: what Swedish and English Wikipedia say about this article that the Finnish one does not.
+// Other tellings: the same article in Finnish, Swedish and English Wikipedia.
 //
-// - Under the title: a line naming the other languages, and when one of them is much longer, how much.
+// - Beside the title: a languages button, like Wikipedia's ("文A 3 languages"), listing each language with its
+//   length; choosing one opens that version here (?id=<its page id>&lang=sv|en; Finnish has no lang).
+// - Under the title, in a Finnish article: when another language is much longer, how much.
 // - In a section's heading: a chip when another language says much more about that section ("EN 5× more in
 //   English"), next to the edit-war marks. Pressing it opens those paragraphs in a card under the section.
 //
-// It reads /api/tellings (server/tellings.py): each language's length, and per Finnish section the Swedish and
-// English paragraphs that bge-m3 placed closest to it. Without that data (or on a server without the
+// It reads /api/tellings (server/tellings.py): each language's length and page id, and per Finnish section the
+// Swedish and English paragraphs that bge-m3 placed closest to it. Without that data (or on a server without the
 // endpoint) it adds nothing.
 
 import { getTellings } from "./api.js";
@@ -14,34 +16,85 @@ const MUCH_LONGER = 2; // ratio at which a language "has more", for the article 
 const MIN_WORDS = 150; // a section note needs at least this much from the other language
 const MIN_PARAGRAPHS = 2;
 
+const ORDER = ["fi", "sv", "en"];
+export const NATIVE = { fi: "Suomi", sv: "Svenska", en: "English" };
+
 const escape = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 const times = (ratio) => `${ratio >= 10 ? Math.round(ratio) : Math.round(ratio * 10) / 10}×`.replace(".0×", "×");
 const count = (n) => n.toLocaleString("en-US");
 
-export async function addTellings({ head, body, id }) {
-  const data = await getTellings(id).catch(() => null);
-  const [fi, ...others] = data?.languages ?? [];
-  if (!fi || fi.lang !== "fi" || !others.length) return;
+// The reader's address for a language's version of the article.
+export const languageHref = (l) => (l.lang === "fi" ? `./?id=${l.page_id}` : `./?id=${l.page_id}&lang=${l.lang}`);
+
+export async function addTellings({ head, body, id, lang = "fi" }) {
+  const data = await getTellings(id, lang).catch(() => null);
+  const languages = data?.languages ?? [];
+  if (languages.length < 2) return; // only in Finnish: nothing to switch to
 
   css();
+  head.querySelector(".head-title")?.append(languagePicker(languages, lang));
+  if (lang !== "fi") return; // the notes compare with the Finnish text
+  const [fi, ...others] = languages;
+  if (fi.lang !== "fi") return;
   const notes = sectionNotes(body, data.sections, others);
-  head.querySelector(".meta")?.after(titleLine(fi, others, notes));
+  const line = titleLine(fi, others, notes);
+  if (line) head.querySelector(".meta")?.after(line);
 }
 
-// "Also on Swedish and English Wikipedia", or with a much longer one, "Swedish Wikipedia has 5× more …".
+// "文A 3 languages", opening a list of the languages with their lengths, the one shown marked.
+function languagePicker(languages, current) {
+  const sorted = [...languages].sort((a, b) => ORDER.indexOf(a.lang) - ORDER.indexOf(b.lang));
+  const picker = document.createElement("div");
+  picker.className = "lang-picker";
+  picker.innerHTML = `
+    <button type="button" class="lang-button" aria-haspopup="true" aria-expanded="false">
+      <span class="lang-icon" aria-hidden="true">文A</span>
+      <span>${sorted.length} languages</span>
+      <svg class="lang-chevron" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 3.5 5 6.5 8 3.5" /></svg>
+    </button>
+    <div class="lang-menu" hidden>
+      <p class="lang-menu-label">Read this article in</p>
+      <ul>
+        ${sorted
+          .map(
+            (l) => `<li><a class="lang-item${l.lang === current ? " is-current" : ""}" href="${languageHref(l)}" hreflang="${l.lang}"${l.lang === current ? ' aria-current="page"' : ""}>
+              <span class="lang-native" lang="${l.lang}">${NATIVE[l.lang]}</span>
+              <span class="lang-words">${count(l.words)} words</span>
+              ${l.lang === current ? '<svg class="lang-check" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 6.2 5 8.6 9.5 3.6" /></svg>' : ""}
+            </a></li>`,
+          )
+          .join("")}
+      </ul>
+      <p class="lang-menu-foot">Finnish comes with its whole edit history; Swedish and English are their current versions.</p>
+    </div>`;
+  const button = picker.querySelector(".lang-button");
+  const menu = picker.querySelector(".lang-menu");
+  const setOpen = (open) => {
+    menu.hidden = !open;
+    button.setAttribute("aria-expanded", String(open));
+  };
+  button.addEventListener("click", () => setOpen(menu.hidden));
+  document.addEventListener("click", (event) => !picker.contains(event.target) && setOpen(false));
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || menu.hidden) return;
+    setOpen(false);
+    button.focus();
+  });
+  return picker;
+}
+
+// With a much longer language: "Swedish Wikipedia has 5× more on this …"; else, when some sections are told at
+// more length elsewhere, how many. Nothing otherwise: the languages button names the languages.
 function titleLine(fi, others, notes) {
   const line = document.createElement("p");
   line.className = "ot-line";
   const longest = others[0]; // the API sorts the others longest first
   const ratio = longest.words / Math.max(fi.words, 1);
-  const links = others
-    .map((o) => `<a class="ot-lang" href="${escape(o.url)}" target="_blank" rel="noopener">${o.name}</a>`)
-    .join(" and ");
   if (ratio >= MUCH_LONGER) {
     line.classList.add("is-more");
     line.innerHTML =
       `<span class="ot-badge">${times(ratio)}</span>` +
-      `<span><a class="ot-lang" href="${escape(longest.url)}" target="_blank" rel="noopener">${longest.name} Wikipedia</a> ` +
+      `<span><a class="ot-lang" href="${languageHref(longest)}">${longest.name} Wikipedia</a> ` +
       `has ${times(ratio)} more on this: ${count(longest.words)} words to ${count(fi.words)} here.</span>` +
       (notes.length ? `<button type="button" class="ot-where">See where</button>` : "");
     line.querySelector(".ot-where")?.addEventListener("click", () => {
@@ -49,10 +102,10 @@ function titleLine(fi, others, notes) {
       notes[0].classList.add("is-flash");
       setTimeout(() => notes[0].classList.remove("is-flash"), 1400);
     });
-  } else {
-    line.innerHTML = `<span>Also on ${links} Wikipedia</span>` +
-      (notes.length ? `<span class="ot-dot" aria-hidden="true">·</span><span>${notes.length} section${notes.length > 1 ? "s" : ""} told at more length there</span>` : "");
+    return line;
   }
+  if (!notes.length) return null;
+  line.innerHTML = `<span>${notes.length} section${notes.length > 1 ? "s are" : " is"} told at more length in ${others.map((o) => o.name).join(" or ")}</span>`;
   return line;
 }
 
