@@ -10,7 +10,6 @@
 // `section` is the Finnish heading text as rendered. For now a fixture for Kalevala (498); later GET /api/fill.
 
 const FROM = { en: "Englanninkielisestä Wikipediasta", sv: "Ruotsinkielisestä Wikipediasta" };
-const IN = { en: "englanniksi", sv: "ruotsiksi" };
 const MS_PER_PARAGRAPH = 2600; // how long typing one paragraph takes, whatever its length
 
 // The one line to change when the backend serves it: return fetch(`/api/fill?id=${id}`).then((r) => r.json()).
@@ -205,7 +204,7 @@ function originalPopover() {
   document.body.append(pop);
   return {
     show(el, text, lang) {
-      pop.innerHTML = `<p class="fill-original-head">Alkuperäinen ${IN[lang]}</p>`;
+      pop.innerHTML = `<p class="fill-original-head">Original</p>`;
       const p = document.createElement("p");
       p.className = "fill-original-text";
       p.lang = lang;
