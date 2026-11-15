@@ -4,9 +4,8 @@ import { escape } from "./format.js";
 
 // "Who wrote this": tints each paragraph of today's article by the edit that last wrote it, from a replay of
 // every version in m_article FOR SYSTEM_TIME ALL (server/blame.py). Neighbouring paragraphs from one edit share
-// a tint; hover one for who, when and why. "By age" shades by age instead: the older the words, the lighter.
-// The legend also offers to write in what the Swedish and English Wikipedias say that this one doesn't
-// (fill-in.js), so the article shows every source of its paragraphs at once.
+// a tint; hover one for who, when and why. Beside the toggle, "Fill gaps" writes in what the Swedish and
+// English Wikipedias say that this one doesn't (fill-in.js), so the article shows every source of its paragraphs.
 
 // The one place the data comes from (reader/fake/blame.json is a saved answer for Kalevala, 498).
 function loadBlame(id) {
@@ -17,7 +16,7 @@ const PERSON = `<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="5
 const PEN = `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M11.2 2.6l2.2 2.2-7.6 7.6-2.9.7.7-2.9z"/></svg>`;
 // Paragraph-level elements of the reading column; the infobox, figures and tables are left alone.
 const BLOCKS = "p, li, dd, blockquote, h2, h3, h4";
-const SKIP = ".infobox, figure, table, .references, .fill-block, .fill-in, .blame-legend, .tellings, nav";
+const SKIP = ".infobox, figure, table, .references, .fill-block, .fill-in, .tellings, nav";
 const DAY = 86400000;
 const SWEEP_MS = 850; // the tints cascade down the window in this long
 const LEAVE_MS = 220;
@@ -32,7 +31,7 @@ export async function addBlame({ head, body, id }) {
   button.type = "button";
   button.className = "blame-toggle";
   button.setAttribute("aria-pressed", "false");
-  button.innerHTML = `${PERSON}Who wrote this`;
+  button.innerHTML = `${PERSON}Who wrote this?`;
   const anchor = head.querySelector(".hp-start");
   anchor ? anchor.after(button) : head.append(button);
 
@@ -45,13 +44,13 @@ export async function addBlame({ head, body, id }) {
       button.disabled = true;
       setTimeout(() => (button.disabled = false), reducedMotion() ? 0 : LEAVE_MS + 20);
     } else {
-      view = openBlame({ body, data });
+      view = openBlame({ body, data, button });
     }
     button.setAttribute("aria-pressed", String(!!view));
   });
 }
 
-function openBlame({ body, data }) {
+function openBlame({ body, data, button }) {
   const root = document.documentElement;
   root.classList.remove("blame-shown", "blame-leaving");
   root.classList.add("blame-on");
@@ -80,28 +79,15 @@ function openBlame({ body, data }) {
     previous = block;
   }
 
-  const times = painted.map((b) => b.time);
-  const oldest = Math.min(...times);
-  const edits = new Set(painted.map((b) => b.origin.rev_id)).size;
-
-  const legend = document.createElement("div");
-  legend.className = "blame-legend";
-  legend.innerHTML = `
-    <p class="blame-note">Colours show which edit last wrote each paragraph — <strong>${edits.toLocaleString("en-US")} edits</strong>
-      of ${data.versions.toLocaleString("en-US")} versions shape today's text. The oldest surviving words date from ${new Date(oldest).getUTCFullYear()}.</p>
-    <div class="blame-controls">
-      <div class="blame-modes" role="group" aria-label="Colour by">
-        <button type="button" data-mode="edit" aria-pressed="true">By edit</button>
-        <button type="button" data-mode="age" aria-pressed="false">By age</button>
-      </div>
-      <span class="blame-age-scale" aria-hidden="true"><span>${new Date(oldest).getUTCFullYear()}</span><i></i><span>now</span></span>
-      <span class="blame-fill-key" hidden></span>
-      <button type="button" class="blame-fill" hidden></button>
-    </div>`;
-  body.prepend(legend);
+  // "Fill in from other languages" sits next to "Who wrote this" while the view is on.
+  const fillButton = document.createElement("button");
+  fillButton.type = "button";
+  fillButton.className = "blame-toggle blame-fill";
+  fillButton.hidden = true;
+  button.after(fillButton);
 
   // The cascade: each block's tint starts a little after the one above it, over SWEEP_MS for what is in the
-  // window; blocks further down start last. Delays are cleared afterwards, so mode switches are immediate.
+  // window; blocks further down start last. Delays are cleared afterwards.
   // Measured from the first tinted block on screen, so the sweep starts at once.
   const tops = painted.map((b) => b.el.getBoundingClientRect().top);
   const start = Math.max(0, Math.min(...tops.filter((t) => t >= 0), innerHeight));
@@ -111,7 +97,6 @@ function openBlame({ body, data }) {
     b.el.style.setProperty("--blame-delay", `${Math.round(share * SWEEP_MS)}ms`);
   }
 
-  let mode = "edit";
   const paint = () => {
     for (const b of painted) {
       b.el.classList.add("blame-block");
@@ -120,18 +105,9 @@ function openBlame({ body, data }) {
         b.el.tabIndex = 0; // reachable by keyboard; removed again on close
         b.addedTab = true;
       }
-      if (mode === "edit") {
-        b.el.style.setProperty("--blame-bg", `hsl(${b.hue} 65% 95.5%)`);
-        b.el.style.setProperty("--blame-rule", `hsl(${b.hue} 45% 72%)`);
-      } else {
-        // Newer is stronger: the share of the article's lifetime since this paragraph was written, eased.
-        const fresh = Math.pow((b.time - oldest) / Math.max(1, now - oldest), 1.6);
-        b.el.style.setProperty("--blame-bg", `rgb(51 102 204 / ${(0.03 + 0.17 * fresh).toFixed(3)})`);
-        b.el.style.setProperty("--blame-rule", `rgb(51 102 204 / ${(0.15 + 0.6 * fresh).toFixed(3)})`);
-      }
+      b.el.style.setProperty("--blame-bg", `hsl(${b.hue} 65% 95.5%)`);
+      b.el.style.setProperty("--blame-rule", `hsl(${b.hue} 45% 72%)`);
     }
-    legend.dataset.mode = mode;
-    for (const m of legend.querySelectorAll("[data-mode]")) m.setAttribute("aria-pressed", String(m.dataset.mode === mode));
   };
   // A continuing block also covers the margin above it, so a run reads as one patch. Measured again when
   // something is written into the article (fill-in.js) or the window changes width.
@@ -151,29 +127,15 @@ function openBlame({ body, data }) {
   // Two frames: the blocks are painted transparent first, then the tints transition in.
   frame().then(frame).then(() => !closed && root.classList.add("blame-shown"));
 
-  legend.querySelector(".blame-modes").addEventListener("click", (event) => {
-    const m = event.target.closest("[data-mode]")?.dataset.mode;
-    if (m && m !== mode) {
-      mode = m;
-      paint();
-    }
-  });
-
-  // Paragraphs written in from other languages (fill-in.js) are their own source, named in the legend,
-  // and one button writes in all of them.
-  const fillKey = legend.querySelector(".blame-fill-key");
-  const fillButton = legend.querySelector(".blame-fill");
+  // Paragraphs that the Swedish and English Wikipedias have and this one lacks (fill-in.js): one button
+  // writes in all of them, translated, where they fit.
   let fill = null; // fill-in.js, once its chips are in place
   let filling = false;
   const showFillIns = () => {
-    const langs = [...new Set([...body.querySelectorAll(".fill-in")].map((el) => el.dataset.lang))];
-    fillKey.hidden = !langs.length;
-    const names = langs.map((l) => ({ en: "English", sv: "Swedish" })[l] ?? l).join(" and ");
-    const html = `<i></i>From ${escape(names)} Wikipedia (translated)`;
-    if (fillKey.innerHTML !== html) fillKey.innerHTML = html; // a change here would wake the observer again
-    if (fill && !filling) {
+    if (fill && !filling && !fillButton.classList.contains("is-done")) {
       const n = fill.pendingFillIns();
-      const label = `${PEN}<span>Täydennä muista kielistä (${n} ${n === 1 ? "kappale" : "kappaletta"})</span>`;
+      const label = `${PEN}Fill gaps (${n})`;
+      fillButton.title = "Write in, translated, what the English and Swedish Wikipedias have and this article lacks";
       fillButton.hidden = !n;
       if (n && fillButton.innerHTML !== label) fillButton.innerHTML = label;
     }
@@ -189,18 +151,17 @@ function openBlame({ body, data }) {
     filling = true;
     fillButton.disabled = true;
     fillButton.classList.add("is-busy");
-    const step = (i, n) => (fillButton.innerHTML = `${PEN}<span>Kirjoitetaan… ${i + 1}/${n}</span>`);
+    const step = (i, n) => (fillButton.innerHTML = `${PEN}Writing ${i + 1}/${n}…`);
     await fill.writeInAll({ onSection: (i, n) => !closed && step(i, n) });
     filling = false;
     if (closed) return;
     fillButton.classList.remove("is-busy");
     fillButton.classList.add("is-done");
-    fillButton.innerHTML = `<span>✓ Täydennetty muista kielistä</span>`;
+    fillButton.innerHTML = `✓ Gaps filled`;
   });
   showFillIns();
   let pending = 0;
   const observer = new MutationObserver((records) => {
-    if (!records.some((r) => !legend.contains(r.target))) return;
     showFillIns();
     cancelAnimationFrame(pending);
     pending = requestAnimationFrame(layout);
@@ -246,9 +207,9 @@ function openBlame({ body, data }) {
       body.removeEventListener("focusout", hide);
       window.removeEventListener("scroll", away);
       card.remove();
-      // The tints and the legend fade together; then every trace goes.
+      // The tints fade; then every trace goes.
       root.classList.add("blame-leaving");
-      legend.classList.add("is-leaving");
+      fillButton.remove();
       setTimeout(() => {
         for (const b of painted) {
           b.el.classList.remove("blame-block", "blame-continues", "is-lit");
@@ -257,7 +218,6 @@ function openBlame({ body, data }) {
           if (!b.el.getAttribute("class")) b.el.removeAttribute("class");
           if (b.addedTab) b.el.removeAttribute("tabindex");
         }
-        legend.remove();
         root.classList.remove("blame-on", "blame-shown", "blame-leaving");
       }, reducedMotion() ? 0 : LEAVE_MS);
     },
