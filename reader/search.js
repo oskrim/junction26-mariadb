@@ -48,7 +48,7 @@ export function setUpSearch(box) {
     // the home page's suggestions.
     list.hidden = (!query && !results.length) || document.activeElement !== input;
     list.innerHTML =
-      (!query && results.length ? `<li class="search-head">Most read</li>` : "") +
+      
       (results.length
         ? results
             .map(

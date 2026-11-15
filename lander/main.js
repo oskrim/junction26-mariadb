@@ -88,6 +88,29 @@ function renderSuggest(text, pages) {
   suggest.hidden = false;
   q.setAttribute("aria-expanded", "true");
 }
+// an empty box lists Finnish Wikipedia's most-read articles of 2025 (Wikimedia pageviews) whose full history we
+// hold, most read first; the reader's search bar shows the same list (reader/search.js SUGGESTIONS)
+const POPULAR = [
+  [11396, "Alexander Stubb", "Suomalainen kokoomustaustainen poliitikko ja Suomen tasavallan presidentti"],
+  [1275, "Urho Kekkonen", "Suomalainen poliitikko ja Suomen tasavallan presidentti 1956–1982"],
+  [1256, "Talvisota", "Suomen ja Neuvostoliiton sota 30. marraskuuta 1939 – 13. maaliskuuta 1940"],
+  [1394958, "Eemeli Peltonen", "Suomalainen sosiaalidemokraattinen poliitikko ja kansanedustaja"],
+  [440, "Jatkosota", "Suomen ja Neuvostoliiton sota 25. kesäkuuta 1941 – 19. syyskuuta 1944"],
+  [1069, "Suomen tasavallan presidentti", "Suomen kansan valitsema valtionpäämies"],
+  [15295, "Eppu Normaali", "Suomalainen rockyhtye, aloitti uuden aallon punk-yhtyeenä vuonna 1976"],
+  [1150, "Suomen sisällissota", "Senaatin ja kansanvaltuuskunnan joukkojen sota 27. tammikuuta – 15. toukokuuta 1918"],
+].map(([page_id, title, summary]) => ({ page_id, title, summary }));
+function renderPopular() {
+  options = POPULAR.map((a) => ({ kind: "page", a }));
+  suggest.innerHTML = POPULAR.map((a, i) => `
+      <a class="opt" id="opt-${i}" role="option" href="${pageUrl(a)}" data-i="${i}">
+        ${thumb(a, "opt-icon")}
+        <span class="opt-body"><span class="opt-title">${esc(a.title)}</span><span class="opt-sub">${esc(a.summary)}</span></span>
+      </a>`).join("");
+  setActive(-1);
+  suggest.hidden = false;
+  q.setAttribute("aria-expanded", "true");
+}
 function setActive(i) {
   active = i;
   suggest.querySelectorAll(".opt").forEach((el) => el.setAttribute("aria-selected", Number(el.dataset.i) === i));
@@ -103,13 +126,13 @@ q.addEventListener("input", async () => {
   grow();
   const text = q.value.trim();
   const seq = ++typedSeq;
-  if (!text) { closeSuggest(); return; }
+  if (!text) { renderPopular(); return; }
   const pages = await suggestPages(text);
   if (seq !== typedSeq) return; // a newer keystroke already answered
   // a long question rarely matches a title; still offer the wider search
   renderSuggest(text, pages);
 });
-q.addEventListener("focus", () => { if (q.value.trim() && results.hidden) q.dispatchEvent(new Event("input")); });
+q.addEventListener("focus", () => { if (!q.value.trim()) renderPopular(); else if (results.hidden) q.dispatchEvent(new Event("input")); });
 
 q.addEventListener("keydown", (e) => {
   const open = !suggest.hidden;

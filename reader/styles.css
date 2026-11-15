@@ -260,16 +260,6 @@ a {
   color: var(--ink-2);
 }
 
-/* An empty box's suggestions (search.js SUGGESTIONS) */
-.search-results .search-head {
-  padding: 6px 10px 4px;
-  font: 500 11px var(--sans);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--ink-3);
-  cursor: default;
-}
-
 .search-results .search-none {
   font-size: 13px;
   color: var(--ink-3);
