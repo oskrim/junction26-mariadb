@@ -152,7 +152,7 @@ export function learnView({ article }) {
     lesson.page.classList.add("is-rewriting");
     renderSide();
     renderChrome();
-    const { stream, attachment } = learn({ prompt: request, context: lesson.context, article, history: lesson.history, shape: "revise" });
+    const { stream, attachment } = learn({ prompt: request, context: lesson.context, article, history: lesson.history, shape: "revise", built: lesson.sources });
     let raw = "";
     let started = false;
     for await (const piece of stream) {
@@ -332,7 +332,7 @@ export function learnView({ article }) {
     const turn = { question, text: "", sources: null, done: false, at };
     lesson.followups.push(turn);
     lesson.asking = true;
-    const { stream, attachment } = learn({ prompt: question, context: lesson.context, article, history: lesson.history, shape: "reply" });
+    const { stream, attachment } = learn({ prompt: question, context: lesson.context, article, history: lesson.history, shape: "reply", built: lesson.sources });
     if (lesson === current) renderSide();
     for await (const piece of stream) {
       turn.text += piece;
@@ -509,8 +509,26 @@ export function parse(text, prompt) {
     const m = line.match(/^\s*[-•]?\s*\{?([^{}]+?)\}?\s*::\s*(.+)$/);
     if (m) lesson.terms.set(key(m[1]), { name: m[1].trim(), text: m[2].trim() });
   }
+  // A term is often marked inflected in the text ("{Punakaartiin}") and explained in its base form ("Punakaarti"):
+  // such an explanation goes under the marked form, so the term in the text opens it.
+  const marked = [...body.matchAll(/\{([^{}]+)\}/g)].map((m) => key(m[1]));
+  const loose = marked.filter((k) => !lesson.terms.has(k));
+  if (loose.length) {
+    const terms = new Map();
+    for (const [k, term] of lesson.terms) {
+      const as = marked.includes(k) ? null : loose.filter((l) => !terms.has(l) && sameWord(l, k)).sort((x, y) => shared(y, k) - shared(x, k))[0];
+      terms.set(as ?? k, term);
+    }
+    lesson.terms = terms;
+  }
   return lesson;
 }
+
+// Two forms of one word or phrase: word for word, most of the shorter form is their common start ("sortokautta" and
+// "sortokaudet", "lavastetun hyökkäyksen" and "lavastettu hyökkäys").
+const shared = (a, b) => [...a].findIndex((c, i) => c !== b[i]) >>> 0;
+const sameStem = (a, b) => Math.min(shared(a, b), a.length, b.length) >= Math.max(4, 0.6 * Math.min(a.length, b.length));
+const sameWord = (a, b, x = a.split(/\s+/), y = b.split(/\s+/)) => x.length === y.length && x.every((w, i) => w === y[i] || sameStem(w, y[i]));
 
 // Escaped text with its citation markers linked (or hidden until the sources arrive) and its terms as buttons.
 export function prose(text, lesson, sources = lesson.sources) {

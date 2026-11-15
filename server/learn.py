@@ -158,13 +158,21 @@ def serve(handler, database):
         candidates += found
         explored = len(candidates)
         timings["db_ms"] = ms(started)
-        if candidates:
+        sources, seen, gap = list(request["sources"]), {here["title"]}, request["prompt"]
+        if sources:
+            # A change to a lesson, or a question about it: its sources stay, under their numbers, and only what
+            # the message needs beyond them is read.
+            seen |= {s["title"] for s in sources}
+            new = [c for c in candidates if c["title"] not in seen]
+            missing, picks = more(progress, request, here, sources, new, "Checking the lesson's sources")
+            gap, picks = missing or gap, picks[:MAX_SOURCES - len(sources)]
+        elif candidates:
             picks = rank(progress, request, here, candidates)
         else:  # nothing to follow: explain from this article alone
             progress.finish("No linked articles at that moment, so the explanation uses this article alone")
             picks = []
         timings["rank_ms"] = ms(started)
-        sources, seen, gap = [], {here["title"]} | {c["title"] for c, _, _ in picks}, request["prompt"]
+        seen |= {c["title"] for c, _, _ in picks}
 
         def read(picks):
             for c, why, focus in picks:
@@ -238,6 +246,7 @@ def late_terms(raw):
 def parse(handler):
     try:
         body = json.loads(handler.rfile.read(int(handler.headers.get("Content-Length", 0))))
+        tracelog.request_body(body)
         prompt = str(body["prompt"]).strip()
         page_id = int(body["page_id"])
         at = datetime.fromtimestamp(float(body["at"]), timezone.utc).replace(tzinfo=None)
@@ -246,13 +255,24 @@ def parse(handler):
         raise AskError(400, f"bad request: {error}")
     if not prompt:
         raise AskError(400, "prompt must not be empty")
-        tracelog.request_body(body)
     history = [h for h in body.get("history") or [] if isinstance(h, dict) and h.get("text")][-MAX_HISTORY:]
     shape = body.get("shape")
     if shape is not None and shape not in SHAPES:
         raise AskError(400, f"shape must be one of {', '.join(SHAPES)}")
+    # What a lesson was written from, sent back with a change to it or a question about it: the "sources" items.
+    told = body.get("sources") if shape in ("revise", "reply") and isinstance(body.get("sources"), list) else []
+    sources = [{"title": str(s["title"])[:300], "page_id": s.get("page_id") if isinstance(s.get("page_id"), int) else None,
+                "url": wiki_url(str(s["title"])[:300]), "why": str(s.get("why") or "")[:300],
+                "section": str(s["text"])[:SECTION_CHARS + 10]}
+               for s in told if isinstance(s, dict) and s.get("title") and s.get("text")][:MAX_SOURCES]
+    topic = next((str(h["text"])[:500] for h in history if h.get("role") == "user"), None) if shape in ("revise", "reply") else None
     return {"prompt": prompt, "context": body.get("context") or None, "page_id": page_id, "at": at,
-            "narrow": width < NARROW_W, "history": history, "shape": shape}
+            "narrow": width < NARROW_W, "history": history, "shape": shape, "sources": sources, "topic": topic}
+
+
+def wanted(request):
+    """The reader's message for the ranking calls, with the lesson's question when it is about a lesson."""
+    return request["prompt"] + (f"\n(Said about a lesson that answers: {request['topic']})" if request["topic"] else "")
 
 
 def linked_articles(cur, progress, page_ids, at, skip=(), limit=None, quiet=False):
@@ -310,7 +330,7 @@ QUERIES = 3
 def search_queries(request, here, query):
     """The queries Gemini writes to find what `query` (the reader's question, or the gap named after a round) needs;
     the article's title with the question when Gemini does not answer."""
-    asked = f"Article: {here['title']}\nIts start: {reader_text(here, 1_200)}\n\nThe reader wants: {request['prompt']}"
+    asked = f"Article: {here['title']}\nIts start: {reader_text(here, 1_200)}\n\nThe reader wants: {wanted(request)}"
     if query != request["prompt"]:
         asked += f"\nStill missing after reading: {query}"
     try:
@@ -353,10 +373,11 @@ def related_articles(cur, progress, request, here, query, linked, skip=()):
 def rank(progress, request, here, candidates):
     listing = "\n\n".join(f"{i + 1}. {c['title']}: {c['lead']}" for i, c in enumerate(candidates))
     text = (f"{reader_block(request, here, 1_500)}\n\nLinked articles:\n{listing}\n\n"
-            f"Question: {request['prompt']}\nWrite each \"why\" in the language of this question.")
+            f"Question: {wanted(request)}\nWrite each \"why\" in the language of this question.")
     progress.step("Choosing the relevant ones…")
     reply = generate_json(RANK_RULES, [{"role": "user", "parts": [{"text": text}]}], RANK_SCHEMA)
     picks = numbered(reply, candidates)
+    request["language"] = named(reply)
     if not picks:
         progress.finish("None of the linked articles helps with this question, so the explanation uses this article alone")
         return []
@@ -375,9 +396,12 @@ def more(progress, request, here, sources, candidates, label):
     read = "\n\n".join(f"[{i + 1}] {s['title']}: {s['section'][:DIGEST_CHARS]}" for i, s in enumerate(sources))
     listing = "\n\n".join(f"{i + 1}. {c['title']}: {c['lead']}" for i, c in enumerate(candidates))
     text = (f"{reader_block(request, here, 1_000)}\n\nRead so far:\n{read}\n\nFurther candidates:\n{listing}\n\n"
-            f"Question: {request['prompt']}\nWrite the gap and each \"why\" in the language of this question.")
+            f"Question: {wanted(request)}\nWrite the gap and each \"why\" in the language of this question."
+            + ("\nThe lesson was written from what has been read. A message about its style or length (simpler, "
+               "shorter, clearer) needs nothing further: enough is true." if request["topic"] else ""))
     progress.step(f"{label}: is anything still missing?")
     reply = generate_json(MORE_RULES, [{"role": "user", "parts": [{"text": text}]}], MORE_SCHEMA, WRITE_MODEL)
+    request.setdefault("language", named(reply))
     if reply.get("enough"):
         progress.finish(f"{label}: what has been read explains it")
         return "", []
@@ -391,6 +415,12 @@ def more(progress, request, here, sources, candidates, label):
         return "", []
     progress.finish(f"{label}: still missing {gap}; chose " + "; ".join(f"{c['title']} — {why.rstrip('.')}" for c, why, _ in picks))
     return gap, picks
+
+
+def named(reply):
+    """The language a ranking reply says the question is in, when it is one word like "Swedish"."""
+    language = str(reply.get("language") or "").strip()
+    return language if re.fullmatch(r"[^\W\d_]{3,20}", language) else None
 
 
 def plain(text):
@@ -428,7 +458,14 @@ def write(progress, request, here, sources):
                 {"role": "model", "parts": [{"text": "I have read the sources."}]}]
     contents += [{"role": "user" if h.get("role") == "user" else "model", "parts": [{"text": str(h["text"])}]}
                  for h in request["history"]]
-    contents.append({"role": "user", "parts": [{"text": f"{request['prompt']}\n\n(Answer in the language of this question.)"}]})
+    # The ranking call named the question's language: said outright, a Swedish question no longer gets a Finnish
+    # lesson. A change to a lesson keeps the lesson's language ("Make it simpler" on a Finnish lesson).
+    language = (f"(Answer in {request['language']}, the language of this question.)" if request.get("language") else
+                "(Answer in the language of this question.)")
+    if request["shape"] == "revise":
+        language = ("(Write the \"Changed:\" line and the lesson in the language the lesson is written in, unless this "
+                    "message asks for another one.)")
+    contents.append({"role": "user", "parts": [{"text": f"{request['prompt']}\n\n{language}"}]})
     rules = WRITE_RULES.replace("{layout}", LESSON_LAYOUT if request["shape"] in ("lesson", "revise") else PLAIN)
     with gemini(WRITE_MODEL, "streamGenerateContent?alt=sse", rules, contents, {"thinkingConfig": WRITE_THINKING}) as response:
         yield from answer_texts(progress, response)
@@ -446,7 +483,7 @@ def reader_text(here, chars=WRITE_READER_CHARS):
 def verified(cited, texts):
     """{n: quote} for the cited quotes that occur in texts[n], comparing with runs of whitespace as one space."""
     found = {}
-    for n, quote in cited:
+    for n, quote, *_ in cited:  # until_quotes may give more per quote (Ask's THEN and NOW tags)
         quote = " ".join(quote.split())
         if 0 <= n < len(texts) and n not in found and len(quote) >= 12 and quote in " ".join(texts[n].split()):
             found[n] = quote
@@ -458,6 +495,7 @@ def gemini(model, method, system, contents, config):
     if not key:
         raise AskError(503, "GEMINI_API_KEY is not set on the server")
     body = {"systemInstruction": {"parts": [{"text": system}]}, "contents": contents, "generationConfig": config}
+    tracelog.event("gemini_request", model=model, method=method, body=body)
     request = urllib.request.Request(f"{API}{model}:{method}", data=json.dumps(body).encode(),
                                      headers={"Content-Type": "application/json", "x-goog-api-key": key})
     try:
@@ -472,6 +510,7 @@ def generate_json(system, contents, schema, model=RANK_MODEL):
     config = {"thinkingConfig": RANK_THINKING, "responseMimeType": "application/json", "responseSchema": schema}
     with gemini(model, "generateContent", system, contents, config) as response:
         reply = json.loads(response.read())
+    tracelog.event("gemini_reply", reply=reply)
     try:
         return json.loads("".join(texts(reply)))
     except ValueError as error:
@@ -492,7 +531,6 @@ def wikitext_plain(wikitext):
     for _ in range(4):  # nested templates, innermost first
         text = re.sub(r"\{\{[^{}]*\}\}", "", text)
     text = re.sub(r"\[\[(?:Tiedosto|Kuva|File|Image|Luokka|Category):[^\[\]]*(?:\[\[[^\]]*\]\][^\[\]]*)*\]\]", "", text, flags=re.I)
-    tracelog.event("gemini_request", model=model, method=method, body=body)
     text = re.sub(r"\[\[(?:[^|\]]*\|)?([^\]]*)\]\]", r"\1", text)
     text = re.sub(r"\[https?://\S+ ([^\]]*)\]", r"\1", text)
     text = re.sub(r"'{2,}|^=+\s*|\s*=+$", "", text, flags=re.M)
@@ -507,7 +545,6 @@ def markdown_plain(markdown):
     return re.sub(r"\n{2,}", "\n", re.sub(r"[ \t]+", " ", text)).strip()
 
 
-    tracelog.event("gemini_reply", reply=reply)
 def wiki_url(title):
     return "https://fi.wikipedia.org/wiki/" + title.replace(" ", "_")
 

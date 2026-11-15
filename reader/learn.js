@@ -9,7 +9,8 @@ import { events } from "./assistant.js";
 
 const at = () => Number(new URLSearchParams(location.search).get("at")) || Math.floor(Date.now() / 1000);
 
-export function learn({ prompt, context, article, history = [], onStep = null, shape = null }) {
+// built: the sources a lesson was written from, for a change to it or a question about it; they keep their numbers.
+export function learn({ prompt, context, article, history = [], onStep = null, shape = null, built = null }) {
   const request = {
     prompt,
     context,
@@ -18,6 +19,7 @@ export function learn({ prompt, context, article, history = [], onStep = null, s
     viewport: { w: innerWidth, h: innerHeight },
     history: history.slice(),
     ...(shape && { shape }),
+    ...(built?.items?.length && { sources: built.items.map(({ title, page_id, why, text }) => ({ title, page_id, why, text })) }),
   };
   history.push({ role: "user", text: prompt });
   let found;
