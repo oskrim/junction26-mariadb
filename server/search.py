@@ -9,9 +9,11 @@ more (p50; 1.2 s p95) on 3.5 Flash Lite. 3.5 Flash gave 0.91 / 0.96 / 0.93 for 1
 import json
 import os
 import re
+import time
 import urllib.request
 
 import bm25
+import tracelog
 import vector
 
 MAX_WORDS = 8
@@ -31,7 +33,14 @@ def by(scored):
 
 def ranked(cur, q, limit, lang="fi"):
     """[{page_id, by}] of the limit articles of lang that best match q, best first; by is "keyword", "meaning" or
-    "both". Without the embedding service, the BM25 ranking alone."""
+    "both". Without the embedding service, the BM25 ranking alone. Recorded in the request's trace (tracelog.py)."""
+    started = time.perf_counter()
+    results = _ranked(cur, q, limit, lang)
+    tracelog.event("search", q=q, lang=lang, limit=limit, ms=round((time.perf_counter() - started) * 1000), results=results)
+    return results
+
+
+def _ranked(cur, q, limit, lang="fi"):
     found = words(q)
     if not found:
         return []

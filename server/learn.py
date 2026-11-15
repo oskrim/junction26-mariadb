@@ -23,6 +23,7 @@ articles, JSON, sent after the explanation. Each has the quote its claims rest o
 word for word in what it was given.
 """
 import html
+import tracelog
 import json
 import os
 import re
@@ -245,6 +246,7 @@ def parse(handler):
         raise AskError(400, f"bad request: {error}")
     if not prompt:
         raise AskError(400, "prompt must not be empty")
+        tracelog.request_body(body)
     history = [h for h in body.get("history") or [] if isinstance(h, dict) and h.get("text")][-MAX_HISTORY:]
     shape = body.get("shape")
     if shape is not None and shape not in SHAPES:
@@ -490,6 +492,7 @@ def wikitext_plain(wikitext):
     for _ in range(4):  # nested templates, innermost first
         text = re.sub(r"\{\{[^{}]*\}\}", "", text)
     text = re.sub(r"\[\[(?:Tiedosto|Kuva|File|Image|Luokka|Category):[^\[\]]*(?:\[\[[^\]]*\]\][^\[\]]*)*\]\]", "", text, flags=re.I)
+    tracelog.event("gemini_request", model=model, method=method, body=body)
     text = re.sub(r"\[\[(?:[^|\]]*\|)?([^\]]*)\]\]", r"\1", text)
     text = re.sub(r"\[https?://\S+ ([^\]]*)\]", r"\1", text)
     text = re.sub(r"'{2,}|^=+\s*|\s*=+$", "", text, flags=re.M)
@@ -504,6 +507,7 @@ def markdown_plain(markdown):
     return re.sub(r"\n{2,}", "\n", re.sub(r"[ \t]+", " ", text)).strip()
 
 
+    tracelog.event("gemini_reply", reply=reply)
 def wiki_url(title):
     return "https://fi.wikipedia.org/wiki/" + title.replace(" ", "_")
 

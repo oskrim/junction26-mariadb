@@ -26,6 +26,7 @@ import fill
 import learn
 import search as search_ranking
 import tellings
+import tracelog
 import vector
 import voice
 
@@ -573,8 +574,10 @@ class Handler(BaseHTTPRequestHandler):
         if path.is_dir():
             path = path / "index.html"
         if root not in path.parents or not path.is_file():
+            tracelog.start(urlparse(self.path).path)
             return self.send(404, "application/json", b'{"error": "not found"}')
         body = path.read_bytes()
+            tracelog.finish(self.status)
         # Files change on deploy, so the browser asks every time, and a revisit costs a 304 without a body.
         # A file under vendor/ never changes: a new version gets a new name.
         etag = f'"{hashlib.sha1(body).hexdigest()}"'
