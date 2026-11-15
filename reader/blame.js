@@ -245,7 +245,7 @@ function cardHtml(origin, time, now) {
   const user = /^[\d.:a-f]+$/i.test(origin.user) && /[.:]/.test(origin.user) ? "an anonymous editor" : censor(origin.user || "unknown");
   const { section, summary } = parseComment(origin.comment);
   return `
-    <div class="blame-card-head"><strong>Written ${date}</strong><span>${age(now - time)}</span></div>
+    <div class="blame-card-head"><strong>${date}</strong><span>${age(now - time)}</span></div>
     <div class="blame-card-who">by ${escape(user)}${section ? ` <span class="blame-card-sec">in § ${escape(section)}</span>` : ""}</div>
     ${summary ? `<div class="blame-card-why">“${escape(censor(summary))}”</div>` : `<div class="blame-card-why is-empty">No edit summary</div>`}`;
 }
