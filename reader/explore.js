@@ -495,9 +495,9 @@ export async function mountExplore(root, { id }) {
     );
     const middle = average(points);
     // fitted to the branch alone (the old map around it doesn't count), with just room for the titles
-    const reach = Math.max(110, ...points.map((p) => Math.hypot(p.x - middle.x, p.y - middle.y)));
+    const reach = Math.max(90, ...points.map((p) => Math.hypot(p.x - middle.x, p.y - middle.y)));
     cam.focusTo = middle;
-    cam.distTo = (FOCAL * (reach + 30)) / freeRadius();
+    cam.distTo = (FOCAL * reach * 0.8) / freeRadius();
   }
 
   // The panel covers the right side on wide screens, so the map centers in the space beside it.
