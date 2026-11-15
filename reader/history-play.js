@@ -27,9 +27,9 @@ const REVEAL = 900;
 // growth between wars speedruns at 10×, a war plays at normal speed.
 const ROUNDS = 10;
 const FAST = 10;
-// Between wars the road runs at one even pace, CALM_STOP ms a version at 1×, and the page shows whichever
-// version the walker has reached (written at CALM× speed, skipping the ones it passed meanwhile).
-const CALM_STOP = 440;
+// The road from one war to the next is one even drive of CALM_MS, however many versions lie between; the page
+// shows whichever version the walker has reached (written at CALM× speed, skipping the ones it passed).
+const CALM_MS = 5000;
 const CALM = 40;
 const SLOW = 1;
 const WAR_HOLD = 1800;
@@ -314,8 +314,8 @@ export function startHistoryPlay({ id, body, onClose }) {
   async function calm(i, token) {
     let last = i;
     while (last + 1 < frames.length && !frames[last + 1].war && !frames[last + 1].round) last++;
-    const per = CALM_STOP / speed;
-    const total = (last - i + 1) * per;
+    const total = CALM_MS / speed;
+    const per = total / (last - i + 1);
     travelTo(frames[last].edit.time, total, 0);
     const done = () => total - (playing ? Math.max(0, travel.end - performance.now()) : travel.left);
     let k = i;
