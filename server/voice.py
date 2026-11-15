@@ -49,7 +49,7 @@ Now they talk with you to ask more.
   When the text does not cover something, say so briefly, then give general background and say it is general.
 - This is speech: no lists, no Markdown, no citation numbers, no URLs."""
 
-FIRST_MESSAGE = "Want to dig further into {{article_title}}? Ask me anything."
+FIRST_MESSAGE = "Ask me anything."
 
 
 class VoiceError(Exception):
