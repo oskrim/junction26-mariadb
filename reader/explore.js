@@ -4,9 +4,9 @@ import { getArticle, getGraph, getPreview, now as currentTime } from "./api.js";
 // with around it, grouped by topic, and a fainter ring of articles one step further out.
 // Dots and lines are drawn on a canvas; the picture cards and topic labels are regular elements.
 
-// When the middle article links to it, Suomen historian aikajana is always shown, on top: its card comes first
-// and sits above the others, fully opaque.
-const PINNED = "Suomen historian aikajana";
+// When the middle article (or an opened one) links to them, these are always shown, on top: their cards come
+// first and sit above the others, fully opaque.
+const PINNED = new Set(["Suomen historian aikajana", "Sauli Niinistö"]);
 const FIRST_YEAR = 2003;
 const LAST_YEAR = 2026;
 const MAX_CARDS = 12;
@@ -52,7 +52,7 @@ export async function mountExplore(root, { id }) {
   // The part of the link graph loaded so far: each article the map centers on or grows from brings
   // its own neighborhood.
   const nodes = new Map();
-  const pinned = (n) => nodes.get(n)?.title === PINNED;
+  const pinned = (n) => PINNED.has(nodes.get(n)?.title);
   const links = new Map();
   const linksOut = new Set();
   const graphEdges = [];
@@ -207,7 +207,7 @@ export async function mountExplore(root, { id }) {
 
     const added = [...links.get(n)]
       .filter((m) => !hop.has(m))
-      .sort((a, b) => nodes.get(b).chars - nodes.get(a).chars)
+      .sort((a, b) => pinned(b) - pinned(a) || nodes.get(b).chars - nodes.get(a).chars)
       .slice(0, MAX_GROWN);
     branchSize = added.length;
     // The new links fan out evenly from the opened article, pointing away from the middle.
@@ -244,7 +244,10 @@ export async function mountExplore(root, { id }) {
     // biggest of the rest with just the title, at most two of those.
     const previews = await Promise.all(added.map(async (m) => ({ m, p: await preview(nodes.get(m).title) })));
     const pictured = previews.filter(({ p }) => p?.thumbnail);
-    const withCards = [...pictured, ...previews.filter(({ p }) => !p?.thumbnail).slice(0, 2)].slice(0, GROWN_CARDS);
+    const withCards = [
+      ...previews.filter(({ m, p }) => pinned(m) && p),
+      ...[...pictured, ...previews.filter(({ p }) => !p?.thumbnail).slice(0, 2)].filter(({ m }) => !pinned(m)),
+    ].slice(0, GROWN_CARDS);
     for (const { m, p } of withCards) {
       const el = addCard(m, p);
       Object.assign(el, { w: el.offsetWidth, h: el.offsetHeight });
