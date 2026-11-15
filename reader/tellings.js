@@ -41,31 +41,27 @@ export async function addTellings({ head, body, id, lang = "fi" }) {
   if (line) head.querySelector(".meta")?.after(line);
 }
 
-// "文A 3 languages", opening a list of the languages with their lengths, the one shown marked.
+// A quiet 文A button (its tooltip says "3 languages"), opening a list of the languages with their lengths, the one shown marked.
 function languagePicker(languages, current) {
   const sorted = [...languages].sort((a, b) => ORDER.indexOf(a.lang) - ORDER.indexOf(b.lang));
   const picker = document.createElement("div");
   picker.className = "lang-picker";
   picker.innerHTML = `
-    <button type="button" class="lang-button" aria-haspopup="true" aria-expanded="false">
+    <button type="button" class="lang-button" aria-haspopup="true" aria-expanded="false" title="${sorted.length} languages" aria-label="${sorted.length} languages">
       <span class="lang-icon" aria-hidden="true">文A</span>
-      <span>${sorted.length} languages</span>
       <svg class="lang-chevron" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 3.5 5 6.5 8 3.5" /></svg>
     </button>
     <div class="lang-menu" hidden>
-      <p class="lang-menu-label">Read this article in</p>
       <ul>
         ${sorted
           .map(
             (l) => `<li><a class="lang-item${l.lang === current ? " is-current" : ""}" href="${languageHref(l)}" hreflang="${l.lang}"${l.lang === current ? ' aria-current="page"' : ""}>
               <span class="lang-native" lang="${l.lang}">${NATIVE[l.lang]}</span>
               <span class="lang-words">${count(l.words)} words</span>
-              ${l.lang === current ? '<svg class="lang-check" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 6.2 5 8.6 9.5 3.6" /></svg>' : ""}
             </a></li>`,
           )
           .join("")}
       </ul>
-      <p class="lang-menu-foot">Finnish comes with its whole edit history; Swedish and English are their current versions.</p>
     </div>`;
   const button = picker.querySelector(".lang-button");
   const menu = picker.querySelector(".lang-menu");

@@ -178,16 +178,10 @@ async function finnishCounterpart() {
   return fi ? { page_id: fi.page_id, title: fi.title } : null;
 }
 
-// "English Wikipedia · current version, 19 August 2025 · Read on en.wikipedia.org"
+// The same line as a Finnish article's, without what a current version alone does not have (editor, versions,
+// history): the languages button already says which language this is.
 function foreignMeta(version) {
-  const host = new URL(version.url).host;
-  return `<p class="meta meta-foreign">
-      <b class="meta-source"><span class="meta-code">${lang.toUpperCase()}</span>${LANGUAGE_NAMES[lang]} Wikipedia</b>
-      <span aria-hidden="true">·</span>
-      current version, edited ${formatDate(version.row_start)}
-      <span aria-hidden="true">·</span>
-      <a class="meta-link" href="${version.url}" target="_blank" rel="noopener">Read on ${host} ↗</a>
-    </p>`;
+  return `<p class="meta">Last edited ${formatDate(version.row_start)}</p>`;
 }
 
 function formatDate(rowStart) {
