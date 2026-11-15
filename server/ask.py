@@ -48,11 +48,21 @@ UNDATED_RULE = """- The reader is on today's version and asks about the subject:
   version, its date or revision ("In the version of ...") unless the question asks about them."""
 ASK_RULES = """You answer questions about one Wikipedia article for a reader.
 - Answer in the language of the question, not the language of the article.
-- Ground every claim in the article text and edit facts given below. If they do not say, say so plainly.
+- Ground every claim in the article text and edit facts given below. If they do not say at all, say so plainly
+  in one short sentence.
+- Never hedge: state what the texts say, directly. No "however", "but it does not cite", "no specific source",
+  "the provided text does not include", "it seems" or "appears to"; don't list what a text lacks or doesn't say.
 - Keep it short: {length}, plain prose, no Markdown, no lists.
 {dated}
 - End each claim that rests on the article text with a marker like [1] or [1][2], numbering the passages you
   cite: at most 4 passages, and a claim that rests on a passage already cited reuses its number."""
+# Ask about a passage translated in from another Wikipedia (reader/fill-in.js): always one sentence, its source and words.
+SOURCE_RULES = """- THE MOST IMPORTANT RULE, above every other: the selected passage is a translation from another Wikipedia, and the
+  answer names where it comes from. Your whole answer is exactly ONE sentence of the form:
+  It is translated from the <language> Wikipedia article “<title>”, which says: “<a short excerpt of the original> ” [1].
+  Write nothing before it and NOTHING after the [1]: no second sentence, no word about citations, sources, references
+  or what the article does or doesn't cite."""
+SOURCE_ASKED = lambda request: request["mode"] == "ask" and bool(request.get("context_source"))
 QUOTE_RULES = """- After the answer, write <quotes> on its own line, then one line per marker you used: the marker, then
   the words of the passage it rests on, copied character for character from a prose sentence of the article
   text (one sentence or clause, 30 to 200 characters; not the infobox, a table or markup). Write nothing after
@@ -659,9 +669,10 @@ def source_note(request):
     return (f"\nThis passage is not part of the Finnish article: the reader's page shows it as a Finnish translation of "
             f"a paragraph of the {LANG_NAMES[lang]} Wikipedia article “{title}”, which this Finnish article lacks. "
             f"That article is given as a found article, “{title} ({LANG_NAMES[lang]} Wikipedia)”. Asked where the "
-            f"passage comes from or what it is based on, say first that it is translated from that article, with a marker "
-            f"citing a short excerpt of the matching original sentence, then what that article itself says or cites "
-            f"about it. Don't say the passage is missing from the article."
+            f"passage comes from or what it is based on, answer like: It is translated from the {LANG_NAMES[lang]} Wikipedia "
+            f"article “{title}”, which says: “<a short excerpt of the original sentence, in its own language>” [1]. "
+            f"Name a source that article cites for it only if it cites one; if it cites none, stop there and say "
+            f"nothing about sources. Don't say the passage is missing from the article."
             + (f"\nThe original {LANG_NAMES[lang]} paragraph, as it stands in “{title}”:\n<<<\n{original}\n>>>" if original else ""))
 
 
@@ -988,7 +999,7 @@ def stream_answer(progress, request, version, facts, then_now, related, listed, 
                        *([RELATED_RULES] if related or listed else []),
                        *([VERSIONS_RULES] if versions else []), *([DISPUTE_RULES] if "Disputed edits" in facts["log"] else []), QUOTE_RULES,
                        *([THEN_NOW_QUOTE_RULES] if then_now else []), FACTS_QUOTE_RULES,
-                       *([FOUND_QUOTE_RULES] if related or listed else [])])
+                       *([FOUND_QUOTE_RULES] if related or listed else []), *([SOURCE_RULES] if SOURCE_ASKED(request) else [])])
     progress.step("Asking Gemini…")
     started = time.perf_counter()
     cited = []
