@@ -48,7 +48,8 @@ QUOTE_RULES = """- After the answer, write <quotes> on its own line, then one li
   text (one sentence or clause, 30 to 200 characters; not the infobox, a table or markup). Write nothing after
   the last quote."""
 QUOTES_TAG = "<quotes>"
-RELATED_RULES = """- Other articles, found by searching all of Finnish Wikipedia for this question, follow the article: some in
+RELATED_RULES = """- Other articles, found by searching Wikipedia for this question (Finnish Wikipedia, or Swedish or English where the
+  title says so), follow the article: some in
   full ("Found article"), the rest as a title and its first words ("Also found"). Use them for what the article
   itself does not say, and then name the article ("The article on X says ..."). Cite their passages like the
   article's; here up to 6 passages may be cited.
@@ -91,6 +92,10 @@ Wikipedia.
 - A second round (the last, at most {GAP_CALLS} searches) is only for one specific gap you can name: a person, work or event the
   results mention that the answer needs and no result covers. Never use it to broaden further; when the first
   round covers the question, go straight to read_articles.
+- Leave lang out: Finnish Wikipedia is the one with every article. Search Swedish (lang "sv") or English ("en")
+  Wikipedia, with the query in that language, only when the question is about what another language's Wikipedia
+  says or how its coverage differs, or when the reader writes in Swedish or English and the Finnish searches found
+  little for the question. Their ids are negative numbers; pass them to read_articles as they are.
 - Then call read_articles with the ids of the found articles the answer needs, the most useful first, at most {READ}.
   Prefer the article on a subject itself over lists and narrow sub-articles.
 - Do not search when the article itself is what answers: a fact about its own subject that its text states (a
@@ -103,7 +108,9 @@ TOOLS = [{"functionDeclarations": [
      "description": "Searches Finnish Wikipedia by keywords and meaning. Returns the best articles: id, title and first words.",
      "parameters": {"type": "OBJECT", "properties": {
          "query": {"type": "STRING", "description": "A title, name, keywords or a short descriptive phrase, best in Finnish."},
-         "limit": {"type": "INTEGER", "description": f"How many articles to return: {SEARCH_LIMIT} by default, at most {SEARCH_MAX}."}},
+         "limit": {"type": "INTEGER", "description": f"How many articles to return: {SEARCH_LIMIT} by default, at most {SEARCH_MAX}."},
+         "lang": {"type": "STRING", "enum": ["fi", "sv", "en"],
+                  "description": "Which Wikipedia: fi (default, all articles), or sv or en (about 5,000 articles each; write the query in that language)."}},
          "required": ["query"]}},
     {"name": "read_articles",
      "description": "Ends the search: the found articles to read in full for the answer. An empty list when none is needed.",
@@ -331,23 +338,26 @@ def research(cur, progress, request, version):
             if not queries or turn == SEARCH_ROUNDS:
                 chosen = [i for c in calls if c.get("name") == "read_articles" for i in (c.get("args") or {}).get("ids") or []]
                 break
-            progress.finish(f"Searching Finnish Wikipedia {len(queries)} way{'s' if len(queries) != 1 else ''}"
-                            + (f", round {turn + 1}" if turn else ""))
+            names = [LANG_NAMES[lang] for lang in LANG_NAMES if any(call_lang(c) == lang for c in queries)]
+            progress.finish(f"Searching {' and '.join(names)} Wikipedia")
             contents += [reply, {"role": "user", "parts": run_searches(cur, progress, request, queries, found)}]
     except AskError as error:
         progress.finish(f"Searching other articles: stopped, {error}")
     read = []
     if progress.text is None:
         progress.step("Choosing what to read")
-    for page_id in dict.fromkeys(i for i in chosen if i in found):
+    opened = set()
+    for key in dict.fromkeys(i for i in chosen if i in found):
+        hit = found[key]
         try:
-            read.append({**version_at(cur, page_id, request["at"]), "page_id": page_id})
+            read.append(foreign_article(cur, hit) if hit["lang"] != "fi"
+                        else {**version_at(cur, hit["page_id"], request["at"]), "page_id": hit["page_id"], "lang": "fi"})
         except AskError:  # the article did not exist yet at that moment
             continue
+        opened.add(key)
         if len(read) == READ:
             break
-    opened = {r["page_id"] for r in read}
-    listed = [f for page_id, f in found.items() if page_id not in opened][:LISTED]
+    listed = [f for key, f in found.items() if key not in opened][:LISTED]
     if not found:
         progress.finish("Answering from this article alone" if not chosen else None)
     elif read:
@@ -355,6 +365,45 @@ def research(cur, progress, request, version):
     else:
         progress.finish(f"Found {len(found)} articles; none needs reading in full")
     return read, listed
+
+
+LANG_NAMES = {"fi": "Finnish", "sv": "Swedish", "en": "English"}
+
+
+def call_lang(call):
+    lang = str((call.get("args") or {}).get("lang") or "fi").strip().lower()
+    return lang if lang in ("sv", "en") else "fi"
+
+
+def foreign_titled(cur, lang, query, limit):
+    """search.titled() for the Swedish or English articles: the same ranking (search.ranked), their titles marked
+    with the language. page_id is that wiki's own, so it can equal a Finnish article's."""
+    ranked = search.ranked(cur, query, limit, lang)
+    if not ranked:
+        return []
+    cur.execute("SELECT page_id, title, LEFT(text, %s) AS lead FROM s_article WHERE lang = %s AND page_id IN %s",
+                (search.LEAD_CHARS + 260, lang, [r["page_id"] for r in ranked]))
+    rows = {r["page_id"]: r for r in cur.fetchall()}
+    hits = []
+    for r in ranked:
+        row = rows.get(r["page_id"])
+        if row:
+            lead = " ".join(row["lead"].split()).removeprefix(f"# {row['title']} ")[:search.LEAD_CHARS]
+            hits.append({"page_id": row["page_id"], "lang": lang, "lead": lead,
+                         "title": f"{row['title']} ({LANG_NAMES[lang]} Wikipedia)"})
+    return hits
+
+
+def foreign_article(cur, hit):
+    """A found Swedish or English article (current text, Markdown) in the shape of a version."""
+    cur.execute("SELECT rev_id, date_modified, text FROM s_article WHERE lang = %s AND page_id = %s",
+                (hit["lang"], hit["page_id"]))
+    row = cur.fetchone()
+    if not row:
+        raise AskError(404, "no such article")
+    text = row["text"].removeprefix(f"# {hit['title'].rsplit(' (', 1)[0]}\n")
+    return {"title": hit["title"], "rev_id": row["rev_id"], "row_start": row["date_modified"], "clean": Cleaned(text),
+            "page_id": hit["page_id"], "lang": hit["lang"]}
 
 
 def research_block(request, version):
@@ -375,7 +424,7 @@ def run_searches(cur, progress, request, calls, found):
     functionResponse parts. The questions are embedded together; MariaDB is asked one search at a time."""
     queries = [str(c["args"]["query"]).strip()[:200] for c in calls]
     with ThreadPoolExecutor(len(queries)) as pool:  # fills voyage's cache, so search.titled() below does not wait
-        list(pool.map(warm_embedding, queries))
+        list(pool.map(warm_embedding, queries, [call_lang(c) for c in calls]))
     parts = []
     for call, query in zip(calls, queries):
         try:
@@ -383,22 +432,31 @@ def run_searches(cur, progress, request, calls, found):
         except (ValueError, TypeError):
             limit = SEARCH_LIMIT
         progress.step(f"Searching “{shorten(query, 70)}”")
-        hits = [h for h in search.titled(cur, query, limit + 1) if h["page_id"] != request["page_id"]][:limit]
-        new = sum(1 for h in hits if h["page_id"] not in found)
+        lang = call_lang(call)
+        if lang == "fi":
+            hits = [{**h, "lang": "fi", "id": h["page_id"]} for h in search.titled(cur, query, limit + 1)
+                    if h["page_id"] != request["page_id"]][:limit]
+        else:  # their page ids are another wiki's: Gemini gets a negative number of this request's own
+            hits = foreign_titled(cur, lang, query, limit)
+            ids = {(f["lang"], f["page_id"]): key for key, f in found.items()}
+            for hit in hits:
+                hit["id"] = ids.get((lang, hit["page_id"])) or -(1 + sum(1 for key in found if key < 0))
+                found.setdefault(hit["id"], hit)
+        new = sum(1 for h in hits if h["id"] not in found or found[h["id"]] is h)
         for hit in hits:
-            found.setdefault(hit["page_id"], hit)
+            found.setdefault(hit["id"], hit)
         names = "; ".join(h["title"] for h in hits[:6]) + ("…" if len(hits) > 6 else "")
         progress.finish(f"Searched “{shorten(query, 70)}” → {len(hits)} article{'s' if len(hits) != 1 else ''}"
                         + (f" ({new} new)" if new != len(hits) else "") + (f": {names}" if names else ""))
-        response = {"articles": [{"id": h["page_id"], "title": h["title"], "start": h["lead"]} for h in hits]}
+        response = {"articles": [{"id": h["id"], "title": h["title"], "start": h["lead"]} for h in hits]}
         parts.append({"functionResponse": {"name": "search_articles", "response": response,
                                            **({"id": call["id"]} if call.get("id") else {})}})
     return parts
 
 
-def warm_embedding(query):
+def warm_embedding(query, lang="fi"):
     try:
-        vector.embed(query)
+        vector.embed(query) if lang == "fi" else vector.embed_s(lang, query)
     except vector.Unavailable:
         pass  # the search itself goes on with keywords
 
@@ -518,7 +576,7 @@ def article_block(version, context):
 
 
 def related_block(related, listed):
-    blocks = [f"Found article: {r['title']} (version of {day(r['row_start'])})\n<<<\n{r['clean'].text[:READ_CHARS]}\n>>>"
+    blocks = [f"Found article: {r['title']}" + (f" (version of {day(r['row_start'])})" if r["row_start"] else "") + f"\n<<<\n{r['clean'].text[:READ_CHARS]}\n>>>"
               for r in related]
     if listed:
         blocks.append("Also found (title: first words):\n" + "\n".join(f"- {f['title']}: {f['lead']}" for f in listed))
@@ -539,8 +597,10 @@ def quotable(request, version, then_now, related, listed):
     for v in then_now or ():
         if v["rev_id"] != version["rev_id"]:
             texts.append((f"{v['title']} ({day(v['row_start'])})", v["clean"], link(request["page_id"], v["row_start"])))
-    texts += [(r["title"], r["clean"], link(r["page_id"], r["row_start"])) for r in related]
-    texts += [(f["title"], Cleaned(f["lead"]), f"./?id={f['page_id']}") for f in listed]
+    texts += [(r["title"], r["clean"], link(r["page_id"], r["row_start"]) if r["lang"] == "fi"
+               else f"./?id={r['page_id']}&lang={r['lang']}") for r in related]
+    texts += [(f["title"], Cleaned(f["lead"]), f"./?id={f['page_id']}" + (f"&lang={f['lang']}" if f["lang"] != "fi" else ""))
+              for f in listed]
     return texts
 
 
