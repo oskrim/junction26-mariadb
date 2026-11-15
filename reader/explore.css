@@ -757,3 +757,8 @@ body[data-view="explore"] {
   color: var(--ink-2);
   font: 500 11px/1 var(--sans);
 }
+
+/* A picture no Wikimedia address could serve (reader/api.js) leaves no empty frame. */
+.ex-panel-media.is-broken {
+  display: none;
+}

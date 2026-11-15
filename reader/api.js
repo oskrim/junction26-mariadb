@@ -107,16 +107,33 @@ export function fileUrl(name) {
   return `https://upload.wikimedia.org/wikipedia/commons/thumb/${digest[0]}/${digest.slice(0, 2)}/${path}/${prefix}330px-${path}${suffix}`;
 }
 
-// A file renamed on Commons has no thumbnail under its old name, but Special:FilePath follows the rename.
-// Retrying in the capture phase keeps the img's own error handlers from seeing the first failure.
-const THUMB = /^https:\/\/upload\.wikimedia\.org\/wikipedia\/commons\/thumb\/\w\/\w\w\/([^/]+)\/[^/]*?(\d+)px-/;
+// When a thumbnail fails, the next place the file may be: a file uploaded to Finnish Wikipedia itself (often a
+// non-free photo) is under /wikipedia/fi/, not Commons; a file renamed on Commons is found by Special:FilePath,
+// which follows the rename. When nothing answers, the image is hidden rather than shown broken. Retrying in the
+// capture phase keeps the img's own error handlers from seeing the failures before the last.
+const THUMB = /^https:\/\/upload\.wikimedia\.org\/wikipedia\/(commons|fi)\/thumb\/\w\/\w\w\/([^/]+)\/[^/]*?(\d+)px-/;
+const FILEPATH = /^https:\/\/(commons\.wikimedia|fi\.wikipedia)\.org\/wiki\/Special:FilePath\//;
 addEventListener(
   "error",
   (event) => {
-    const match = event.target instanceof HTMLImageElement && event.target.src.match(THUMB);
-    if (!match) return;
+    const img = event.target;
+    if (!(img instanceof HTMLImageElement)) return;
+    const thumb = img.src.match(THUMB);
+    const tried = (img.dataset.tried ?? "").split(" ");
+    let next = null;
+    if (thumb && thumb[1] === "commons") next = img.src.replace("/wikipedia/commons/thumb/", "/wikipedia/fi/thumb/");
+    else if (thumb) next = `https://commons.wikimedia.org/wiki/Special:FilePath/${thumb[2]}?width=${thumb[3]}`;
+    else if (img.src.startsWith("https://commons.wikimedia.org/wiki/Special:FilePath/"))
+      next = img.src.replace("https://commons.wikimedia.org/", "https://fi.wikipedia.org/");
+    if (!thumb && !FILEPATH.test(img.src)) return; // not a Wikimedia image: its own handlers decide
     event.stopImmediatePropagation();
-    event.target.src = `https://commons.wikimedia.org/wiki/Special:FilePath/${match[1]}?width=${match[2]}`;
+    if (next && !tried.includes(next)) {
+      img.dataset.tried = [...tried, img.src].join(" ").trim();
+      img.src = next;
+    } else {
+      img.hidden = true;
+      img.closest("[class*='media']")?.classList.add("is-broken");
+    }
   },
   true,
 );
