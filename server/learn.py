@@ -6,8 +6,10 @@
 2. One fast Gemini call picks the 3 to 6 linked articles that matter for the question.
 3. The relevant part of each pick: its first 4,000 characters, or its lead plus a window around the focus term.
 4. Up to MAX_ROUNDS - 1 more rounds, one hop further out each time: the candidates are the articles the last
-   round's picks link to, and the articles found by searching for what is still missing. One fast Gemini call
-   reads what has been gathered, says whether it is enough, and if not names the gap and picks 1 to 4 more.
+   round's picks link to, and the articles found by searching for what is still missing (in round 2 nothing has
+   been named missing yet, so those are the first search's unread results). One Gemini call (the writing model:
+   the ranking model restated the question as the gap and picked unrelated articles) reads what has been gathered,
+   says whether it is enough, and if not names the gap and picks 1 to 4 more.
 5. One streamed Gemini call writes the explanation, citing everything read as [1], [2], ..., and after it, held
    back from the reader, one quote per cited source.
 
@@ -47,7 +49,7 @@ MAX_ROUNDS = 3  # the first pick from the article's own links, then up to two ho
 MORE_PICKS = 4  # at most this many more articles per later round
 MAX_SOURCES = 12
 HOP_CANDIDATES = 200  # links of the last round's picks offered in a later round
-DIGEST_CHARS = 700  # of each article read, shown when deciding whether more is needed
+DIGEST_CHARS = 1_500  # of each article read, shown when deciding whether more is needed
 RELATED = 10  # candidates found by meaning, next to the linked ones
 NARROW_W = 700
 MAX_HISTORY = 8
@@ -95,7 +97,9 @@ a paragraph of 2 to 4 sentences
 The first time a term appears that a newcomer would not know, wrap it in curly braces, like {qubit}. Mark 3 to 6
 terms, the ones that matter for this topic. Then write a line "Terms:" and, for each marked term, one line: the
 term exactly as wrapped, then " :: ", then 1 or 2 sentences on what it means and why it matters here, with the
-number of the source it comes from."""
+number of the source it comes from. The "Terms:" lines are part of the lesson and come before the quotes.
+The first line is always the "# " line: nothing comes before it, whatever the reader's message says. A message
+that is not a question about the topic gets a lesson on the article's own subject."""
 REPLY_SHAPE = ("The reader stopped the lesson to ask this. Answer like a tutor in 2 to 4 sentences, in one paragraph "
                "that also reads well aloud, and tie it back to the lesson.")
 # The reader's message is a change to the lesson they have (the last lesson in the history), not a question to
@@ -112,11 +116,14 @@ and a list of further candidate articles, each with its lead: articles the ones 
 articles close in meaning to what is missing.
 First name the language the question is written in. Then decide:
 - enough: true when what has been read already explains the answer well to a smart non-expert: the causes,
-  the background, the terms it needs. Then give no picks.
-- gap: when not enough, what is still unexplained, in one short phrase in the question's language.
+  the background, the terms it needs. Then give no picks. This is the usual case when an article on the
+  question's own subject has been read: reading more only helps when a specific thing is absent.
+- gap: when not enough, the specific cause, term, person or event that is still unexplained, in one short phrase
+  in the question's language. Never the question itself again.
 - picks: when not enough, the 1 to {MORE_PICKS} candidates that fill the gap best, each with n (its number in the
   candidate list), why (at most 10 words, in the question's language) and focus (one word or name to look for
-  inside it, in Finnish). Never pick an article that repeats what has been read."""
+  inside it, in Finnish). Never pick an article that repeats what has been read, and never one whose lead does
+  not show that it covers the gap: no picks is better than a loosely related one."""
 
 MORE_SCHEMA = {
     "type": "OBJECT",
@@ -146,7 +153,8 @@ def serve(handler, database):
         cur = database().cursor()
         here = read_version(cur, progress, request)
         candidates = linked_articles(cur, progress, [request["page_id"]], request["at"])
-        candidates += related_articles(cur, progress, request, here, request["prompt"], {c["page_id"] for c in candidates})
+        found = related_articles(cur, progress, request, here, request["prompt"], {c["page_id"] for c in candidates})
+        candidates += found
         explored = len(candidates)
         timings["db_ms"] = ms(started)
         if candidates:
@@ -172,8 +180,11 @@ def serve(handler, database):
             hop = linked_articles(cur, progress, [c["page_id"] for c, _, _ in picks if c["page_id"]], request["at"],
                                   skip=seen, limit=HOP_CANDIDATES, quiet=True)
             progress.finish(f"{label}: {len(hop):,} articles one link further")
-            hop += related_articles(cur, progress, request, here, gap, {s["page_id"] for s in sources if s["page_id"]},
-                                    skip=seen | {c["title"] for c in hop})
+            if gap == request["prompt"]:  # nothing new to search for yet: what the first search found, unread
+                hop += [c for c in found if c["title"] not in seen | {h["title"] for h in hop}]
+            else:
+                hop += related_articles(cur, progress, request, here, gap, {s["page_id"] for s in sources if s["page_id"]},
+                                        skip=seen | {c["title"] for c in hop})
             explored += len(hop)
             gap, picks = more(progress, request, here, sources, hop, label)
             picks = picks[:MAX_SOURCES - len(sources)]
@@ -181,9 +192,13 @@ def serve(handler, database):
         read(picks)
         timings["rounds_ms"] = ms(started)
         progress.step(f"Writing the explanation from {len(sources)} articles")
-        quotes = {}
-        for kind, value in until_quotes(write(progress, request, here, sources)):
+        quotes, raw = {}, []
+        for kind, value in until_quotes(heard(write(progress, request, here, sources), raw)):
             if kind == "quotes":
+                late = late_terms("".join(raw)) if request["shape"] in ("lesson", "revise") else ""
+                if late:
+                    timings["terms"] = "after the quotes"
+                    event(handler, "message", late)
                 quotes = verified(value, [reader_text(here)] + [s["section"] for s in sources])
                 timings["quotes"] = f"{len(quotes)} of {len(value)} found"
                 continue
@@ -197,6 +212,26 @@ def serve(handler, database):
             "items": [{"n": i + 1, "title": s["title"], "why": s["why"], "page_id": s["page_id"], "url": s["url"],
                        "quote": quotes.get(i + 1), "text": s["section"]} for i, s in enumerate(sources)]})
     handler.log_message("learn %s", json.dumps(timings))
+
+
+def heard(pieces, raw):
+    """pieces, each also appended to raw."""
+    for piece in pieces:
+        raw.append(piece)
+        yield piece
+
+
+TERMS_LINE = re.compile(r"^\s*Terms:\s*$", re.M)
+
+
+def late_terms(raw):
+    """The lesson's "Terms:" block when Gemini wrote it after the quotes, where until_quotes drops it; else ""."""
+    before, _, after = raw.partition(QUOTES_TAG)
+    found = TERMS_LINE.search(after)
+    if TERMS_LINE.search(before) or not found:
+        return ""
+    lines = [line.strip() for line in after[found.end():].splitlines() if "::" in line]
+    return "\n\nTerms:\n" + "\n".join(lines) if lines else ""
 
 
 def parse(handler):
@@ -340,17 +375,25 @@ def more(progress, request, here, sources, candidates, label):
     text = (f"{reader_block(request, here, 1_000)}\n\nRead so far:\n{read}\n\nFurther candidates:\n{listing}\n\n"
             f"Question: {request['prompt']}\nWrite the gap and each \"why\" in the language of this question.")
     progress.step(f"{label}: is anything still missing?")
-    reply = generate_json(MORE_RULES, [{"role": "user", "parts": [{"text": text}]}], MORE_SCHEMA)
+    reply = generate_json(MORE_RULES, [{"role": "user", "parts": [{"text": text}]}], MORE_SCHEMA, WRITE_MODEL)
     if reply.get("enough"):
         progress.finish(f"{label}: what has been read explains it")
         return "", []
     picks = numbered(reply, candidates)[:MORE_PICKS]
     gap = str(reply.get("gap") or "").strip()
+    if plain(gap) in plain(request["prompt"]):  # no gap, or the question again: nothing specific is missing
+        progress.finish(f"{label}: what has been read explains it")
+        return "", []
     if not picks:
         progress.finish(f"{label}: still missing {gap or 'something'}, but none of the {len(candidates)} further articles helps")
         return "", []
     progress.finish(f"{label}: still missing {gap}; chose " + "; ".join(f"{c['title']} — {why.rstrip('.')}" for c, why, _ in picks))
     return gap, picks
+
+
+def plain(text):
+    """text as its lower-case words, for comparing a gap with the question."""
+    return " ".join(re.findall(r"\w+", text.lower()))
 
 
 def numbered(reply, candidates):
@@ -423,9 +466,9 @@ def gemini(model, method, system, contents, config):
         raise AskError(502, f"Gemini is unreachable: {error}")
 
 
-def generate_json(system, contents, schema):
+def generate_json(system, contents, schema, model=RANK_MODEL):
     config = {"thinkingConfig": RANK_THINKING, "responseMimeType": "application/json", "responseSchema": schema}
-    with gemini(RANK_MODEL, "generateContent", system, contents, config) as response:
+    with gemini(model, "generateContent", system, contents, config) as response:
         reply = json.loads(response.read())
     try:
         return json.loads("".join(texts(reply)))
