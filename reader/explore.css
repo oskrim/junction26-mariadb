@@ -423,10 +423,10 @@ body[data-view="explore"] {
 
 /* The three figures ride in the sticky bar with the buttons, so they stay in view while the text scrolls. */
 .ex-stats {
-  /* The three figures spread across the panel: the first at its left edge, the last at its right, the middle
-     one halfway, each label over its number. */
+  /* The three figures as one group, centred in the panel, each label over its number. */
   display: flex;
-  justify-content: space-between;
+  justify-content: center;
+  gap: 40px;
   flex: 1 0 100%;
   margin: 0 0 8px;
   padding: 0 0 14px;
