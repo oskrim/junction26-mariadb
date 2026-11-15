@@ -71,17 +71,18 @@ export function speechUrl(text) {
 
 // Starts a conversation with the Learn agent. context: { title, article, answer, sources: [{ title, text }] }.
 // Callbacks: onStatus("connecting" | "listening" | "speaking" | "ended", detail), onMessage(role, text); while
-// connecting, detail names the step. Each step has CONNECT_S to finish, and is logged as [voice] in the console.
-// Resolves to { stop(), volume() }.
+// connecting, detail names the step. Each step has CONNECT_S to finish (WebRTC gets WEBRTC_S: on some browsers its
+// first connection takes 20 s and then works), and is logged as [voice] in the console. Resolves to { stop(), volume() }.
 const CONNECT_S = 20;
+const WEBRTC_S = 45;
 const MIC_BLOCKED = "the microphone is blocked. Allow it for this site, and on a Mac for the browser too (System Settings › Privacy & Security › Microphone), then reload";
 
 export async function startTalk({ context, onStatus, onMessage }) {
-  const step = async (label, work) => {
+  const step = async (label, work, seconds = CONNECT_S) => {
     onStatus("connecting", label);
     console.info(`[voice] ${label}`);
     let timer;
-    const late = new Promise((_, reject) => (timer = setTimeout(() => reject(new Error(`${label.replace(/…$/, "")} took over ${CONNECT_S} s`)), CONNECT_S * 1000)));
+    const late = new Promise((_, reject) => (timer = setTimeout(() => reject(new Error(`${label.replace(/…$/, "")} took over ${seconds} s`)), seconds * 1000)));
     try {
       return await Promise.race([work(), late]);
     } catch (error) {
@@ -137,16 +138,22 @@ export async function startTalk({ context, onStatus, onMessage }) {
   };
   // WebRTC first: the browser's own call audio, which works where the WebSocket route's 16 kHz audio setup hangs
   // (seen on a Mac); the WebSocket only when WebRTC fails.
+  // A session given up on can still connect later, with the microphone on; it is ended as soon as it does.
+  const connect = async (label, options, seconds) => {
+    const starting = VoiceConversation.startSession({ ...options, ...callbacks });
+    try {
+      return await step(label, () => starting, seconds);
+    } catch (error) {
+      starting.then((late) => late.endSession()).catch(() => {});
+      throw error;
+    }
+  };
   let session;
   try {
-    session = await step("Connecting to ElevenLabs…", () =>
-      VoiceConversation.startSession({ conversationToken: started.conversation_token, connectionType: "webrtc", ...callbacks }),
-    );
+    session = await connect("Connecting to ElevenLabs…", { conversationToken: started.conversation_token, connectionType: "webrtc" }, WEBRTC_S);
   } catch (error) {
     console.warn("[voice] WebRTC failed, trying the WebSocket", error);
-    session = await step("Connecting to ElevenLabs again…", () =>
-      VoiceConversation.startSession({ signedUrl: started.signed_url, connectionType: "websocket", ...callbacks }),
-    );
+    session = await connect("Connecting to ElevenLabs again…", { signedUrl: started.signed_url, connectionType: "websocket" });
   }
   if (!connected) onStatus("listening"); // the session is up even if onConnect came before we listened
   return {
