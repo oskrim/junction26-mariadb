@@ -29,7 +29,7 @@ const ROUNDS = 10;
 const FAST = 10;
 // Between wars the road runs at one even pace, CALM_STOP ms a version at 1×, and the page shows whichever
 // version the walker has reached (written at CALM× speed, skipping the ones it passed meanwhile).
-const CALM_STOP = 220;
+const CALM_STOP = 440;
 const CALM = 40;
 const SLOW = 1;
 const WAR_HOLD = 1800;
