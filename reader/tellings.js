@@ -41,7 +41,10 @@ export async function addTellings({ head, body, id, lang = "fi" }) {
   if (line) head.querySelector(".meta")?.after(line);
 }
 
-// A quiet "文A 3 languages" button, opening a list of the languages with their lengths, the one shown marked.
+// "3 kieltä", "3 språk", "3 languages": the button speaks the language of the article shown.
+const languagesLabel = (n, lang) => ({ fi: `${n} kieltä`, sv: `${n} språk` })[lang] ?? `${n} languages`;
+
+// A quiet "文A 3 kieltä" button, opening a list of the languages with their lengths, the one shown marked.
 function languagePicker(languages, current) {
   const sorted = [...languages].sort((a, b) => ORDER.indexOf(a.lang) - ORDER.indexOf(b.lang));
   const picker = document.createElement("div");
@@ -49,7 +52,7 @@ function languagePicker(languages, current) {
   picker.innerHTML = `
     <button type="button" class="lang-button" aria-haspopup="true" aria-expanded="false">
       <span class="lang-icon" aria-hidden="true">文A</span>
-      <span>${sorted.length} languages</span>
+      <span>${languagesLabel(sorted.length, current)}</span>
       <svg class="lang-chevron" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 3.5 5 6.5 8 3.5" /></svg>
     </button>
     <div class="lang-menu" hidden>
