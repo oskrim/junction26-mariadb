@@ -449,12 +449,18 @@ body[data-view="explore"] {
   bottom: 0;
   display: flex;
   flex-wrap: wrap;
+  justify-content: flex-end; /* the buttons end where the rule above them ends */
   gap: 8px;
   margin: auto -24px -24px;
-  padding: 16px 24px 20px;
+  padding: 16px 48px 20px;
   background: #fff;
   box-shadow: 0 -1px 0 rgb(0 0 0 / 0), 0 -10px 16px -14px rgb(0 0 0 / 0);
   transition: box-shadow 0.2s;
+}
+
+/* Read article at the right end, Explore from here at the left */
+.ex-actions [data-act="center"] {
+  margin-right: auto;
 }
 
 .ex-actions.is-stuck {

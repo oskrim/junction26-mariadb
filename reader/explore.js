@@ -843,8 +843,8 @@ export async function mountExplore(root, { id }) {
             <div><dt>Written</dt><dd>${new Date(node.first * 1000).getUTCFullYear()}</dd></div>
             <div><dt>Links</dt><dd>${links.get(n).size}</dd></div>
           </dl>
-          <a class="ex-btn is-primary" href="?id=${n}" hidden>Read article</a>
           ${n === centerId ? "" : `<button class="ex-btn" type="button" data-act="center">Explore from here</button>`}
+          <a class="ex-btn is-primary" href="?id=${n}" hidden>Read article</a>
         </div>
       </div>`;
     panel.classList.add("is-open");
