@@ -1,0 +1,48 @@
+{
+  "sections": [
+    {
+      "section": "Suomessa",
+      "lang": "en",
+      "source_title": "Kalevala",
+      "source_url": "https://en.wikipedia.org/wiki/Kalevala#Finnish_daily_life",
+      "paragraphs": [
+        {
+          "text": "There are several places within Finland with Kalevala-related names, for example: the district of Tapiola in the city of Espoo; the district of Pohjola in the city of Turku, the district of Metsola in the city of Vantaa, and the districts of Kaleva and Sampo in the city of Tampere. In addition, the Russian town of Ukhta was in 1963 renamed Kalevala. In the United States a small community founded in 1900 by Finnish immigrants is named Kaleva, Michigan; many of the street names are taken from the Kalevala.",
+          "translation": "Suomessa on useita paikkoja, joiden nimet liittyvät Kalevalaan, esimerkiksi Espoon Tapiolan kaupunginosa, Turun Pohjolan kaupunginosa, Vantaan Metsolan kaupunginosa sekä Tampereen Kalevan ja Sammon kaupunginosat. Lisäksi venäläinen Uhtuan kylä nimettiin vuonna 1963 Kalevalaksi. Yhdysvalloissa suomalaisten siirtolaisten vuonna 1900 perustama pieni yhteisö Michiganissa on nimeltään Kaleva, ja monet sen katujen nimistä on otettu Kalevalasta."
+        },
+        {
+          "text": "The private healthcare company Mehiläinen was formed in 1909.  \"Mehiläinen\" means bee in Finnish, and the name was chosen to represent the \"selfless and hardworking healer\" in the Kalevala.  After Lemminkäinen is drowned, his mother collects the pieces of him, but cannot bring him back to life.  It is not until a bee has retrieved a drop of honey as ointment that Lemminkäinen is saved.",
+          "translation": "Yksityinen terveydenhuoltoyhtiö Mehiläinen perustettiin vuonna 1909. Nimi valittiin edustamaan Kalevalan ”epäitsekästä ja ahkeraa parantajaa”. Kun Lemminkäinen on hukkunut, hänen äitinsä kokoaa hänen palasensa, mutta ei saa häntä henkiin. Vasta kun mehiläinen on tuonut pisaran hunajaa voiteeksi, Lemminkäinen pelastuu."
+        }
+      ]
+    },
+    {
+      "section": "Televisio ja elokuvat",
+      "lang": "en",
+      "source_title": "Kalevala",
+      "source_url": "https://en.wikipedia.org/wiki/Kalevala#Film_and_television",
+      "paragraphs": [
+        {
+          "text": "In \"Chapter 17: The Apostate\", the first episode of the third season of The Mandalorian series, Din Djarin meets with Bo-Katan in an old Mandalorian castle, which is located in the Mandalore system planet called Kalevala. The same planet has also previously been mentioned in The Clone Wars series.",
+          "translation": "The Mandalorian -sarjan kolmannen tuotantokauden ensimmäisessä jaksossa ”Chapter 17: The Apostate” Din Djarin tapaa Bo-Katanin vanhassa mandalorialaisessa linnassa, joka sijaitsee Mandaloren tähtijärjestelmän Kalevala-nimisellä planeetalla. Sama planeetta on mainittu aiemmin myös The Clone Wars -sarjassa."
+        }
+      ]
+    },
+    {
+      "section": "Käännökset",
+      "lang": "en",
+      "source_title": "Kalevala",
+      "source_url": "https://en.wikipedia.org/wiki/Kalevala#Translations",
+      "paragraphs": [
+        {
+          "text": "Of the few complete translations into English, it is only the older translations by John Martin Crawford (1888) and William Forsell Kirby (1907) which attempt to strictly follow the original (Kalevala metre) of the poems.",
+          "translation": "Harvoista kokonaisista englanninkielisistä käännöksistä vain John Martin Crawfordin (1888) ja William Forsell Kirbyn (1907) vanhemmat käännökset pyrkivät seuraamaan tarkasti runojen alkuperäistä mittaa, kalevalamittaa."
+        },
+        {
+          "text": "Francis Peabody Magoun published a scholarly translation of the Kalevala in 1963 written entirely in prose. The appendices of this version contain notes on the history of the poem, comparisons between the original Old Kalevala and the current version, and a detailed glossary of terms and names used in the poem. Magoun translated the Old Kalevala, which was published six years later entitled The Old Kalevala and Certain Antecedents.",
+          "translation": "Francis Peabody Magoun julkaisi vuonna 1963 tieteellisen, kokonaan proosaksi kirjoitetun Kalevalan käännöksen. Sen liitteissä on huomautuksia runoelman historiasta, vertailuja alkuperäisen Vanhan Kalevalan ja nykyisen version välillä sekä yksityiskohtainen sanasto runoelmassa käytetyistä termeistä ja nimistä. Magoun käänsi myös Vanhan Kalevalan, joka julkaistiin kuusi vuotta myöhemmin nimellä The Old Kalevala and Certain Antecedents."
+        }
+      ]
+    }
+  ]
+}

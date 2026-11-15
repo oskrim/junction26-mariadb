@@ -61,6 +61,7 @@ if (!version || (!foreign && !summary)) {
   trackActiveSection(doc.toc);
   if (!foreign) import("./war-inline.js").then((m) => m.addWarMarkers({ body, id }));
   import("./tellings.js").then((m) => m.addTellings({ head, body, id, lang }));
+  if (!foreign) import("./fill-in.js").then((m) => m.addFillIns({ body, id }));
   // The article rewrites itself from its first version, with a timeline of its edits and wars at the bottom.
   const start = head.querySelector(".hp-start");
   start?.addEventListener("click", async () => {
