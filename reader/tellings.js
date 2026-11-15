@@ -41,14 +41,15 @@ export async function addTellings({ head, body, id, lang = "fi" }) {
   if (line) head.querySelector(".meta")?.after(line);
 }
 
-// A quiet 文A button (its tooltip says "3 languages"), opening a list of the languages with their lengths, the one shown marked.
+// A quiet "文A 3 languages" button, opening a list of the languages with their lengths, the one shown marked.
 function languagePicker(languages, current) {
   const sorted = [...languages].sort((a, b) => ORDER.indexOf(a.lang) - ORDER.indexOf(b.lang));
   const picker = document.createElement("div");
   picker.className = "lang-picker";
   picker.innerHTML = `
-    <button type="button" class="lang-button" aria-haspopup="true" aria-expanded="false" title="${sorted.length} languages" aria-label="${sorted.length} languages">
+    <button type="button" class="lang-button" aria-haspopup="true" aria-expanded="false">
       <span class="lang-icon" aria-hidden="true">文A</span>
+      <span>${sorted.length} languages</span>
       <svg class="lang-chevron" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 3.5 5 6.5 8 3.5" /></svg>
     </button>
     <div class="lang-menu" hidden>
