@@ -20,12 +20,14 @@ import re
 import time
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
+import search
 import vector
 
 MODEL = "gemini-3.8-flash"
-API = "https://generativelanguage.googleapis.com/v1beta/models/" + MODEL
+API = "https://generativelanguage.googleapis.com/v1beta/models/"
 TIMEOUT_S = 60
 MAX_TEXT = 400_000
 MAX_HISTORY = 12
@@ -46,15 +48,60 @@ QUOTE_RULES = """- After the answer, write <quotes> on its own line, then one li
   text (one sentence or clause, 30 to 200 characters; not the infobox, a table or markup). Write nothing after
   the last quote."""
 QUOTES_TAG = "<quotes>"
-RELATED_RULES = """- Related articles, found by the meaning of the question, follow the article. Use one only for what the
-  article itself does not say, and then name it ("The article on X says ..."). Cite its passages like the article's."""
+RELATED_RULES = """- Other articles, found by searching all of Finnish Wikipedia for this question, follow the article: some in
+  full ("Found article"), the rest as a title and its first words ("Also found"). Use them for what the article
+  itself does not say, and then name the article ("The article on X says ..."). Cite their passages like the
+  article's; here up to 6 passages may be cited.
+- When the reader asks for related articles or further reading, name the 4 to 6 found articles that matter most for
+  this article's subject, each with a clause on how it relates and a marker of its own. Do not name an article that
+  was not found."""
 THEN_NOW_RULES = """- You are given two versions of the article, THEN and NOW. Say what the THEN version said about the question,
   what the NOW version says, and what changed between them (or that nothing did), each with its date. Cite
   passages from both versions."""
+FOUND_QUOTE_RULES = """- For a marker that stands for a found article as a whole, write the article's title, exactly as given,
+  in place of the quote."""
 
-RELATED = 3  # related articles given to Gemini
-RELATED_CANDIDATES = 8  # nearest vectors looked at: some articles did not exist yet at the moment being read
-RELATED_CHARS = 12_000  # of each related article: its lead and first sections
+SEARCH_ROUNDS = 3  # turns in which Gemini may search before it must choose what to read
+SEARCH_CALLS = 5  # searches run per turn
+SEARCH_LIMIT, SEARCH_MAX = 8, 12  # articles per search: the default and the most
+READ = 5  # found articles given to Gemini in full
+READ_CHARS = 12_000  # of each: its lead and first sections
+LISTED = 24  # other found articles given as a title and a lead
+ARTICLE_START = 6_000  # characters of the article shown while searching; the answer gets all of it
+# Searching is two or three short turns before the answer starts, so the fast model: measured on page 498, a turn
+# takes ~1 s on 3.5 Flash and ~3 s on 3.8 Flash, and both write the same kind of queries.
+RESEARCH_MODEL, RESEARCH_THINKING = os.environ.get("RESEARCH_MODEL", "gemini-3.5-flash"), {"thinkingLevel": "minimal"}
+RESEARCH_RULES = f"""You find what else to read before a question about one Wikipedia article is answered.
+You get the start of the article, its section headings and the reader's question. The writer of the answer gets the
+whole article; your work is to find the OTHER articles the answer needs, among all 568,873 articles of Finnish
+Wikipedia.
+- search_articles is a hybrid search (BM25 keywords and vector meaning) over the articles' titles and texts. Write the
+  queries yourself, from the article's subject and what the question is after; never pass the reader's words like
+  "this" or "related articles". Good queries are Finnish article titles or names ("Elias Lönnrot", "Kanteletar"),
+  keywords ("kansanrunouden keruu") and short descriptive phrases ("Kalevalan vaikutus kuvataiteeseen"). Queries in
+  Finnish find the most.
+- Call search_articles 2 to {SEARCH_CALLS} times in one turn, each with a different query, to cover the question from
+  several sides. Search again (at most {SEARCH_ROUNDS} turns in all) only when the answer needs something the
+  results do not have: a person, work or event they mention, or a side of the question they did not cover.
+- Then call read_articles with the ids of the found articles the answer needs, the most useful first, at most {READ}.
+  Prefer the article on a subject itself over lists and narrow sub-articles.
+- Do not search when the article itself is what answers: a fact about its own subject that its text states (a
+  number, a date, a name, a definition, what it says about something in its sections), its wording, what an
+  earlier version of it said, or its edit history. Then call read_articles with an empty list at once. Search when
+  the question reaches past the article: related or further reading, influence, causes, what came before or after,
+  comparisons, or people, works and events the article only mentions."""
+TOOLS = [{"functionDeclarations": [
+    {"name": "search_articles",
+     "description": "Searches Finnish Wikipedia by keywords and meaning. Returns the best articles: id, title and first words.",
+     "parameters": {"type": "OBJECT", "properties": {
+         "query": {"type": "STRING", "description": "A title, name, keywords or a short descriptive phrase, best in Finnish."},
+         "limit": {"type": "INTEGER", "description": f"How many articles to return: {SEARCH_LIMIT} by default, at most {SEARCH_MAX}."}},
+         "required": ["query"]}},
+    {"name": "read_articles",
+     "description": "Ends the search: the found articles to read in full for the answer. An empty list when none is needed.",
+     "parameters": {"type": "OBJECT", "properties": {
+         "ids": {"type": "ARRAY", "items": {"type": "INTEGER"}, "description": "Ids of found articles, most useful first."}},
+         "required": ["ids"]}}]}]
 YEAR = re.compile(r"\b(1[89]\d\d|20\d\d)\b")
 OLD_DAYS = 30  # a version this much older than the current one is an old version
 
@@ -100,11 +147,11 @@ def serve(handler, database):
             facts = edit_facts(cur, progress, request["page_id"], version["row_start"])
             facts["passage_first"] = passage_first(cur, progress, request, version)
             then_now = versions_to_compare(cur, progress, request, version)
-            related = related_articles(cur, progress, request)
+            related, listed = research(cur, progress, request, version)
         if request["mode"] == "find":
             event(handler, "result", result)
         else:
-            stream_answer(progress, request, version, facts, then_now, related)
+            stream_answer(progress, request, version, facts, then_now, related, listed)
 
 
 class Progress:
@@ -235,27 +282,107 @@ def vector_count(cur):
     return _count["n"]
 
 
-def related_articles(cur, progress, request):
-    """The RELATED articles nearest to the question by meaning, each as it was at the moment being read."""
-    label = "Finding related articles by meaning"
-    progress.step(label)
+def research(cur, progress, request, version):
+    """What Gemini found for the question by searching: (the articles it chose to read, each as it was at the moment
+    being read, and the other articles found as [{page_id, title, lead}]). Gemini writes the queries itself, several
+    per turn, for at most SEARCH_ROUNDS turns. Nothing is found when Gemini does not answer."""
+    found, chosen = {}, []
+    contents = [{"role": "user", "parts": [{"text": research_block(request, version)}]}]
     try:
-        question = vector.embed(request["prompt"])
-    except vector.Unavailable:
-        progress.finish(f"{label}: skipped, the embedding service is not answering")
-        return []
-    found = []
-    for page_id, distance in vector.nearest(cur, question, RELATED_CANDIDATES, exclude={request["page_id"]}):
+        for turn in range(SEARCH_ROUNDS + 1):
+            progress.step("Choosing what to read" if found else "Deciding what to search for")
+            allowed = ["read_articles"] if turn == SEARCH_ROUNDS else ["search_articles", "read_articles"]
+            reply = gemini_tools(RESEARCH_RULES, contents, allowed)
+            calls = [p["functionCall"] for p in reply.get("parts", []) if p.get("functionCall")]
+            queries = [c for c in calls if c.get("name") == "search_articles"
+                       and str((c.get("args") or {}).get("query") or "").strip()][:SEARCH_CALLS]
+            if not queries or turn == SEARCH_ROUNDS:
+                chosen = [i for c in calls if c.get("name") == "read_articles" for i in (c.get("args") or {}).get("ids") or []]
+                break
+            progress.finish(f"Searching Finnish Wikipedia {len(queries)} way{'s' if len(queries) != 1 else ''}"
+                            + (f", round {turn + 1}" if turn else ""))
+            contents += [reply, {"role": "user", "parts": run_searches(cur, progress, request, queries, found)}]
+    except AskError as error:
+        progress.finish(f"Searching other articles: stopped, {error}")
+    read = []
+    if progress.text is None:
+        progress.step("Choosing what to read")
+    for page_id in dict.fromkeys(i for i in chosen if i in found):
         try:
-            found.append(version_at(cur, page_id, request["at"]))
+            read.append({**version_at(cur, page_id, request["at"]), "page_id": page_id})
         except AskError:  # the article did not exist yet at that moment
             continue
-        found[-1]["page_id"] = page_id
-        if len(found) == RELATED:
+        if len(read) == READ:
             break
-    titles = "; ".join(r["title"] for r in found)
-    progress.finish(f"{label}: {len(found)} of {vector_count(cur):,}" + (f" — {titles}" if titles else ""))
-    return found
+    opened = {r["page_id"] for r in read}
+    listed = [f for page_id, f in found.items() if page_id not in opened][:LISTED]
+    if not found:
+        progress.finish("Answering from this article alone" if not chosen else None)
+    elif read:
+        progress.finish(f"Reading {len(read)} of the {len(found)} articles found: " + "; ".join(r["title"] for r in read))
+    else:
+        progress.finish(f"Found {len(found)} articles; none needs reading in full")
+    return read, listed
+
+
+def research_block(request, version):
+    """What Gemini sees while it searches: the start of the article, its headings, the talk so far, the question."""
+    clean = version["clean"].text
+    headings = "; ".join(plain(m.group(2)) for m in HEADING.finditer(clean))
+    passage = f"\n\nThe reader selected this passage and asks about it:\n<<<\n{request['context']}\n>>>" if request["context"] else ""
+    earlier = "".join(f"\n{'Reader' if h.get('role') == 'user' else 'Answer'}: {shorten(str(h['text']), 600)}"
+                      for h in request["history"])
+    return (f"Article: {version['title']} (id {request['page_id']}), read as it was on {day(version['row_start'])}\n\n"
+            f"Start of the article:\n<<<\n{clean[:ARTICLE_START]}\n>>>\n\nIts sections: {headings or 'none'}{passage}"
+            + (f"\n\nThe conversation so far:{earlier}" if earlier else "")
+            + f"\n\nThe reader's question: {request['prompt']}")
+
+
+def run_searches(cur, progress, request, calls, found):
+    """Runs Gemini's search calls, adding new articles to found ({page_id: {page_id, title, lead}}); returns the
+    functionResponse parts. The questions are embedded together; MariaDB is asked one search at a time."""
+    queries = [str(c["args"]["query"]).strip()[:200] for c in calls]
+    with ThreadPoolExecutor(len(queries)) as pool:  # fills voyage's cache, so search.titled() below does not wait
+        list(pool.map(warm_embedding, queries))
+    parts = []
+    for call, query in zip(calls, queries):
+        try:
+            limit = max(1, min(SEARCH_MAX, int(call["args"].get("limit") or SEARCH_LIMIT)))
+        except (ValueError, TypeError):
+            limit = SEARCH_LIMIT
+        progress.step(f"Searching “{shorten(query, 70)}”")
+        hits = [h for h in search.titled(cur, query, limit + 1) if h["page_id"] != request["page_id"]][:limit]
+        new = sum(1 for h in hits if h["page_id"] not in found)
+        for hit in hits:
+            found.setdefault(hit["page_id"], hit)
+        names = "; ".join(h["title"] for h in hits[:6]) + ("…" if len(hits) > 6 else "")
+        progress.finish(f"Searched “{shorten(query, 70)}” → {len(hits)} article{'s' if len(hits) != 1 else ''}"
+                        + (f" ({new} new)" if new != len(hits) else "") + (f": {names}" if names else ""))
+        response = {"articles": [{"id": h["page_id"], "title": h["title"], "start": h["lead"]} for h in hits]}
+        parts.append({"functionResponse": {"name": "search_articles", "response": response,
+                                           **({"id": call["id"]} if call.get("id") else {})}})
+    return parts
+
+
+def warm_embedding(query):
+    try:
+        vector.embed(query)
+    except vector.Unavailable:
+        pass  # the search itself goes on with keywords
+
+
+def gemini_tools(system, contents, allowed):
+    """Gemini's next turn, which must call one of the allowed functions of TOOLS: its content {role, parts}, to
+    append to contents as it is (the parts carry the thought signatures Gemini asks back)."""
+    extra = {"tools": TOOLS, "toolConfig": {"functionCallingConfig": {"mode": "ANY", "allowedFunctionNames": allowed}}}
+    with gemini_request("generateContent", system, contents, {"thinkingConfig": RESEARCH_THINKING}, extra,
+                        RESEARCH_MODEL) as response:
+        reply = json.loads(response.read())
+    try:
+        content = reply["candidates"][0]["content"]
+    except (KeyError, IndexError):
+        raise AskError(502, "Gemini returned no search plan")
+    return {"role": "model", "parts": content.get("parts", [])}
 
 
 def edit_facts(cur, progress, page_id, until):
@@ -334,9 +461,12 @@ def article_block(version, context):
             f"{passage}\n\nArticle wikitext of that version:\n<<<\n{text}\n>>>")
 
 
-def related_block(related):
-    return "\n\n".join(f"Related article: {r['title']} (version of {day(r['row_start'])})\n<<<\n"
-                       f"{r['clean'].text[:RELATED_CHARS]}\n>>>" for r in related)
+def related_block(related, listed):
+    blocks = [f"Found article: {r['title']} (version of {day(r['row_start'])})\n<<<\n{r['clean'].text[:READ_CHARS]}\n>>>"
+              for r in related]
+    if listed:
+        blocks.append("Also found (title: first words):\n" + "\n".join(f"- {f['title']}: {f['lead']}" for f in listed))
+    return "\n\n".join(blocks)
 
 
 def then_now_block(then, now):
@@ -345,7 +475,7 @@ def then_now_block(then, now):
             f"\n\nNOW: the version of {day(now['row_start'])} (revision {now['rev_id']}):\n<<<\n{now['clean'].text[:half]}\n>>>")
 
 
-def quotable(request, version, then_now, related):
+def quotable(request, version, then_now, related, listed):
     """The texts Gemini was given, as (title, Cleaned, link): a link opens a text other than the version being read."""
     def link(page_id, row_start):
         return f"./?id={page_id}&at={int(row_start.replace(tzinfo=timezone.utc).timestamp())}"
@@ -354,10 +484,11 @@ def quotable(request, version, then_now, related):
         if v["rev_id"] != version["rev_id"]:
             texts.append((f"{v['title']} ({day(v['row_start'])})", v["clean"], link(request["page_id"], v["row_start"])))
     texts += [(r["title"], r["clean"], link(r["page_id"], r["row_start"])) for r in related]
+    texts += [(f["title"], Cleaned(f["lead"]), f"./?id={f['page_id']}") for f in listed]
     return texts
 
 
-def stream_answer(progress, request, version, facts, then_now, related):
+def stream_answer(progress, request, version, facts, then_now, related, listed):
     facts_text = (f"Edit facts up to this version: first version {day(facts['first'])}; {facts['versions']} versions; "
                   f"{facts['editors']} different editors; {facts['reverts']} versions restored an earlier text exactly "
                   f"(reverts); last edit {day(version['row_start'])} by {version['user'] or 'an anonymous editor'}, "
@@ -367,8 +498,8 @@ def stream_answer(progress, request, version, facts, then_now, related):
         facts_text += (f"\nThe selected passage first appears in the version of {day(first['row_start'])} "
                        f"by {first['user'] or 'an anonymous editor'}, comment: \"{first['comment']}\".")
     given = then_now_block(*then_now) if then_now else article_block(version, request["context"])
-    if related:
-        given += "\n\n" + related_block(related)
+    if related or listed:
+        given += "\n\n" + related_block(related, listed)
     contents = [{"role": "user", "parts": [{"text": given + "\n\n" + facts_text}]},
                 {"role": "model", "parts": [{"text": "I have read that version and its edit facts."}]}]
     contents += [{"role": "user" if h.get("role") == "user" else "model", "parts": [{"text": str(h["text"])}]}
@@ -376,7 +507,8 @@ def stream_answer(progress, request, version, facts, then_now, related):
     contents.append({"role": "user", "parts": [{"text": request["prompt"]}]})
     length = "2 or 3 sentences" if request["narrow"] else "3 to 6 sentences"
     rules = "\n".join([ASK_RULES.format(length=length), *([THEN_NOW_RULES] if then_now else []),
-                       *([RELATED_RULES] if related else []), QUOTE_RULES])
+                       *([RELATED_RULES] if related or listed else []), QUOTE_RULES,
+                       *([FOUND_QUOTE_RULES] if related or listed else [])])
     progress.step("Asking Gemini…")
     started = time.perf_counter()
     cited = []
@@ -387,7 +519,7 @@ def stream_answer(progress, request, version, facts, then_now, related):
         progress.finish(f"Asked Gemini: first words after {time.perf_counter() - started:.1f} s")
         event(progress.handler, "message", value)
     event(progress.handler, "sources", {"type": "quotes", "here": {"title": version["title"], "page_id": request["page_id"]},
-                                        "items": article_quotes(quotable(request, version, then_now, related), cited)})
+                                        "items": article_quotes(quotable(request, version, then_now, related, listed), cited)})
 
 
 def until_quotes(pieces):
@@ -420,10 +552,16 @@ HEADING = re.compile(r"^(={2,6})\s*(.*?)\s*\1\s*$", re.M)
 
 def article_quotes(texts, cited):
     """The cited quotes that occur word for word in one of texts [(title, Cleaned, link)], each with the heading
-    of its section there."""
+    of its section there. A quote that is the title of a linked text cites that article by its first sentence."""
     items, seen = [], set()
+    titles = {title.casefold(): (title, clean, link) for title, clean, link in reversed(texts) if link}
     for n, quote in cited:
         needle = Cleaned(quote).text.strip()
+        if n not in seen and needle.casefold() in titles:
+            title, clean, link = titles[needle.casefold()]
+            seen.add(n)
+            items.append({"n": n, "title": title, "section": "", "quote": shorten(first_sentence(clean.text), 200), "link": link})
+            continue
         if len(needle) < 12 or n in seen:
             continue
         for title, clean, link in texts:
@@ -437,18 +575,30 @@ def article_quotes(texts, cited):
     return items
 
 
+NOT_SENTENCE = re.compile(r"^[{|}!=*#<\[:;]|^(thumb|pienoiskuva|right|left|oikea|vasen|Tiedosto|Kuva|File|Image)\b|\d+\s*px\|", re.I)
+
+
+def first_sentence(text):
+    """The first prose sentence of an article's text: past its infobox, pictures and headings."""
+    for line in text.splitlines():
+        line = plain(line).strip()
+        if len(line) > 60 and not NOT_SENTENCE.search(line):
+            return re.split(r"(?<=[a-zåäö\)]\.)\s", line, maxsplit=1)[0]
+    return ""
+
+
 def event(handler, name, data):
     handler.wfile.write(f"event: {name}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n".encode())
     handler.wfile.flush()
 
 
-def gemini_request(method, system, contents, config):
+def gemini_request(method, system, contents, config, extra=None, model=MODEL):
     key = os.environ.get("GEMINI_API_KEY")
     if not key:
         raise AskError(503, "GEMINI_API_KEY is not set on the server")
     body = {"systemInstruction": {"parts": [{"text": system}]}, "contents": contents,
-            "generationConfig": {"thinkingConfig": THINKING, **config}}
-    request = urllib.request.Request(f"{API}:{method}", data=json.dumps(body).encode(),
+            "generationConfig": {"thinkingConfig": THINKING, **config}, **(extra or {})}
+    request = urllib.request.Request(f"{API}{model}:{method}", data=json.dumps(body).encode(),
                                      headers={"Content-Type": "application/json", "x-goog-api-key": key})
     try:
         return urllib.request.urlopen(request, timeout=TIMEOUT_S)
