@@ -41,6 +41,11 @@ MAX_HISTORY = 12
 # Gemini sends thought summaries only at "medium" or higher, which delays the first words by ~6 s; at "low"
 # includeThoughts costs nothing and usually returns none.
 THINKING = {"thinkingLevel": "low", "includeThoughts": True}
+# At "low", Gemini sometimes reasoned in circles over the rules for a minute and never answered (seen on a translated
+# passage's source question). An answer with no words FIRST_WORDS_S after it was asked for, or a failed request,
+# is asked again once of the FALLBACK model with minimal thinking.
+FIRST_WORDS_S = 12
+FALLBACK_MODEL, FALLBACK_THINKING = "gemini-3.5-flash", {"thinkingLevel": "minimal"}
 
 NARROW_W = 700
 DATED_RULE = '- Say which version you read, by its date (for example "In the version of 12 September 2026, ...").'
@@ -1106,7 +1111,7 @@ def event(handler, name, data):
     handler.wfile.flush()
 
 
-def gemini_request(method, system, contents, config, extra=None, model=MODEL):
+def gemini_request(method, system, contents, config, extra=None, model=MODEL, timeout=TIMEOUT_S):
     key = os.environ.get("GEMINI_API_KEY")
     if not key:
         raise AskError(503, "GEMINI_API_KEY is not set on the server")
@@ -1116,7 +1121,7 @@ def gemini_request(method, system, contents, config, extra=None, model=MODEL):
     request = urllib.request.Request(f"{API}{model}:{method}", data=json.dumps(body).encode(),
                                      headers={"Content-Type": "application/json", "x-goog-api-key": key})
     try:
-        return urllib.request.urlopen(request, timeout=TIMEOUT_S)
+        return urllib.request.urlopen(request, timeout=timeout)
     except urllib.error.HTTPError as error:
         raise AskError(502, f"Gemini returned {error.code}: {error.read()[:300].decode(errors='replace')}")
     except OSError as error:
@@ -1137,8 +1142,35 @@ def answer_texts(progress, response):
 
 
 def gemini_stream(progress, system, contents):
-    with gemini_request("streamGenerateContent?alt=sse", system, contents, {}) as response:
-        yield from answer_texts(progress, response)
+    """The answer's text pieces. Before any words have come, a failed request, or FIRST_WORDS_S of only thinking,
+    asks once more of FALLBACK_MODEL; once words have been sent, the answer goes on as it is."""
+    started = time.monotonic()
+    for model, thinking in ((MODEL, THINKING), (FALLBACK_MODEL, FALLBACK_THINKING)):
+        last = model == FALLBACK_MODEL
+        sent = False
+        try:
+            with gemini_request("streamGenerateContent?alt=sse", system, contents, {"thinkingConfig": thinking},
+                                model=model, timeout=TIMEOUT_S if last else FIRST_WORDS_S) as response:
+                for line in response:
+                    if not line.startswith(b"data: "):
+                        continue
+                    for candidate in json.loads(line[6:]).get("candidates", []):
+                        for part in candidate.get("content", {}).get("parts", []):
+                            if part.get("text") and part.get("thought"):
+                                progress.think(part["text"])
+                            elif part.get("text"):
+                                sent = True
+                                yield part["text"]
+                    if not sent and not last and time.monotonic() - started > FIRST_WORDS_S:
+                        break  # thinking in circles: ask the fallback
+        except (AskError, OSError) as error:
+            if sent or last:
+                raise
+            tracelog.event("answer_retry", model=model, reason=str(error)[:300])
+            continue
+        if sent or last:
+            return
+        tracelog.event("answer_retry", model=model, reason=f"no words after {time.monotonic() - started:.1f} s")
 
 
 def gemini_json(progress, system, contents, schema):
