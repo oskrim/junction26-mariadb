@@ -167,10 +167,10 @@ export function findView({ article, actions = {} }) {
     // Neighbours by meaning: the ones the article links to first.
     const near = (list) => others(list).sort((a, b) => linked.has(b.title) - linked.has(a.title));
     found = others(found);
-    const named = want.query ? namedBy(want.query) : () => false;
+    // One list in the search's own order: its hybrid ranking already weighs names and meaning together.
     groups = {
-      title: found.filter((r) => r.by !== "meaning" && named(r.title)),
-      meaning: found.filter((r) => !(r.by !== "meaning" && named(r.title))),
+      title: found,
+      meaning: [],
       passage: near(nearPassage),
       page: near(nearPage),
       links: others(inPassage),
@@ -421,20 +421,6 @@ function linkedTitles() {
 function splitTitle(title) {
   const m = title.match(/^(.+?)\s*\(([^()]+)\)$/);
   return m ? { name: m[1], qualifier: m[2] } : { name: title, qualifier: null };
-}
-
-// Whether a title carries one of the query's words. Finnish inflects word endings, so a word matches by its
-// stem: all but the last two letters, at least four.
-function namedBy(query) {
-  const stems = query
-    .toLowerCase()
-    .split(/[^\p{L}\p{N}]+/u)
-    .filter((w) => w.length >= 3)
-    .map((w) => w.slice(0, Math.max(4, w.length - 2)));
-  return (title) => {
-    const t = title.toLowerCase();
-    return stems.some((stem) => t.includes(stem));
-  };
 }
 
 const ghosts = () => `<div class="fv-loading" aria-label="Searching">${'<span class="fv-ghost"></span>'.repeat(6)}</div>`;
