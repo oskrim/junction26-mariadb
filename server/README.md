@@ -195,7 +195,8 @@ score = sat(BM25 text, 10) + 0.5 · sat(BM25 title, 8) + 3 · (title = query)
 
 sat(x, κ) = x / (κ + x)        0 at x = 0, 0.5 at x = κ, below 1
 prior     = clamp((log10(characters) − 3) / 2, 0, 1) + 0.3 · log10(versions)
-near      = sqrt(clamp((cosine − floor) / (best cosine − floor), 0, 1))
+near      = 1 when a word of the query is in the title, else
+            sqrt(clamp((cosine − floor) / (best cosine − floor), 0, 1))
 ```
 
 Tuned with `server/search_eval.py` (56 queries with known answers: Finnish titles and names, Finnish and English
@@ -207,7 +208,7 @@ questions over the Finnish articles, Swedish and English articles). Its numbers,
 | plain sum, vector weight 8, 200 + 200 candidates, no prior | | 0.55 / 0.69 / 0.60 |
 | the same with the keyword gate | | 0.55 / 0.74 / 0.61 |
 | with the prior, near = 1 | 0.79 / 0.95 / 0.84 | 0.76 / 0.95 / 0.83 |
-| with the prior and near (what runs) | 0.77 / 0.93 / 0.83 | 0.74 / 0.93 / 0.81 |
+| with the prior and near (what runs) | 0.77 / 0.91 / 0.83 | 0.74 / 0.90 / 0.81 |
 | `rerank=1`: Gemini 3.5 Flash Lite orders the top 40, ~0.8 s more | 0.88 / 0.95 / 0.91 | 0.86 / 0.93 / 0.89 |
 
 - The prior is what the corpus has for "the main article on a subject": text length for every article

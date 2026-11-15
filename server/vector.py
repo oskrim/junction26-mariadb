@@ -112,17 +112,17 @@ def count(cur):
 # x / (kappa + x), 0.5 at x = kappa: about the median BM25 score of the top 50 articles. The prior says how much of
 # an article there is (its length and, for the articles with history, how often it was edited): among articles that
 # match alike, the main one on the subject comes first ("Mannerheim" finds the marshal, not the film project).
-# near (0 to 1) is the square root of the article's cosine next to the best one's, so that a large article far
-# from the query in meaning is not carried up by its size.
+# near is 1 for an article with a word of the query in its title, else the square root of its cosine next to the
+# best one's (0 to 1), so that a large article far from the query in meaning is not carried up by its size.
 #
 # Measured on the 42 Finnish queries of search_eval.py (hit@1 / hit@5 / MRR), candidates 200 + 200:
 #     the sum without the prior, vector weight 3    0.43 / 0.60 / 0.49   (+ the old keyword gate: 0.45 / 0.64 / 0.55)
-#     the sum without the prior, vector weight 8    0.55 / 0.69 / 0.60   (+ the gate: the same)
+#     the sum without the prior, vector weight 8    0.55 / 0.69 / 0.60   (+ the gate: 0.55 / 0.74 / 0.61)
 #     with the prior, near = 1                      0.76 / 0.95 / 0.83   (+ the gate: 0.74 / 0.93 / 0.81)
-#     with the prior and near, as here              0.74 / 0.93 / 0.81
-# so there is no gate. near = 1 scores a little higher on that set, which asks mostly for large articles, but puts
-# them into unrelated results too ("Punakaarti" for "Kanteletar"). 50 vector candidates instead of 200 cost 0.03
-# MRR; 400 + 400 gave nothing over 200 + 200.
+#     with the prior and near, as here              0.76 / 0.90 / 0.82
+# so there is no gate. near = 1 scores the same on that set, which asks mostly for large articles, but puts them
+# into unrelated results too ("Punakaarti" for "Kanteletar"). 50 vector candidates instead of 200 cost 0.03 MRR;
+# 400 + 400 gave nothing over 200 + 200.
 KAPPA_BODY, KAPPA_TITLE = 10, 8
 W_TITLE = 0.5
 EXACT_BONUS = 3  # more than every other term together: the article titled as the query comes first
@@ -209,7 +209,8 @@ def combine(found, cosines, space, limit, priors):
     for page_id in found.keys() | cosines.keys():
         body, title, exact = found.get(page_id, (0.0, 0.0, False))
         cosine = cosines.get(page_id, 0.0)
-        near = math.sqrt(min(1.0, max(0.0, (cosine - space.floor) / (top - space.floor)))) if top > space.floor else 1.0
+        named = title > 0 or exact or top <= space.floor  # the query is in the title, or there are no vectors
+        near = 1.0 if named else math.sqrt(min(1.0, max(0.0, (cosine - space.floor) / (top - space.floor))))
         score = (lexical(body, title, exact) + space.weight * max(0.0, cosine - space.floor)
                  + near * priors.get(page_id, 0.0))
         scored.append({"page_id": page_id, "body": body, "title": title, "exact": exact, "cosine": cosine,
