@@ -184,23 +184,49 @@ articles.
 
 ### Hybrid search
 
-`/api/search` (`vector.hybrid`) scores the union of the BM25 top 200 and the vector index top 50 (`ef_search`
-200). Every candidate gets all its component scores: BM25 by primary key for the vector hits
-(`bm25.scores`), the cosine by primary key for the BM25 hits.
+`/api/search` (`search.ranked`, `vector.hybrid`) scores the union of the BM25 top 200 and the vector index top 200
+(`ef_search` 200). Every candidate gets all its component scores: BM25 by primary key for the vector hits
+(`bm25.scores`), the cosine by primary key for the BM25 hits. It is a plain weighted sum:
 
 ```text
-score = sat(BM25 text, 10) + sat(BM25 title, 8) + 3 · (title = query)
+score = sat(BM25 text, 10) + 0.5 · sat(BM25 title, 8) + 3 · (title = query)
         + space.weight · max(0, cosine(query, article) − space.floor)
+        + near · prior
 
 sat(x, κ) = x / (κ + x)        0 at x = 0, 0.5 at x = κ, below 1
+prior     = clamp((log10(characters) − 3) / 2, 0, 1) + 0.3 · log10(versions)
+near      = sqrt(clamp((cosine − floor) / (best cosine − floor), 0, 1))
 ```
 
+Tuned with `server/search_eval.py` (56 queries with known answers: Finnish titles and names, Finnish and English
+questions over the Finnish articles, Swedish and English articles). Its numbers, hit@1 / hit@5 / MRR:
+
+| Ranking | all 56 | the 42 Finnish |
+|---|---|---|
+| before: vector weight 3, top 50 vectors, keyword gate, no prior | 0.54 / 0.73 / 0.62 | 0.43 / 0.67 / 0.54 |
+| plain sum, vector weight 8, 200 + 200 candidates, no prior | | 0.55 / 0.69 / 0.60 |
+| the same with the keyword gate | | 0.55 / 0.74 / 0.61 |
+| with the prior, near = 1 | 0.79 / 0.95 / 0.84 | 0.76 / 0.95 / 0.83 |
+| with the prior and near (what runs) | 0.77 / 0.93 / 0.83 | 0.74 / 0.93 / 0.81 |
+| `rerank=1`: Gemini 3.5 Flash Lite orders the top 40, ~0.8 s more | 0.88 / 0.95 / 0.91 | 0.86 / 0.93 / 0.89 |
+
+- The prior is what the corpus has for "the main article on a subject": text length for every article
+  (`m_search_length`, built by `load.py bm25`) and the number of versions for the articles with history. Without
+  it "Mannerheim" put the film project and the family first and the marshal (Carl Gustaf Emil Mannerheim, 2,400
+  versions) nowhere in the top 10. `near` keeps a large article that is far from the query in meaning from being
+  carried up by its size.
+- The keyword gate (keyword scores scaled by relative cosine) gave nothing once the vector weight was 8, so it is
+  gone. 50 vector candidates instead of 200 cost 0.03 MRR; 400 + 400 gave nothing more.
+- One vector stands for a whole article, so a very long one is far from every short query: Helsinki's vector has
+  cosine 0.27 with "Helsinki" and 0.31 with "capital of Finland". Such articles are found by their title and the
+  prior, not by meaning; the two queries the evaluation still misses ("capital of Finland", "Suomen
+  kansalliseepos") are of this kind.
 - κ is about the median BM25 score of the BM25 top 50 over the example queries: text 7 to 15, title 6 to 9.
   The slides' κ = 25 gave the best field scores (7 to 13) only 0.2 to 0.35, so the vectors decided the order.
 - The exact-title bonus 3 is more than all other terms together, so the article titled as the query (in any
   case or accent, or with the query's words written together) comes first. BM25 alone does not do that: the
   canonical article is long, so its text score is low (Talvisota 5.2 against 10.6 for Talvisota (kirja)).
-- The vector term, per `VECTOR_MODEL` (`vector.Space`): bge-m3 weight 4, floor 0.4; Voyage weight 3, floor 0.15.
+- The vector term, per `VECTOR_MODEL` (`vector.Space`): bge-m3 weight 4, floor 0.4; Voyage weight 8, floor 0.15.
   With `VECTOR_MODEL=none` or no embedding, the BM25 ranking alone, exact title first.
 
 Top 5 on `wiki_full` (all 568,873 Finnish articles, bge-m3). BM25 alone is `vector.lexical_ranking`, exact
