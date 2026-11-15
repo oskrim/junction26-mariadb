@@ -23,10 +23,11 @@ const MIN_TRIP = 2600;
 const TO_WAR = 700;
 const ERASE = 550;
 const REVEAL = 900;
-// Rounds of a war shown at most, and how fast ordinary versions and war rounds play, at 1×.
+// Rounds of a war shown at most, and how fast ordinary versions and war rounds play, at 1×: the article's
+// growth between wars speedruns at 10×, a war plays at normal speed.
 const ROUNDS = 10;
-const FAST = 2;
-const SLOW = 1.6;
+const FAST = 10;
+const SLOW = 1;
 const WAR_HOLD = 1800;
 const GROW = 700;
 const SHUT = 420;
@@ -270,11 +271,11 @@ export function startHistoryPlay({ id, body, onClose }) {
       let typing = 0;
       const hold = () =>
         (frames[i].war ? WAR_HOLD : frames[i].round ? (typing ? ROUND_HOLD : QUIET_ROUND) : STEP) / rate;
-      // A new editor's trip set off above and isn't stretched over the typing, so the walker is already on
-      // their road while they write. A war round's trip is timed to arrive as its writing and pause end.
+      // Every trip is stretched over its version's writing, arriving as the writing and pause end, so the
+      // walker never stands still on a stop between versions (a war round's a little later, blow after blow).
       await show(i, token, true, (ms) => {
         typing = ms;
-        if (frames[i].round) travelTo(time, ms * 1.3 + hold());
+        travelTo(time, (frames[i].round ? ms * 1.3 : ms) + hold(), 0);
       });
       if (token !== run) return;
       if (travel?.time !== time) travelTo(time, hold());
@@ -282,7 +283,7 @@ export function startHistoryPlay({ id, body, onClose }) {
       // about the same pace; at most MIN_TRIP more, so a long estimate never stalls playback.
       // War rounds don't wait for the road: blow follows blow.
       const waited = await wait(
-        frames[i].round ? hold() : Math.min(Math.max(hold(), MIN_TRIP / rate), Math.max(0, travel.end - performance.now())),
+        frames[i].round ? hold() : Math.max(0, travel.end - performance.now()),
         token,
       );
       if (!waited) return;
