@@ -234,15 +234,18 @@ def topics(cur, params):
     return {r["page_id"]: r["topic"] for r in cur.fetchall()}
 
 
+EXTRACT_CHARS = 2_000  # a whole first paragraph; the places that need it short cut it themselves
+
+
 def extract(markdown):
-    """The first real paragraph of an S article, as short HTML."""
+    """The first real paragraph of an S article, in full, as HTML (hatnotes and fragments skipped)."""
     for line in markdown.splitlines():
         line = line.strip()
-        if len(line) < 40 or line[0] in "#|!<>*-[{`":
+        if len(line) < 40 or line[0] in "#|!<>*-[{`" or NOT_PROSE.match(line):
             continue
         text = " ".join(re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", line).split())
-        if len(text) > 300:
-            text = text[:300].rsplit(" ", 1)[0] + " …"
+        if len(text) > EXTRACT_CHARS:
+            text = text[:EXTRACT_CHARS].rsplit(" ", 1)[0] + " …"
         text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         return re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text).replace("**", "")
     return ""
