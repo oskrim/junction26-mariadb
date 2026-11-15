@@ -27,6 +27,10 @@ const REVEAL = 900;
 // growth between wars speedruns at 10×, a war plays at normal speed.
 const ROUNDS = 10;
 const FAST = 10;
+// Between wars the road runs at one even pace, CALM_STOP ms a version at 1×, and the page shows whichever
+// version the walker has reached (written at CALM× speed, skipping the ones it passed meanwhile).
+const CALM_STOP = 220;
+const CALM = 40;
 const SLOW = 1;
 const WAR_HOLD = 1800;
 const GROW = 700;
@@ -128,6 +132,7 @@ export function startHistoryPlay({ id, body, onClose }) {
   let speed = 1;
   // Playback speed for the version on screen: the article's ordinary growth goes quickly, edit wars slowly.
   let rate = 1;
+  let calmShow = false;
   let run = 0;
   let closed = false;
   let shown = null;
@@ -256,6 +261,12 @@ export function startHistoryPlay({ id, body, onClose }) {
     looping = true;
     for (let i = from; i < frames.length; i++) {
       for (let k = i + 1; k <= i + 5 && k < frames.length; k++) load(frames[k]);
+      if (!frames[i].war && !frames[i].round) {
+        const next = await calm(i, token);
+        if (next === null) return;
+        i = next;
+        continue;
+      }
       const time = frames[i].edit.time;
       // A war starts only once the marker and the road have arrived at it.
       if (frames[i].war) {
@@ -294,6 +305,34 @@ export function startHistoryPlay({ id, body, onClose }) {
       playButton.innerHTML = AGAIN;
       playButton.setAttribute("aria-label", "Play again");
     }
+  }
+
+  // The versions from i up to the next war, as one even drive down the road; the page keeps up with the walker
+  // by skipping what it passed. The index of the last version of the stretch, or null once a jump takes over.
+  async function calm(i, token) {
+    let last = i;
+    while (last + 1 < frames.length && !frames[last + 1].war && !frames[last + 1].round) last++;
+    const per = CALM_STOP / speed;
+    const total = (last - i + 1) * per;
+    travelTo(frames[last].edit.time, total, 0);
+    const done = () => total - (playing ? Math.max(0, travel.end - performance.now()) : travel.left);
+    let k = i;
+    for (;;) {
+      for (let n = k + 1; n <= k + 4 && n <= last; n++) load(frames[n]);
+      calmShow = true;
+      await show(k, token, true);
+      calmShow = false;
+      if (token !== run || closed) return null;
+      if (k >= last) break;
+      const due = i + Math.floor(done() / per);
+      if (due > k) k = Math.min(last, due);
+      else {
+        if (!(await wait((k + 1 - i) * per - done(), token))) return null;
+        k++;
+      }
+    }
+    if (!(await wait(Math.max(0, total - done()), token))) return null;
+    return last;
   }
 
   // Resolves true after `ms` of playing time; false once a jump or close takes over. Pausing stops the clock.
@@ -364,7 +403,7 @@ export function startHistoryPlay({ id, body, onClose }) {
     );
     $(".hp-date").textContent = formatDate(parseRowStart(version.row_start));
     $(".hp-who").innerHTML = `${escape(censor(version.user))} <span>· version ${(frame.edit.index + 1).toLocaleString("en-US")} of ${edits.length.toLocaleString("en-US")}</span>`;
-    rate = speed * (frame.round ? SLOW : FAST);
+    rate = speed * (frame.round ? SLOW : calmShow ? CALM : FAST);
     showRound(frame);
     // In a war the fighters type in their own colors, and an undo says so.
     const fighter = frame.round?.fighters.indexOf(frame.edit.user) ?? -1;
