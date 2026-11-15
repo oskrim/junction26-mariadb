@@ -71,6 +71,7 @@ export function setUpSearch(box) {
       results = pageLang() === "fi" ? SUGGESTIONS : [];
       shownFor = null;
       failed = openFirst = false;
+      active = results.length ? 0 : -1;
       return render();
     }
     if (shownFor === null) {
@@ -82,7 +83,7 @@ export function setUpSearch(box) {
     failed = !found;
     results = found ?? [];
     shownFor = found ? q : null; // after a failure, Enter asks again
-    active = -1;
+    active = results.length ? 0 : -1; // the top one is chosen, so Enter opens it
     if (openFirst && results.length) return open(results[0]);
     openFirst = false;
     render();
@@ -95,7 +96,7 @@ export function setUpSearch(box) {
   // the top of the list for the first letters.
   function submit() {
     const q = input.value.trim();
-    if (active < 0 && q && shownFor !== q) {
+    if (active <= 0 && q && shownFor !== q) {
       openFirst = true;
       clearTimeout(timer);
       return run();

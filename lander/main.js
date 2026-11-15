@@ -84,7 +84,7 @@ function renderSuggest(text, pages) {
         <span class="opt-body"><span class="opt-title">${looksLikeQuestion(text) ? "Find pages that answer" : "Search all pages for"} “${esc(short)}”</span></span>
         <span class="kbd">Enter</span>
       </div>`;
-  setActive(-1);
+  setActive(pages.length && !looksLikeQuestion(text) ? 0 : -1); // Enter opens the top page; a question searches
   suggest.hidden = false;
   q.setAttribute("aria-expanded", "true");
 }
@@ -107,7 +107,7 @@ function renderPopular() {
         ${thumb(a, "opt-icon")}
         <span class="opt-body"><span class="opt-title">${esc(a.title)}</span><span class="opt-sub">${esc(a.summary)}</span></span>
       </a>`).join("");
-  setActive(-1);
+  setActive(0);
   suggest.hidden = false;
   q.setAttribute("aria-expanded", "true");
 }
@@ -127,6 +127,7 @@ q.addEventListener("input", async () => {
   const text = q.value.trim();
   const seq = ++typedSeq;
   if (!text) { renderPopular(); return; }
+  setActive(-1); // until this text's pages come, Enter searches rather than opening an older top page
   const pages = await suggestPages(text);
   if (seq !== typedSeq) return; // a newer keystroke already answered
   // a long question rarely matches a title; still offer the wider search
