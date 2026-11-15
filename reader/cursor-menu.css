@@ -573,6 +573,49 @@ html.qm-following ::selection {
   animation: rise 240ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
+/* One line per step: the whole text is in the tooltip. */
+.step .step-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A search: a magnifying glass, the query, and how many articles it found */
+.step.is-search .step-text {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.step-glass {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+
+.step-query {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-2);
+}
+
+.step-count {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--chip);
+  font-size: 11px;
+  line-height: 17px;
+  color: var(--ink-3);
+}
+
 .step-mark {
   display: grid;
   place-items: center;

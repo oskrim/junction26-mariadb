@@ -27,7 +27,7 @@ export function stepsView(reply) {
     if (name === "step") {
       const li = items.get(data.id) ?? add(data.id);
       li.className = `step ${data.done ? "is-done" : "is-running"}`;
-      li.querySelector(".step-text").textContent = data.text;
+      showStep(li, data.text);
     } else if (name === "thinking") {
       thinking.hidden = false;
       thinking.querySelector("p").textContent += data;
@@ -60,4 +60,33 @@ export function stepsView(reply) {
     sum.hidden = false;
     box.classList.add("is-folded");
   }
+}
+
+// One line per step, the whole text on hover. A search reads "⌕ query  8": the articles it found are in the
+// tooltip; "Searching Finnish Wikipedia 3 ways, round 2" is just "Searching Finnish Wikipedia".
+const SEARCHED = /^Searched “(.+?)” → (\d+) articles?(?: \((\d+) new\))?:?\s*(.*)$/s;
+const SEARCHING = /^(Searching \S+ Wikipedia)\b.*$/;
+const GLASS = `<svg class="step-glass" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5l3.5 3.5"/></svg>`;
+
+function showStep(li, text) {
+  const out = li.querySelector(".step-text");
+  li.title = text;
+  const searched = text.match(SEARCHED);
+  if (searched) {
+    const [, query, count, fresh, titles] = searched;
+    li.classList.add("is-search");
+    out.innerHTML = `${GLASS}<span class="step-query"></span><span class="step-count">${count}${fresh ? ` · ${fresh} new` : ""}</span>`;
+    out.querySelector(".step-query").textContent = query;
+    li.title = titles ? `${query}: ${titles}` : query;
+    return;
+  }
+  const running = text.match(/^Searching “(.+)”$/s);
+  if (running) {
+    li.classList.add("is-search");
+    out.innerHTML = `${GLASS}<span class="step-query"></span>`;
+    out.querySelector(".step-query").textContent = running[1];
+    return;
+  }
+  li.classList.remove("is-search");
+  out.textContent = text.replace(SEARCHING, "$1");
 }
