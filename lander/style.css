@@ -306,7 +306,7 @@ main {
    reader's Find panel (reader/find-view.css) ── */
 .results {
   width: min(560px, 100%);
-  margin-top: 24px;
+  margin-top: 10px;
   padding: 6px 8px 8px;
   overflow-y: auto;
   overscroll-behavior: contain;
