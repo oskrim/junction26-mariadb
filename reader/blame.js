@@ -4,7 +4,7 @@ import { escape } from "./format.js";
 
 // "Who wrote this": tints each paragraph of today's article by the edit that last wrote it, from a replay of
 // every version in m_article FOR SYSTEM_TIME ALL (server/blame.py). Neighbouring paragraphs from one edit share
-// a tint; hover one for who, when and why. Beside the toggle, "Fill gaps" writes in what the Swedish and
+// a tint; hover one for who, when and why. Beside the toggle, "Add from other languages" writes in what the Swedish and
 // English Wikipedias say that this one doesn't (fill-in.js), so the article shows every source of its paragraphs.
 
 // The one place the data comes from (reader/fake/blame.json is a saved answer for Kalevala, 498).
@@ -134,7 +134,7 @@ function openBlame({ body, data, button }) {
   const showFillIns = () => {
     if (fill && !filling && !fillButton.classList.contains("is-done")) {
       const n = fill.pendingFillIns();
-      const label = `${PEN}Fill gaps (${n})`;
+      const label = `${PEN}Add from other languages (${n})`;
       fillButton.title = "Write in, translated, what the English and Swedish Wikipedias have and this article lacks";
       fillButton.hidden = !n;
       if (n && fillButton.innerHTML !== label) fillButton.innerHTML = label;
@@ -151,13 +151,13 @@ function openBlame({ body, data, button }) {
     filling = true;
     fillButton.disabled = true;
     fillButton.classList.add("is-busy");
-    const step = (i, n) => (fillButton.innerHTML = `${PEN}Writing ${i + 1}/${n}…`);
+    const step = (i, n) => (fillButton.innerHTML = `${PEN}Adding ${i + 1}/${n}…`);
     await fill.writeInAll({ onSection: (i, n) => !closed && step(i, n) });
     filling = false;
     if (closed) return;
     fillButton.classList.remove("is-busy");
     fillButton.classList.add("is-done");
-    fillButton.innerHTML = `✓ Gaps filled`;
+    fillButton.innerHTML = `✓ Added from other languages`;
   });
   showFillIns();
   let pending = 0;

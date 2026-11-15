@@ -1,4 +1,4 @@
-/* "Who wrote this" (blame.js): the toggle by "Watch it being written", the tints, "Fill gaps" and the card. */
+/* "Who wrote this" (blame.js): the toggle by "Watch it being written", the tints, "Add from other languages" and the card. */
 
 .blame-toggle {
   display: inline-flex;
@@ -96,7 +96,7 @@
   box-shadow: inset 0 0 0 2px var(--link);
 }
 
-/* "Fill gaps": a pill like the toggle beside it (it has .blame-toggle too), shown while the view is on */
+/* "Add from other languages": a pill like the toggle beside it (it has .blame-toggle too), shown while the view is on */
 
 .blame-fill {
   animation: blame-in 0.25s ease-out;
