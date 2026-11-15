@@ -8,6 +8,8 @@ import html
 import json
 import os
 import re
+import signal
+import threading
 import time
 import unicodedata
 from datetime import datetime, timezone
@@ -532,8 +534,16 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def fork_worker(server):
+    parent = os.getpid()
     pid = os.fork()
     if pid == 0:
+        # A worker outlives a parent that is killed, still holding the port and serving the old code: it leaves
+        # within a second of the parent going.
+        def orphaned():
+            while os.getppid() == parent:
+                time.sleep(1)
+            os._exit(0)
+        threading.Thread(target=orphaned, daemon=True).start()
         try:
             try:
                 database()  # before the first request, not during it
@@ -552,12 +562,22 @@ def serve(port, workers):
     one that is streaming an answer. A worker that dies is replaced."""
     server = Server(("127.0.0.1", port), Handler)
     print(f"http://127.0.0.1:{port} ({workers} workers)", flush=True)
-    for _ in range(workers):
-        fork_worker(server)
+    children = {fork_worker(server) for _ in range(workers)}
+
+    def stop(signum, frame):  # stopping the app stops its workers
+        for child in children:
+            try:
+                os.kill(child, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+        os._exit(0)
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
     while True:
         pid, status = os.wait()
         print(f"worker {pid} exited ({status}); starting another", flush=True)
-        fork_worker(server)
+        children.discard(pid)
+        children.add(fork_worker(server))
 
 
 if __name__ == "__main__":
