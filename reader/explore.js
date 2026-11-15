@@ -4,9 +4,9 @@ import { getArticle, getGraph, getPreview, now as currentTime } from "./api.js";
 // with around it, grouped by topic, and a fainter ring of articles one step further out.
 // Dots and lines are drawn on a canvas; the picture cards and topic labels are regular elements.
 
-// Articles about history ("historia" in the title) are always shown on top: their cards first and above the
-// others, their dots drawn last with their titles clear.
-const PINNED = /historia/i;
+// When the middle article links to it, Suomen historian aikajana is always shown, on top: its card comes first
+// and sits above the others, fully opaque.
+const PINNED = "Suomen historian aikajana";
 const FIRST_YEAR = 2003;
 const LAST_YEAR = 2026;
 const MAX_CARDS = 12;
@@ -52,7 +52,7 @@ export async function mountExplore(root, { id }) {
   // The part of the link graph loaded so far: each article the map centers on or grows from brings
   // its own neighborhood.
   const nodes = new Map();
-  const pinned = (n) => PINNED.test(nodes.get(n)?.title ?? "");
+  const pinned = (n) => nodes.get(n)?.title === PINNED;
   const links = new Map();
   const linksOut = new Set();
   const graphEdges = [];
@@ -156,7 +156,8 @@ export async function mountExplore(root, { id }) {
     const all = [...links.get(nextId)];
     const allSet = new Set(all);
     const score = (n) => nodes.get(n).chars + 4000 * [...links.get(n)].filter((m) => allSet.has(m)).length;
-    const near = all.sort((a, b) => score(b) - score(a)).slice(0, MAX_NEAR);
+    // the pinned article is always among them
+    const near = [...all.filter(pinned), ...all.filter((n) => !pinned(n)).sort((a, b) => score(b) - score(a))].slice(0, MAX_NEAR);
     const further = [];
     hop = new Map([[nextId, 0], ...near.map((n) => [n, 1])]);
 
@@ -335,17 +336,16 @@ export async function mountExplore(root, { id }) {
   // so every group has a face, then the rest by size.
   async function chooseCards(near) {
     const nearSet = new Set(near);
-    const withPictures = (
-      await Promise.all(near.map(async (n) => ({ n, p: await preview(nodes.get(n).title) })))
-    ).filter(({ p }) => p?.thumbnail);
+    const previews = await Promise.all(near.map(async (n) => ({ n, p: await preview(nodes.get(n).title) })));
+    const withPictures = previews.filter(({ p }) => p?.thumbnail);
     const score = (n) => nodes.get(n).chars + 4000 * [...links.get(n)].filter((m) => nearSet.has(m)).length;
     withPictures.sort((a, b) => score(b.n) - score(a.n));
-    // History articles, when linked, get their cards first.
-    const chosen = withPictures.filter(({ n }) => pinned(n));
+    // The pinned article, when linked, gets its card first.
+    const chosen = previews.filter(({ n, p }) => pinned(n) && p);
     for (const group of Map.groupBy(withPictures, ({ n }) => topics[n]).values())
       chosen.push(...group.slice(0, 2).filter((item) => !chosen.includes(item)));
     for (const item of withPictures) if (chosen.length < MAX_CARDS && !chosen.includes(item)) chosen.push(item);
-    chosen.length = Math.min(chosen.length, MAX_CARDS);
+    chosen.length = Math.min(chosen.length, Math.max(MAX_CARDS, chosen.filter(({ n }) => pinned(n)).length));
     return chosen;
   }
 
@@ -592,7 +592,7 @@ export async function mountExplore(root, { id }) {
 
   // Nearer cards win; a card that would cover a nearer one steps back and shows as a dot instead.
   function placeCards(focusSet) {
-    // A history article's card is always shown, above every other card but the middle, chosen and hovered ones.
+    // The pinned article's card is always shown, above every other card but the middle, chosen and hovered ones.
     const priority = (n) =>
       n === centerId ? 3 : n === selectedId ? 2 : n === hoverId ? 1 : pinned(n) ? 0.5 : 0;
     const list = [...cards].sort(
@@ -609,7 +609,7 @@ export async function mountExplore(root, { id }) {
       if (visible) placed.set(n, rect);
       const dimmed = focusSet && !focusSet.has(n);
       el.style.transform = `translate(${rect.x}px, ${rect.y}px) scale(${scale})`;
-      // a history card is fully opaque, so no dot or title behind it shows through
+      // the pinned card is fully opaque, so no dot or title behind it shows through
       const depthFade = n === centerId || pinned(n) ? 1 : 0.62 + 0.38 * p.near;
       el.style.opacity = visible ? point.a * (dimmed ? 0.3 : depthFade) : 0;
       el.style.zIndex = String(100 + priority(n) * 1000 + Math.round(p.near * 500));
