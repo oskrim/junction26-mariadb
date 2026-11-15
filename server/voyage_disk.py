@@ -156,38 +156,53 @@ def embed(folder, concurrency, batch_tokens, limit_articles=None):
 
 # --- feed ----------------------------------------------------------------------------------------------------
 
-def feed(folder, watch):
+def feed(folder, watch, workers=1):
+    """Loads the shards not in fed.txt; with workers > 1, that many connections load different shards at once."""
     con = voyage.connect(autocommit=False)
     cur = con.cursor()
     cur.execute(TABLE)
+    con.commit()
     ledger = folder / "fed.txt"
     fed = set(ledger.read_text().split()) if ledger.exists() else set()
     print(f"feed: {len(fed):,} shards already loaded into {os.environ['DB_NAME']}.article_vector_voyage", flush=True)
-    rows_total, started = 0, time.time()
-    while True:
-        finished = (folder / "DONE").exists()  # read before listing, so no shard written before DONE is missed
-        new = [p for p in shards(folder) if p.name not in fed]
-        for path in new:
-            data = path.read_bytes()
-            (size,) = struct.unpack("<I", data[:4])
-            head = json.loads(data[4:4 + size])
-            body = data[4 + size:]
-            rows = [(p, head["model"], t, body[i * BYTES:(i + 1) * BYTES])
-                    for i, (p, t) in enumerate(zip(head["ids"], head["tokens"]))]
-            for at in range(0, len(rows), INSERT):
-                cur.executemany("""INSERT IGNORE INTO article_vector_voyage (page_id, model, tokens, embedding)
-                                   VALUES (%s, %s, %s, %s)""", rows[at:at + INSERT])
-            con.commit()
+    lock = threading.Lock()
+    stats = {"rows": 0}
+    started = time.time()
+    local = threading.local()
+
+    def load(path):
+        c = getattr(local, "con", None)
+        if c is None:
+            c = local.con = voyage.connect(autocommit=False)
+        k = c.cursor()
+        data = path.read_bytes()
+        (size,) = struct.unpack("<I", data[:4])
+        head = json.loads(data[4:4 + size])
+        body = data[4 + size:]
+        rows = [(p, head["model"], t, body[i * BYTES:(i + 1) * BYTES])
+                for i, (p, t) in enumerate(zip(head["ids"], head["tokens"]))]
+        for at in range(0, len(rows), INSERT):
+            k.executemany("""INSERT IGNORE INTO article_vector_voyage (page_id, model, tokens, embedding)
+                             VALUES (%s, %s, %s, %s)""", rows[at:at + INSERT])
+        c.commit()
+        with lock:
             with open(ledger, "a") as f:
                 f.write(path.name + "\n")
             fed.add(path.name)
-            rows_total += len(rows)
-            print(f"feed: {time.strftime('%H:%M:%S')} {path.name}: {len(rows)} rows; {rows_total:,} this run, "
-                  f"{rows_total / (time.time() - started):.0f} rows/s", flush=True)
-        if not watch or (finished and not new):
-            break
-        if not new:
-            time.sleep(10)
+            stats["rows"] += len(rows)
+            n = stats["rows"]
+        print(f"feed: {time.strftime('%H:%M:%S')} {path.name}: {len(rows)} rows; {n:,} this run, "
+              f"{n / (time.time() - started):.0f} rows/s", flush=True)
+
+    with ThreadPoolExecutor(max(1, workers)) as pool:
+        while True:
+            finished = (folder / "DONE").exists()  # read before listing, so no shard written before DONE is missed
+            new = [p for p in shards(folder) if p.name not in fed]
+            list(pool.map(load, new))
+            if not watch or (finished and not new):
+                break
+            if not new:
+                time.sleep(10)
     cur.execute("SELECT COUNT(*) FROM article_vector_voyage")
     print(f"feed: done, {cur.fetchone()[0]:,} vectors in article_vector_voyage", flush=True)
 
@@ -200,12 +215,13 @@ def main():
     parser.add_argument("--batch-tokens", type=int, default=120_000, help="embed: estimated tokens per request")
     parser.add_argument("--limit", type=int, help="embed: only this many more articles (a test run)")
     parser.add_argument("--watch", action="store_true", help="feed: keep loading new shards until embed is done")
+    parser.add_argument("--workers", type=int, default=1, help="feed: connections loading shards at once")
     args = parser.parse_args()
     os.environ.setdefault("DB_NAME", "wiki")
     folder = args.dir.expanduser()
     if args.what == "embed":
         return embed(folder, args.concurrency, args.batch_tokens, args.limit)
-    feed(folder, args.watch)
+    feed(folder, args.watch, args.workers)
     return 0
 
 
