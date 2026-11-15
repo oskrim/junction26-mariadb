@@ -62,31 +62,48 @@ export function stepsView(reply) {
   }
 }
 
-// One line per step, the whole text on hover. A search reads "⌕ query  8": the articles it found are in the
-// tooltip; "Searching Finnish Wikipedia 3 ways, round 2" is just "Searching Finnish Wikipedia".
-const SEARCHED = /^Searched “(.+?)” → (\d+) articles?(?: \((\d+) new\))?:?\s*(.*)$/s;
+// One line per step, the whole text on hover, with an icon for what the step does instead of a check mark (a
+// spinner while it runs). A search reads "⌕ query  8": the articles it found are in the tooltip; "Searching
+// Finnish Wikipedia N ways, round 2" is just "Searching Finnish Wikipedia".
+const SEARCHED = /^Searched “(.+?)” → (\d+) articles?(?: \(\d+ new\))?:?\s*(.*)$/s;
+const SEARCHING_ONE = /^Searching “(.+)”$/s;
 const SEARCHING = /^(Searching \S+ Wikipedia)\b.*$/;
-const GLASS = `<svg class="step-glass" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5l3.5 3.5"/></svg>`;
+const ICONS = {
+  search: '<circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5l3.5 3.5"/>',
+  web: '<circle cx="8" cy="8" r="5.5"/><path d="M2.5 8h11M8 2.5c1.6 1.6 2.4 3.4 2.4 5.5S9.6 11.9 8 13.5M8 2.5C6.4 4.1 5.6 5.9 5.6 8s.8 3.9 2.4 5.5"/>',
+  read: '<path d="M2.5 3.5h4A1.5 1.5 0 0 1 8 5v8a1.5 1.5 0 0 0-1.5-1.5h-4zM13.5 3.5h-4A1.5 1.5 0 0 0 8 5v8a1.5 1.5 0 0 1 1.5-1.5h4z"/>',
+  history: '<circle cx="8" cy="8" r="5.5"/><path d="M8 5v3l2 1.5"/>',
+  gemini: '<path d="M8 2.5l1.3 3.7 3.7 1.3-3.7 1.3L8 12.5l-1.3-3.7L3 7.5l3.7-1.3z"/>',
+  dot: '<circle cx="8" cy="8" r="1.6"/>',
+};
+
+function kindOf(text) {
+  if (SEARCHED.test(text) || SEARCHING_ONE.test(text)) return "search";
+  if (SEARCHING.test(text)) return "web";
+  if (/^reading|^read /i.test(text)) return "read";
+  if (/edit history|versions? |version of|compar|first appeared|when the|then and now/i.test(text)) return "history";
+  if (/gemini|writing|choosing|thinking|answer/i.test(text)) return "gemini";
+  return "dot";
+}
 
 function showStep(li, text) {
   const out = li.querySelector(".step-text");
+  const kind = kindOf(text);
+  if (li.dataset.kind !== kind) {
+    li.dataset.kind = kind;
+    li.querySelector(".step-mark").innerHTML = `<svg class="step-icon" viewBox="0 0 16 16">${ICONS[kind]}</svg>`;
+  }
   li.title = text;
-  const searched = text.match(SEARCHED);
+  const searched = text.match(SEARCHED) ?? text.match(SEARCHING_ONE);
   if (searched) {
-    const [, query, count, fresh, titles] = searched;
+    const [, query, count, titles] = searched;
     li.classList.add("is-search");
-    out.innerHTML = `${GLASS}<span class="step-query"></span><span class="step-count">${count}${fresh ? ` · ${fresh} new` : ""}</span>`;
+    out.innerHTML = `<span class="step-query"></span>${count ? `<span class="step-count">${count}</span>` : ""}`;
     out.querySelector(".step-query").textContent = query;
     li.title = titles ? `${query}: ${titles}` : query;
     return;
   }
-  const running = text.match(/^Searching “(.+)”$/s);
-  if (running) {
-    li.classList.add("is-search");
-    out.innerHTML = `${GLASS}<span class="step-query"></span>`;
-    out.querySelector(".step-query").textContent = running[1];
-    return;
-  }
   li.classList.remove("is-search");
-  out.textContent = text.replace(SEARCHING, "$1");
+  // "Asking Gemini…" / "Asked Gemini: first words after 2.0 s" is the answer being written.
+  out.textContent = /^ask(ed|ing) gemini/i.test(text) ? "Answering" : text.replace(SEARCHING, "$1");
 }
