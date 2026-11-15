@@ -104,6 +104,10 @@ function showStep(li, text) {
     return;
   }
   li.classList.remove("is-search");
-  // "Asking Gemini…" / "Asked Gemini: first words after 2.0 s" is the answer being written.
-  out.textContent = /^ask(ed|ing) gemini/i.test(text) ? "Answering" : text.replace(SEARCHING, "$1");
+  // "Asking Gemini…" / "Asked Gemini: first words after 2.0 s" is the answer being written: "Answering", shown
+  // once — not again after a step that already says so ("Answering from what was read").
+  const asked = /^ask(ed|ing) gemini/i.test(text);
+  const said = [...(li.parentElement?.children ?? [])].some((o) => o !== li && /^answering/i.test(o.textContent.trim()));
+  li.hidden = asked && said;
+  out.textContent = asked ? "Answering" : text.replace(SEARCHING, "$1");
 }

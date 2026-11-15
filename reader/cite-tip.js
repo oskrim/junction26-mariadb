@@ -46,7 +46,7 @@ function hide(delay) {
 }
 
 // Top right of the card: "Open ↗" goes where the marker's link goes (another article, or another version of
-// this one); "Show ↓" finds the quote in the article being read, as clicking the marker does.
+// this one); "Show" finds the quote in the article being read, as clicking the marker does.
 function action(marker) {
   if (marker.matches("a[href]")) {
     const open = part("a", "cite-tip-open", "Open ↗");
@@ -55,7 +55,7 @@ function action(marker) {
     open.rel = "noopener";
     return open;
   }
-  const show = part("button", "cite-tip-open", "Show ↓");
+  const show = part("button", "cite-tip-open", "Show");
   show.type = "button";
   show.addEventListener("click", () => {
     showQuote(marker.dataset.quote);
