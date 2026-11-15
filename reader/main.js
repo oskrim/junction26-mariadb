@@ -22,8 +22,7 @@ if (foreign) {
 }
 setUpViews();
 // Enter in the top bar's search opens Find with what was typed, once the article view has set it up.
-let openFind = null;
-setUpSearch(document.querySelector(".bar .search"), { onFind: (query) => openFind?.(query) });
+const search = setUpSearch(document.querySelector(".bar .search"));
 const [articles, { version }] = await Promise.all([foreign ? [] : getArticles(id), getArticle(id, now(), lang)]);
 // What the chat, Learn and Find are about: a Swedish or English article's Finnish counterpart, when there is one.
 const summary = foreign ? await finnishCounterpart() : articles.find((a) => a.page_id === id);
@@ -118,23 +117,17 @@ if (!version || (!foreign && !summary)) {
   if (summary) setUpAssistants();
 }
 
-// The chat, Learn and Find, and the menu at the cursor that opens them.
+// The chat and Learn, and the menu at the cursor that opens them (its Find is the search bar at the top).
 function setUpAssistants() {
   const chat = chatPanel({ article: summary, onClose: () => menu.clearPaint() });
-  // Learn opens a lesson and Find its articles, each in a wide sheet at the top; Ask opens a chat. A sheet
-  // tucks the open chat away into its tray.
+  // Learn opens a lesson in a wide sheet at the top, which tucks the open chat away into its tray; Ask opens a
+  // chat; Find focuses the search bar.
   const lessons = import("./learn-view.js").then((m) => m.learnView({ article: summary }));
   const openSheet = (sheet, request) => (chat.hide(), sheet.open(request));
-  const finder = import("./find-view.js").then((m) =>
-    m.findView({
-      article: summary,
-      actions: { ask: (request) => chat.ask(request), learn: (request) => lessons.then((l) => openSheet(l, request)) },
-    }),
-  );
-  openFind = (query) => finder.then((f) => openSheet(f, { typed: query, context: null, from: null }));
-  const panels = { learn: lessons, find: finder };
+  const panels = { learn: lessons };
   const menu = cursorMenu({
     root: body,
+    onFind: (query) => (menu.clearPaint(), search.focus(query)),
     onSubmit: (request) =>
       panels[request.mode]
         ? panels[request.mode].then((p) => (menu.clearPaint(), openSheet(p, request))).catch((error) => (console.error("panel failed, opening a chat instead", error), chat.ask(request)))

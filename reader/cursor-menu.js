@@ -53,7 +53,7 @@ const FEEL = reduceMotion
   : { open: [380, 20], close: [520, 46], follow: [620, 36], bar: [300, 25] };
 const STAGGER = reduceMotion ? 0 : 40;
 
-export function cursorMenu({ root, onSubmit }) {
+export function cursorMenu({ root, onSubmit, onFind = null }) {
   const el = build();
   document.body.append(el.root);
 
@@ -185,6 +185,13 @@ export function cursorMenu({ root, onSubmit }) {
 
   function choose(mode) {
     if (!mode) return;
+    // Find is the search bar at the top: it takes the painted passage's first words, if any, as its query.
+    if (mode.id === "find" && onFind) {
+      const words = paint?.text.split(/\s+/).slice(0, 12).join(" ") ?? "";
+      close();
+      onFind(words);
+      return;
+    }
     if (state === "follow") pinAt(mouse.x, mouse.y);
     reset();
     chosen = mode;

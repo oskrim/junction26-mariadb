@@ -260,27 +260,6 @@ a {
   color: var(--ink-2);
 }
 
-.search-results .search-all {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: 4px;
-  border-top: 1px solid #f0f0f0;
-  border-radius: 0 0 10px 10px;
-  color: var(--ink-2);
-  font-size: 13px;
-}
-
-.search-all kbd {
-  display: grid;
-  place-items: center;
-  min-width: 22px;
-  height: 22px;
-  border-radius: 6px;
-  box-shadow: inset 0 0 0 1px #e1e2e4;
-  font: 500 12px/1 var(--sans);
-}
-
 .search-results .search-none {
   font-size: 13px;
   color: var(--ink-3);

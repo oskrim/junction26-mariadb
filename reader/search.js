@@ -13,7 +13,7 @@ export function highlight(snippet, match) {
 
 // The top bar's search box: matching titles in a list under it. Choosing one opens it in the current view;
 // Enter with none chosen hands the words to onFind (the Find palette), when there is one.
-export function setUpSearch(box, { onFind = null } = {}) {
+export function setUpSearch(box) {
   const input = box.querySelector("input");
   const list = document.createElement("ul");
   list.className = "search-results";
@@ -41,9 +41,7 @@ export function setUpSearch(box, { onFind = null } = {}) {
               </span></li>`,
             )
             .join("")
-        : `<li class="search-none">No titles match</li>`) +
-      // With Find there, Enter (nothing chosen) searches everything: by meaning, related, ask, learn.
-      (onFind && query ? `<li class="search-all" data-all aria-selected="false"><span>Search all for “${escape(query)}”</span><kbd>↵</kbd></li>` : "");
+        : `<li class="search-none">No articles match</li>`);
     paint(list);
   }
 
@@ -63,20 +61,10 @@ export function setUpSearch(box, { onFind = null } = {}) {
     loadPictures(found.map((r) => r.title)).then(() => token === request && paint(list));
   }
 
-  // Enter or the arrow: the chosen title, or with none chosen everything for the words (Find), or else the
-  // first title.
+  // Enter or the arrow: the chosen article, else the top one.
   function submit() {
-    const query = input.value.trim();
-    if (active < 0 && onFind && query) {
-      clearTimeout(timer);
-      request++;
-      list.hidden = true;
-      input.blur();
-      onFind(query);
-    } else {
-      const result = results[Math.max(active, 0)];
-      if (result) open(result);
-    }
+    const result = results[Math.max(active, 0)];
+    if (result) open(result);
   }
 
   // A result is a Finnish article unless it says otherwise (a Swedish or English search's results carry lang).
@@ -125,16 +113,22 @@ export function setUpSearch(box, { onFind = null } = {}) {
   });
   // mousedown, not click: the input's blur would hide the list before a click lands.
   list.addEventListener("mousedown", (event) => {
-    if (event.target.closest("[data-all]")) {
-      event.preventDefault();
-      list.hidden = true;
-      input.blur();
-      return onFind(input.value.trim());
-    }
     const item = event.target.closest("[data-index]");
     if (!item) return;
     event.preventDefault();
     open(results[Number(item.dataset.index)]);
   });
   input.addEventListener("blur", () => (list.hidden = true));
+
+  // Find (the Q menu's F): the box, focused, with the words to search for, if any, and their results.
+  return {
+    focus(query = "") {
+      if (query) input.value = query;
+      showGo();
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+      clearTimeout(timer);
+      if (input.value.trim()) run();
+    },
+  };
 }
