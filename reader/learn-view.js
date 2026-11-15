@@ -6,6 +6,7 @@
 // Listen (learn-audio.js) reads it aloud; there the chat takes questions, typed (answered aloud, then the lesson goes
 // on) or spoken with Talk, a live ElevenLabs voice chat about the lesson (voice.js) while the lesson waits.
 
+import { emphasis } from "./format.js";
 import { citeLinks, learn } from "./learn.js";
 import { stepsView } from "./steps.js";
 import { listenView } from "./learn-audio.js";
@@ -513,7 +514,7 @@ export function parse(text, prompt) {
 
 // Escaped text with its citation markers linked (or hidden until the sources arrive) and its terms as buttons.
 export function prose(text, lesson, sources = lesson.sources) {
-  let html = escape(text).replace(/\s*\[[\d,\s]*$/, "");
+  let html = emphasis(escape(text)).replace(/\s*\[[\d,\s]*$/, "");
   html = sources ? citeLinks(html, sources) : html.replace(CITES, "");
   return html
     .replace(/\{([^{}]+)\}/g, (_, name) => {

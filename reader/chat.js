@@ -2,6 +2,7 @@ import { PAST_CHATS, respond } from "./assistant.js";
 import { citeLinks, learn, sourcesHtml } from "./learn.js";
 import { modelHtml, mountModel } from "./model3d.js";
 import { stepsView } from "./steps.js";
+import { formatAnswer } from "./format.js";
 import "./cite-tip.js";
 
 // Chats. Every request from the menu starts a new chat. Open chats are tabs in the tray at the
@@ -70,8 +71,11 @@ export function chatPanel({ article, onClose }) {
   // N opens a new chat; Esc closes the chat window to its tab while you're working in it (typing there, or
   // the last thing you clicked), so Esc elsewhere still belongs to the rest of the page.
   let inChat = false;
+  let lastKey = 0; // N is a shortcut only on its own, not in the middle of typing that landed on the page
   addEventListener("pointerdown", (e) => (inChat = !!e.target.closest?.(".chat")), true);
   addEventListener("keydown", (e) => {
+    const typedJustNow = performance.now() - lastKey < 1000;
+    if (e.key.length === 1) lastKey = performance.now();
     if (e.metaKey || e.ctrlKey || e.altKey || e.isComposing || e.defaultPrevented || menuOpen()) return;
     const typing = e.target.closest?.("input, textarea, select, [contenteditable='true']");
     if (e.key === "Escape" && !el.panel.hidden && (inChat || e.target === el.textarea)) {
@@ -79,7 +83,7 @@ export function chatPanel({ article, onClose }) {
       el.textarea.blur();
       inChat = false;
       hide();
-    } else if (e.key.toLowerCase() === "n" && !e.repeat && !typing) {
+    } else if (e.key.toLowerCase() === "n" && !e.repeat && !typing && !typedJustNow) {
       e.preventDefault();
       newChat();
     }
@@ -497,11 +501,7 @@ function build() {
   };
 }
 
-const paragraphs = (text) =>
-  text
-    .split(/\n{2,}/)
-    .map((p) => `<p>${escape(p)}</p>`)
-    .join("");
+const paragraphs = formatAnswer;
 const escape = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 const reduceMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
 // The Q menu is open: its own keys (A, F, L, Esc) come first.

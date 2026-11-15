@@ -390,6 +390,31 @@ html.qm-following ::selection {
   margin-bottom: 0;
 }
 
+/* Lists and headings in answers (reader/format.js) */
+.msg-text ul,
+.msg-text ol {
+  margin: 0 0 10px;
+  padding-left: 20px;
+}
+
+.msg-text li {
+  margin: 0 0 4px;
+}
+
+.msg-text li::marker {
+  color: var(--ink-3);
+}
+
+.msg-text h4 {
+  margin: 14px 0 6px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.msg-text > :last-child {
+  margin-bottom: 0;
+}
+
 /* Citation markers and their tooltip (reader/cite-tip.js) */
 .msg-text sup {
   line-height: 0;
