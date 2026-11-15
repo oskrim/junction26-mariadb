@@ -1,23 +1,29 @@
+import { BASE } from "./api.js";
 import { censor } from "./censor.js";
 import { escape } from "./format.js";
 
 // "Who wrote this": tints each paragraph of today's article by the edit that last wrote it, from a replay of
-// every version in m_article FOR SYSTEM_TIME ALL. A paragraph unchanged since the version before keeps its
-// origin; a new or changed one belongs to that version's edit. Hover a tinted block for who, when and why.
-// A second mode shades by age instead: the older the words, the lighter the tint.
+// every version in m_article FOR SYSTEM_TIME ALL (server/blame.py). Neighbouring paragraphs from one edit share
+// a tint; hover one for who, when and why. "By age" shades by age instead: the older the words, the lighter.
+// The legend also offers to write in what the Swedish and English Wikipedias say that this one doesn't
+// (fill-in.js), so the article shows every source of its paragraphs at once.
 
-// The one place the data comes from. Fixture for Kalevala (page 498) until /api/blame is served; then:
-//   return getJson(`/api/blame?id=${id}`)
+// The one place the data comes from (reader/fake/blame.json is a saved answer for Kalevala, 498).
 function loadBlame(id) {
-  if (id !== 498) return Promise.resolve(null);
-  return fetch(new URL("fake/blame.json", import.meta.url)).then((r) => (r.ok ? r.json() : null));
+  return fetch(`${BASE}/api/blame?id=${id}`).then((r) => (r.ok ? r.json() : null));
 }
 
 const PERSON = `<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="5.2" r="2.6"/><path d="M2.8 14c.6-3 2.7-4.6 5.2-4.6s4.6 1.6 5.2 4.6"/></svg>`;
+const PEN = `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M11.2 2.6l2.2 2.2-7.6 7.6-2.9.7.7-2.9z"/></svg>`;
 // Paragraph-level elements of the reading column; the infobox, figures and tables are left alone.
 const BLOCKS = "p, li, dd, blockquote, h2, h3, h4";
 const SKIP = ".infobox, figure, table, .references, .fill-block, .fill-in, .blame-legend, .tellings, nav";
 const DAY = 86400000;
+const SWEEP_MS = 850; // the tints cascade down the window in this long
+const LEAVE_MS = 220;
+
+const reducedMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+const frame = () => new Promise((resolve) => requestAnimationFrame(() => resolve()));
 
 export async function addBlame({ head, body, id }) {
   const data = await loadBlame(id).catch(() => null);
@@ -35,6 +41,9 @@ export async function addBlame({ head, body, id }) {
     if (view) {
       view.close();
       view = null;
+      // Ignore clicks until the tints have faded, so a quick on-off-on never meets a half-removed view.
+      button.disabled = true;
+      setTimeout(() => (button.disabled = false), reducedMotion() ? 0 : LEAVE_MS + 20);
     } else {
       view = openBlame({ body, data });
     }
@@ -44,6 +53,7 @@ export async function addBlame({ head, body, id }) {
 
 function openBlame({ body, data }) {
   const root = document.documentElement;
+  root.classList.remove("blame-shown", "blame-leaving");
   root.classList.add("blame-on");
   const now = Date.now();
   const painted = [];
@@ -66,7 +76,7 @@ function openBlame({ body, data }) {
     if (!same) hue = distinctHue(block.origin.rev_id, hue);
     block.hue = hue;
     block.continues = same;
-    block.joins = same && block.el.previousElementSibling === previous.el; // fill the margin between them
+    block.prev = same ? previous.el : null;
     previous = block;
   }
 
@@ -86,8 +96,20 @@ function openBlame({ body, data }) {
       </div>
       <span class="blame-age-scale" aria-hidden="true"><span>${new Date(oldest).getUTCFullYear()}</span><i></i><span>now</span></span>
       <span class="blame-fill-key" hidden></span>
+      <button type="button" class="blame-fill" hidden></button>
     </div>`;
   body.prepend(legend);
+
+  // The cascade: each block's tint starts a little after the one above it, over SWEEP_MS for what is in the
+  // window; blocks further down start last. Delays are cleared afterwards, so mode switches are immediate.
+  // Measured from the first tinted block on screen, so the sweep starts at once.
+  const tops = painted.map((b) => b.el.getBoundingClientRect().top);
+  const start = Math.max(0, Math.min(...tops.filter((t) => t >= 0), innerHeight));
+  const span = Math.max(200, innerHeight - start);
+  for (const [i, b] of painted.entries()) {
+    const share = Math.min(1.15, Math.max(0, (tops[i] - start) / span));
+    b.el.style.setProperty("--blame-delay", `${Math.round(share * SWEEP_MS)}ms`);
+  }
 
   let mode = "edit";
   const paint = () => {
@@ -99,7 +121,7 @@ function openBlame({ body, data }) {
         b.addedTab = true;
       }
       if (mode === "edit") {
-        b.el.style.setProperty("--blame-bg", `hsl(${b.hue} 75% 95.5%)`);
+        b.el.style.setProperty("--blame-bg", `hsl(${b.hue} 65% 95.5%)`);
         b.el.style.setProperty("--blame-rule", `hsl(${b.hue} 45% 72%)`);
       } else {
         // Newer is stronger: the share of the article's lifetime since this paragraph was written, eased.
@@ -108,16 +130,27 @@ function openBlame({ body, data }) {
         b.el.style.setProperty("--blame-rule", `rgb(51 102 204 / ${(0.15 + 0.6 * fresh).toFixed(3)})`);
       }
     }
-    // A continuing block also fills the gap above it, so a run reads as one patch.
-    for (const b of painted) {
-      const prev = b.joins && b.el.previousElementSibling;
-      const gap = prev ? Math.max(0, b.el.getBoundingClientRect().top - prev.getBoundingClientRect().bottom) : 0;
-      b.el.style.setProperty("--blame-gap", `${gap}px`);
-    }
     legend.dataset.mode = mode;
     for (const m of legend.querySelectorAll("[data-mode]")) m.setAttribute("aria-pressed", String(m.dataset.mode === mode));
   };
+  // A continuing block also covers the margin above it, so a run reads as one patch. Measured again when
+  // something is written into the article (fill-in.js) or the window changes width.
+  const layout = () => {
+    for (const b of painted) {
+      const prev = b.prev && b.el.previousElementSibling === b.prev ? b.prev : null;
+      const gap = prev ? Math.max(0, b.el.getBoundingClientRect().top - prev.getBoundingClientRect().bottom) : 0;
+      b.el.style.setProperty("--blame-gap", `${gap}px`);
+    }
+  };
   paint();
+  layout();
+  let closed = false;
+  const sweepTimer = setTimeout(() => {
+    for (const b of painted) b.el.style.removeProperty("--blame-delay");
+  }, SWEEP_MS * 1.15 + 700);
+  // Two frames: the blocks are painted transparent first, then the tints transition in.
+  frame().then(frame).then(() => !closed && root.classList.add("blame-shown"));
+
   legend.querySelector(".blame-modes").addEventListener("click", (event) => {
     const m = event.target.closest("[data-mode]")?.dataset.mode;
     if (m && m !== mode) {
@@ -126,20 +159,54 @@ function openBlame({ body, data }) {
     }
   });
 
-  // Paragraphs written in from other languages (fill-in.js) are their own source, named in the legend.
+  // Paragraphs written in from other languages (fill-in.js) are their own source, named in the legend,
+  // and one button writes in all of them.
   const fillKey = legend.querySelector(".blame-fill-key");
+  const fillButton = legend.querySelector(".blame-fill");
+  let fill = null; // fill-in.js, once its chips are in place
+  let filling = false;
   const showFillIns = () => {
     const langs = [...new Set([...body.querySelectorAll(".fill-in")].map((el) => el.dataset.lang))];
     fillKey.hidden = !langs.length;
     const names = langs.map((l) => ({ en: "English", sv: "Swedish" })[l] ?? l).join(" and ");
     const html = `<i></i>From ${escape(names)} Wikipedia (translated)`;
     if (fillKey.innerHTML !== html) fillKey.innerHTML = html; // a change here would wake the observer again
+    if (fill && !filling) {
+      const n = fill.pendingFillIns();
+      const label = `${PEN}<span>Täydennä muista kielistä (${n} ${n === 1 ? "kappale" : "kappaletta"})</span>`;
+      fillButton.hidden = !n;
+      if (n && fillButton.innerHTML !== label) fillButton.innerHTML = label;
+    }
   };
+  import("./fill-in.js").then(async (m) => {
+    await m.fillInsReady;
+    if (closed) return;
+    fill = m;
+    showFillIns();
+  });
+  fillButton.addEventListener("click", async () => {
+    if (!fill || filling) return;
+    filling = true;
+    fillButton.disabled = true;
+    fillButton.classList.add("is-busy");
+    const step = (i, n) => (fillButton.innerHTML = `${PEN}<span>Kirjoitetaan… ${i + 1}/${n}</span>`);
+    await fill.writeInAll({ onSection: (i, n) => !closed && step(i, n) });
+    filling = false;
+    if (closed) return;
+    fillButton.classList.remove("is-busy");
+    fillButton.classList.add("is-done");
+    fillButton.innerHTML = `<span>✓ Täydennetty muista kielistä</span>`;
+  });
   showFillIns();
+  let pending = 0;
   const observer = new MutationObserver((records) => {
-    if (records.some((r) => !legend.contains(r.target))) showFillIns();
+    if (!records.some((r) => !legend.contains(r.target))) return;
+    showFillIns();
+    cancelAnimationFrame(pending);
+    pending = requestAnimationFrame(layout);
   });
   observer.observe(body, { childList: true, subtree: true });
+  addEventListener("resize", layout);
 
   const byEl = new Map(painted.map((b) => [b.el, b]));
   const show = (event) => {
@@ -168,22 +235,31 @@ function openBlame({ body, data }) {
 
   return {
     close() {
+      closed = true;
+      clearTimeout(sweepTimer);
+      cancelAnimationFrame(pending);
       observer.disconnect();
+      removeEventListener("resize", layout);
       body.removeEventListener("mouseover", show);
       body.removeEventListener("mouseout", hide);
       body.removeEventListener("focusin", show);
       body.removeEventListener("focusout", hide);
       window.removeEventListener("scroll", away);
-      for (const b of painted) {
-        b.el.classList.remove("blame-block", "blame-continues", "is-lit");
-        for (const p of ["--blame-bg", "--blame-rule", "--blame-gap"]) b.el.style.removeProperty(p);
-        if (!b.el.getAttribute("style")) b.el.removeAttribute("style");
-        if (!b.el.getAttribute("class")) b.el.removeAttribute("class");
-        if (b.addedTab) b.el.removeAttribute("tabindex");
-      }
-      legend.remove();
       card.remove();
-      root.classList.remove("blame-on");
+      // The tints and the legend fade together; then every trace goes.
+      root.classList.add("blame-leaving");
+      legend.classList.add("is-leaving");
+      setTimeout(() => {
+        for (const b of painted) {
+          b.el.classList.remove("blame-block", "blame-continues", "is-lit");
+          for (const p of ["--blame-bg", "--blame-rule", "--blame-gap", "--blame-delay"]) b.el.style.removeProperty(p);
+          if (!b.el.getAttribute("style")) b.el.removeAttribute("style");
+          if (!b.el.getAttribute("class")) b.el.removeAttribute("class");
+          if (b.addedTab) b.el.removeAttribute("tabindex");
+        }
+        legend.remove();
+        root.classList.remove("blame-on", "blame-shown", "blame-leaving");
+      }, reducedMotion() ? 0 : LEAVE_MS);
     },
   };
 }

@@ -19,9 +19,37 @@ export async function getFill(id) {
   return fetch(new URL("fake/fill-in.json", import.meta.url)).then((r) => (r.ok ? r.json() : null));
 }
 
+// Every section with a chip, for writing them all in at once (writeInAll, from the "Who wrote this" legend).
+const chips = [];
+let markReady;
+export const fillInsReady = new Promise((resolve) => (markReady = resolve));
+
+// How many borrowed paragraphs are not in the article yet.
+export const pendingFillIns = () => chips.filter((c) => !c.isOpen()).reduce((n, c) => n + c.section.paragraphs.length, 0);
+
+// Writes in every section not yet written in, one after another: a gentle scroll to where they go, then the
+// paragraphs typed a little faster than by a chip. onSection(i, n) before each. Resolves when all are typed.
+export async function writeInAll({ onSection } = {}) {
+  await fillInsReady;
+  const todo = chips.filter((c) => !c.isOpen());
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, reducedMotion() ? 0 : ms));
+  for (const [i, c] of todo.entries()) {
+    onSection?.(i, todo.length);
+    // Where the paragraphs will go: the end of the section, in the middle of the window.
+    sectionEnd(c.heading).scrollIntoView({ behavior: reducedMotion() ? "auto" : "smooth", block: "center" });
+    await wait(650);
+    if (c.isOpen()) continue;
+    const { block, done } = c.open(1500);
+    // Pictures loading on the way can push the section down: bring the block itself to the middle.
+    setTimeout(() => block.scrollIntoView({ behavior: reducedMotion() ? "auto" : "smooth", block: "center" }), 120);
+    await done;
+    await wait(350);
+  }
+}
+
 export async function addFillIns({ body, id }) {
   const data = await getFill(id).catch(() => null);
-  if (!data?.sections?.length) return;
+  if (!data?.sections?.length) return markReady();
   const headings = [...body.querySelectorAll("h2, h3")];
   const popover = originalPopover();
   for (const section of data.sections) {
@@ -29,6 +57,7 @@ export async function addFillIns({ body, id }) {
     const heading = matchHeading(section.section, headings);
     if (heading) addChip(heading, section, popover);
   }
+  markReady();
 }
 
 const reducedMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -47,8 +76,7 @@ function addChip(heading, section, popover) {
     `<span class="fill-text">${open ? "Piilota" : count(section.paragraphs.length)}</span>`;
   let open = null; // { block, cancel } while the paragraphs are in the article
   chip.innerHTML = label();
-  chip.addEventListener("click", (event) => {
-    event.stopPropagation();
+  const toggle = (ms) => {
     if (open) {
       open.cancel();
       const { block } = open;
@@ -57,18 +85,24 @@ function addChip(heading, section, popover) {
       popover.hide();
       open = null;
     } else {
-      open = writeIn(heading, section, popover);
+      open = writeIn(heading, section, popover, ms);
     }
     chip.classList.toggle("is-open", !!open);
     chip.setAttribute("aria-expanded", String(!!open));
     chip.innerHTML = label();
+    return open;
+  };
+  chip.addEventListener("click", (event) => {
+    event.stopPropagation();
+    toggle();
   });
+  chips.push({ heading, section, isOpen: () => !!open, open: (ms) => toggle(ms) });
   // Next to the other chips, before the edit-war marks when they are already there.
   heading.insertBefore(chip, heading.querySelector(".war-marks"));
 }
 
 // The borrowed paragraphs in a block after the section's last element, typed one after another.
-function writeIn(heading, section, popover) {
+function writeIn(heading, section, popover, msPerParagraph = MS_PER_PARAGRAPH) {
   const block = document.createElement("aside");
   block.className = "fill-block";
   block.dataset.lang = section.lang;
@@ -103,26 +137,29 @@ function writeIn(heading, section, popover) {
 
   let cancelled = false;
   let frame = 0;
+  let finish;
+  const done = new Promise((resolve) => (finish = resolve)); // typed, or taken out
   if (reducedMotion()) {
     for (const { el, text } of paragraphs) {
       el.textContent = text;
       el.classList.add("is-done");
       block.append(el);
     }
+    finish();
   } else {
     const caret = Object.assign(document.createElement("span"), { className: "fill-caret" });
     caret.setAttribute("aria-hidden", "true");
     const typeNext = (i) => {
-      if (cancelled) return;
-      if (i >= paragraphs.length) return caret.remove();
+      if (cancelled) return finish();
+      if (i >= paragraphs.length) return caret.remove(), finish();
       const { el, text } = paragraphs[i];
       const typed = document.createTextNode("");
       el.append(typed, caret);
       block.append(el);
       const start = performance.now();
       const step = (t) => {
-        if (cancelled) return;
-        const n = Math.min(text.length, Math.ceil(((t - start) / MS_PER_PARAGRAPH) * text.length));
+        if (cancelled) return finish();
+        const n = Math.min(text.length, Math.ceil(((t - start) / msPerParagraph) * text.length));
         typed.data = text.slice(0, n);
         if (n < text.length) frame = requestAnimationFrame(step);
         else {
@@ -137,9 +174,11 @@ function writeIn(heading, section, popover) {
   block.scrollIntoView({ behavior: reducedMotion() ? "auto" : "smooth", block: "nearest" });
   return {
     block,
+    done,
     cancel: () => {
       cancelled = true;
       cancelAnimationFrame(frame);
+      finish();
     },
   };
 }

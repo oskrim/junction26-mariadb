@@ -56,8 +56,28 @@
   inset: calc(-1 * var(--blame-gap, 0px)) -10px -2px calc(-1 * var(--blame-bleed));
   border-left: 2px solid var(--blame-rule);
   background: var(--blame-bg);
-  transition: background 0.25s ease, border-color 0.25s ease, box-shadow 0.15s ease;
   pointer-events: none;
+  /* Turning on: hidden until .blame-shown, then each block wipes in from the top after its --blame-delay */
+  opacity: 0;
+  clip-path: inset(0 0 100% 0);
+  transition:
+    opacity 0.4s ease var(--blame-delay, 0ms),
+    clip-path 0.55s cubic-bezier(0.2, 0.8, 0.2, 1) var(--blame-delay, 0ms),
+    background 0.3s ease,
+    border-color 0.3s ease,
+    box-shadow 0.15s ease;
+}
+
+.blame-shown .body .blame-block::before {
+  opacity: 1;
+  clip-path: inset(0);
+}
+
+/* Turning off: all at once, a quick fade */
+.blame-leaving .body .blame-block::before {
+  opacity: 0;
+  clip-path: inset(0);
+  transition: opacity 0.2s ease;
 }
 
 .blame-on .body .blame-block:not(.blame-continues)::before {
@@ -85,7 +105,13 @@
   border-radius: 8px;
   font: 13px/1.5 var(--sans);
   color: var(--ink-2);
-  animation: blame-in 0.25s ease-out;
+  animation: blame-in 0.3s ease-out;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.blame-legend.is-leaving {
+  opacity: 0;
+  transform: translateY(-3px);
 }
 
 @keyframes blame-in {
@@ -172,6 +198,58 @@
   background: repeating-linear-gradient(-45deg, rgb(51 102 204 / 0.12) 0 3px, transparent 3px 6px);
 }
 
+/* Writes in every paragraph the other languages have (fill-in.js writeInAll) */
+.blame-fill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  padding: 3px 12px 3px 10px;
+  border: 1px solid var(--link);
+  border-radius: 999px;
+  background: var(--paper);
+  font: 500 12px var(--sans);
+  color: var(--link);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease, opacity 0.2s ease;
+}
+
+.blame-fill[hidden] {
+  display: none;
+}
+
+.blame-fill:hover:not(:disabled) {
+  background: rgb(51 102 204 / 0.07);
+}
+
+.blame-fill svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+}
+
+.blame-fill:disabled {
+  cursor: default;
+}
+
+.blame-fill.is-busy svg {
+  animation: blame-pen 0.9s ease-in-out infinite alternate;
+}
+
+@keyframes blame-pen {
+  to {
+    transform: translate(2px, -1px) rotate(-8deg);
+  }
+}
+
+.blame-fill.is-done {
+  border-color: var(--rule);
+  color: var(--ink-2);
+}
+
 /* Who, when and why, over the hovered block */
 
 .blame-card {
@@ -237,5 +315,14 @@
 
   .blame-card {
     max-width: calc(100vw - 32px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .blame-on .body .blame-block::before,
+  .blame-legend,
+  .blame-fill.is-busy svg {
+    animation: none;
+    transition: none;
   }
 }
