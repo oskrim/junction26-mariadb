@@ -27,9 +27,12 @@ import tracelog
 import json
 import os
 import re
+import sys
+import threading
 import time
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 import search
@@ -152,9 +155,13 @@ def serve(handler, database):
         return send_json(handler, error.status, {"error": str(error)})
     with Progress(handler) as progress:
         cur = database().cursor()
+        SIDE.connect = getattr(sys.modules.get(database.__module__), "connect", None)
         here = read_version(cur, progress, request)
+        # The search queries are written while the linked articles are read.
+        queries = side_pool().submit(search_queries, request, here, request["prompt"])
         candidates = linked_articles(cur, progress, [request["page_id"]], request["at"])
-        found = related_articles(cur, progress, request, here, request["prompt"], {c["page_id"] for c in candidates})
+        found = related_articles(cur, progress, request, here, request["prompt"], {c["page_id"] for c in candidates},
+                                 queries=queries.result())
         candidates += found
         explored = len(candidates)
         timings["db_ms"] = ms(started)
@@ -341,14 +348,54 @@ def search_queries(request, here, query):
     return queries or [f"{here['title']} {query}"]
 
 
-def related_articles(cur, progress, request, here, query, linked, skip=()):
-    """Up to RELATED articles found by searching (search.py: BM25 and meaning) with queries Gemini writes for query,
-    as of `at`: not this one, not the linked ones (page ids), and none whose title is in skip."""
+class Side:
+    """This worker's threads for work beside the request's own: the searches of one round run at once, each thread
+    with its own MariaDB connection (app.connect) and, in voyage.py, its own open connection to Voyage. The threads
+    are kept between requests, so neither is opened again."""
+    connect, pool, local = None, None, threading.local()
+
+
+SIDE = Side()
+
+
+def side_pool():
+    if SIDE.pool is None:
+        SIDE.pool = ThreadPoolExecutor(QUERIES)
+    return SIDE.pool
+
+
+def search_ids(query):
+    """The page ids search.ranked() finds for query, on this side thread's own connection."""
+    con = getattr(SIDE.local, "con", None)
+    try:
+        if con is not None:
+            con.ping(reconnect=False)
+    except Exception:
+        con = None
+    if con is None:
+        con = SIDE.local.con = SIDE.connect()
+    return [r["page_id"] for r in search.ranked(con.cursor(), query, RELATED)]
+
+
+def searched(cur, queries):
+    """search.ranked()'s page ids for each query: all at once, or one after another on cur when that fails."""
+    if SIDE.connect and len(queries) > 1:
+        try:
+            return list(side_pool().map(search_ids, queries))
+        except Exception as error:  # a side connection broke: the request's own still works
+            SIDE.local = threading.local()
+            print(f"learn: searching one at a time: {error!r}", flush=True)
+    return [[r["page_id"] for r in search.ranked(cur, q, RELATED)] for q in queries]
+
+
+def related_articles(cur, progress, request, here, query, linked, skip=(), queries=None):
+    """Up to RELATED articles found by searching (search.py: BM25 and meaning) with queries Gemini writes for query
+    (or the ones given), as of `at`: not this one, not the linked ones (page ids), and none whose title is in skip."""
     progress.step("Searching Wikipedia for more articles")
-    queries = search_queries(request, here, query)
+    queries = queries or search_queries(request, here, query)
     label = "Searched " + ", ".join(f"“{q}”" for q in queries)
     progress.update(label)
-    ranked = [[r["page_id"] for r in search.ranked(cur, q, RELATED)] for q in queries]
+    ranked = searched(cur, queries)
     # The first of each search, then the second of each, ...: every query gets its best results in.
     order = dict.fromkeys(p for rank_ in range(RELATED) for found_ in ranked for p in found_[rank_:rank_ + 1])
     stamp = request["at"].strftime("%Y-%m-%d %H:%M:%S.%f")
