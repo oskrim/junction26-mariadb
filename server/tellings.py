@@ -151,6 +151,7 @@ def serve(cur, params):
     tables are not there yet."""
     import pymysql
     page_id = int(params["id"][0])
+    found = []
     try:
         cur.execute("""SELECT o.lang, o.title, o.url, o.words FROM article_language f
                        JOIN article_language o ON o.wikidata_id = f.wikidata_id
@@ -166,8 +167,8 @@ def serve(cur, params):
                        ORDER BY f.position, o.lang, o.position""", (page_id,))
         rows = cur.fetchall()
     except pymysql.err.ProgrammingError as error:
-        if error.args[0] == 1146:  # a table is missing: tellings.py has not been run on this database
-            return {"languages": [], "sections": []}
+        if error.args[0] == 1146:  # a table is missing: the lengths without paragraphs, or nothing at all
+            return {"languages": found, "sections": []}
         raise
     sections, seen = {}, set()
     for r in rows:
