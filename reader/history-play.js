@@ -48,7 +48,8 @@ const STREAM_TOTAL = 3000;
 // Places in one version the page glides to; the others change quietly where they are.
 const VISITS = 1;
 const CLOSED = { height: "0px", marginTop: "0px", marginBottom: "0px", overflow: "hidden", opacity: "0" };
-const SPEEDS = [1, 2, 0.5];
+// Where playback starts: the version of 1 August 2010.
+const START = Date.UTC(2010, 7, 1);
 // After the reader scrolls by hand, the page stops following the changes for this long.
 const HANDS_OFF = 6000;
 
@@ -177,7 +178,10 @@ export function startHistoryPlay({ id, body, onClose }) {
     });
     path.setTime(edits[0].time, { instant: true });
     window.scrollTo({ top: 0, behavior: "instant" });
-    play(0);
+    // Playback starts in August 2010 (the article as it was then, at once), or from the start for a younger one.
+    const from = frameAt(START);
+    if (from > 0) jump(from);
+    else play(0);
   }
 
   // Where the middle of `time`'s month falls on the strip, from 0 to 1, as the strip draws its bars.
