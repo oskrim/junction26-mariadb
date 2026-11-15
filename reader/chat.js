@@ -10,7 +10,7 @@ import "./cite-tip.js";
 // beside where the request came from (drag it by the header) or, dragged to the right edge, docked there
 // as a side panel.
 
-const W = 420;
+const W = 360; // the same as Explore's article panel
 const EDGE = 16;
 const TRAY = 60;
 const SIDE_W = 520;
