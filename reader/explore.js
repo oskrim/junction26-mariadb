@@ -475,7 +475,7 @@ export async function mountExplore(root, { id }) {
   function freeRadius() {
     const w = stage.clientWidth;
     const h = stage.clientHeight;
-    return Math.max(Math.min((w > 900 ? w - 520 : w) - 80, h - 190) / 2, 160);
+    return Math.max(Math.min((w > 900 ? w - 400 : w) - 80, h - 190) / 2, 160);
   }
 
   // Zooms onto an opened article and the links it brought in, so the branch you're on gets the room.
@@ -491,7 +491,7 @@ export async function mountExplore(root, { id }) {
 
   // The panel covers the right side on wide screens, so the map centers in the space beside it.
   function middleX() {
-    return width > 900 ? (width - 460) / 2 : width / 2;
+    return width > 900 ? (width - 380) / 2 : width / 2;
   }
 
   // Hovering or opening an article lights up the articles it links with and fades the rest.

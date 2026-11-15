@@ -242,9 +242,9 @@ body[data-view="explore"] {
 .ex-time {
   position: absolute;
   bottom: 22px;
-  /* Centred between the chat tray (bottom left, 159px wide with no chats open) and the article panel (480px
+  /* Centred between the chat tray (bottom left, 159px wide with no chats open) and the article panel (360px
      wide, 20px from the edge). */
-  left: calc((100% - 341px) / 2);
+  left: calc((100% - 221px) / 2);
   display: flex;
   align-items: center;
   gap: 14px;
@@ -326,7 +326,7 @@ body[data-view="explore"] {
   top: 20px;
   right: 20px;
   bottom: 20px;
-  width: 480px;
+  width: 360px;
   overflow-y: auto;
   border-radius: 16px;
   background: #fff;
@@ -423,8 +423,10 @@ body[data-view="explore"] {
 
 /* The three figures ride in the sticky bar with the buttons, so they stay in view while the text scrolls. */
 .ex-stats {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  /* The three figures spread across the panel: the first at its left edge, the last at its right, the middle
+     one halfway, each label over its number. */
+  display: flex;
+  justify-content: space-between;
   flex: 1 0 100%;
   margin: 0 0 8px;
   padding: 0 0 14px;
