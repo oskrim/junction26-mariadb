@@ -399,18 +399,18 @@ export async function mountExplore(root, { id }) {
 
   function setTitle() {
     const title = nodes.get(centerId).title;
-    const near = [...hop].filter(([n, h]) => h === 1 && isAlive(n)).length;
     const total = [...links.get(centerId)].filter(isAlive).length;
     const added = [...hop].filter(([n, h]) => h === 3 && isAlive(n)).length;
     const year = Number(range.value);
     const meta = cards.get(centerId)?.querySelector(".ex-card-meta");
     if (meta) meta.textContent = `${total} linked articles`;
-    const shown = near < total ? `${near} of ${total} linked articles` : `${total} linked articles`;
-    summary = isAlive(centerId)
-      ? `${shown}${year < LAST_YEAR ? ` · in ${year}` : ""}`
-      : `Not written yet in ${year}`;
+    // The panel's Links figure already counts the links; this line only says which year the map shows.
+    summary = !isAlive(centerId) ? `Not written yet in ${year}` : year < LAST_YEAR ? `As it was in ${year}` : "";
     const line = panel.querySelector(".ex-sub");
-    if (line) line.textContent = summary;
+    if (line) {
+      line.textContent = summary;
+      line.hidden = !summary;
+    }
   }
 
   // --- Drawing ------------------------------------------------------------------------------
@@ -835,14 +835,14 @@ export async function mountExplore(root, { id }) {
       <div class="ex-panel-body">
         <p class="ex-kicker">${isCenter ? "Related articles" : topics[n]}</p>
         <h3>${node.title}</h3>
-        ${isCenter ? `<p class="ex-sub">${summary}</p>` : ""}
+        ${isCenter ? `<p class="ex-sub"${summary ? "" : " hidden"}>${summary}</p>` : ""}
         ${p?.extract ? `<p class="ex-extract">${p.extract}</p>` : ""}
-        <dl class="ex-stats">
-          <div><dt>Versions</dt><dd>${node.versions.toLocaleString("en-US")}</dd></div>
-          <div><dt>Written</dt><dd>${new Date(node.first * 1000).getUTCFullYear()}</dd></div>
-          <div><dt>Links</dt><dd>${links.get(n).size}</dd></div>
-        </dl>
         <div class="ex-actions">
+          <dl class="ex-stats">
+            <div><dt>Versions</dt><dd>${node.versions.toLocaleString("en-US")}</dd></div>
+            <div><dt>Written</dt><dd>${new Date(node.first * 1000).getUTCFullYear()}</dd></div>
+            <div><dt>Links</dt><dd>${links.get(n).size}</dd></div>
+          </dl>
           <a class="ex-btn is-primary" href="?id=${n}" hidden>Read article</a>
           ${n === centerId ? "" : `<button class="ex-btn" type="button" data-act="center">Explore from here</button>`}
         </div>

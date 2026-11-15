@@ -421,12 +421,14 @@ body[data-view="explore"] {
   color: var(--ink-2);
 }
 
+/* The three figures ride in the sticky bar with the buttons, so they stay in view while the text scrolls. */
 .ex-stats {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  margin: 20px 0 0;
-  padding: 14px 0;
-  border-block: 1px solid var(--rule);
+  flex: 1 0 100%;
+  margin: 0 0 8px;
+  padding: 0 0 14px;
+  border-bottom: 1px solid var(--rule);
 }
 
 .ex-stats dt {
