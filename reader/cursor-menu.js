@@ -194,6 +194,8 @@ export function cursorMenu({ root, onSubmit }) {
     el.input.value = "";
     el.chip.textContent = paint ? `“${shorten(paint.text, 26)}”` : "Whole article";
     el.chip.classList.toggle("is-whole", !paint);
+    // Find searches every article: "Whole article" would mislead; a painted passage still says what it finds from.
+    el.chip.hidden = mode.id === "find" && !paint;
     el.bar.dataset.mode = mode.id;
     later(reduceMotion ? 0 : 150, () => {
       el.bar.classList.add("is-visible");

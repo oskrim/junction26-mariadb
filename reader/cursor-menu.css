@@ -207,6 +207,10 @@ html.qm-following ::selection {
   pointer-events: auto;
 }
 
+.qm-chip[hidden] {
+  display: none;
+}
+
 .qm-chip {
   flex: none;
   max-width: 45%;
