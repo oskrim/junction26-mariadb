@@ -592,9 +592,10 @@ export async function mountExplore(root, { id }) {
 
   // Nearer cards win; a card that would cover a nearer one steps back and shows as a dot instead.
   function placeCards(focusSet) {
+    const opened = trail.length > 0;
     // The pinned article's card is always shown, above every other card but the middle, chosen and hovered ones.
     const priority = (n) =>
-      n === centerId ? 3 : n === selectedId ? 2 : n === hoverId ? 1 : pinned(n) ? 0.5 : 0;
+      n === centerId && !opened ? 3 : n === selectedId ? 2 : n === hoverId ? 1 : pinned(n) ? 0.5 : n === centerId ? 0.4 : 0;
     const list = [...cards].sort(
       ([a], [b]) => priority(b) - priority(a) || projected.get(b).near - projected.get(a).near,
     );
@@ -602,7 +603,8 @@ export async function mountExplore(root, { id }) {
     for (const [n, el] of list) {
       const p = projected.get(n);
       const point = pos.get(n);
-      const scale = clamp(p.s / (FOCAL / fitDist), 0.7, 1.15) * (n === centerId ? 1 : 0.92 + 0.08 * p.near);
+      // Once a link is opened, the middle card steps back: smaller, behind the opened branch and its cards.
+      const scale = clamp(p.s / (FOCAL / fitDist), 0.7, 1.15) * (n === centerId ? (opened ? 0.6 : 1) : 0.92 + 0.08 * p.near);
       const rect = { x: p.x - (el.w * scale) / 2, y: p.y - (el.h * scale) / 2, w: el.w * scale, h: el.h * scale };
       const covered = [...placed.values()].some((r) => overlaps(r, rect, -14));
       const visible = point.a > 0.3 && (!covered || priority(n) > 0);
@@ -610,7 +612,7 @@ export async function mountExplore(root, { id }) {
       const dimmed = focusSet && !focusSet.has(n);
       el.style.transform = `translate(${rect.x}px, ${rect.y}px) scale(${scale})`;
       // the pinned card is fully opaque, so no dot or title behind it shows through
-      const depthFade = n === centerId || pinned(n) ? 1 : 0.62 + 0.38 * p.near;
+      const depthFade = (n === centerId && !opened) || pinned(n) ? 1 : 0.62 + 0.38 * p.near;
       el.style.opacity = visible ? point.a * (dimmed ? 0.3 : depthFade) : 0;
       el.style.zIndex = String(100 + priority(n) * 1000 + Math.round(p.near * 500));
       el.classList.toggle("is-hidden", !visible);
