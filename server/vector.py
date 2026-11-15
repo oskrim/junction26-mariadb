@@ -198,12 +198,25 @@ def hybrid(cur, q, ids, query, limit):
         cur.execute(f"""SELECT page_id, 1 - VEC_DISTANCE_COSINE(embedding, VEC_FromText(%s)) AS cosine
                         FROM {space.table} WHERE {space.rows} AND page_id IN %s""", (query.vector, unmeasured))
         cosines.update((r["page_id"], r["cosine"]) for r in cur.fetchall())
-    return combine(found, cosines, space, limit, priors(cur, found.keys() | cosines.keys()))
+    guessed = guess(cosines, unmeasured)
+    return combine(found, cosines, space, limit, priors(cur, found.keys() | cosines.keys()), guessed)
 
 
-def combine(found, cosines, space, limit, priors):
+def guess(cosines, unmeasured):
+    """The lexical candidates (unmeasured: those outside the vector top) that have no vector yet, after giving each
+    in cosines the median cosine of the lexical candidates that have one. Without it such an article counts as
+    cosine 0, far below every candidate with a vector (0.25-0.6), and its words alone cannot make that up."""
+    known = sorted(cosines[p] for p in unmeasured if p in cosines) or sorted(cosines.values())
+    guessed = {p for p in unmeasured if p not in cosines}
+    if known:
+        cosines.update(dict.fromkeys(guessed, known[len(known) // 2]))
+    return guessed
+
+
+def combine(found, cosines, space, limit, priors, guessed=()):
     """The sum above for the articles in found ({page_id: (body, title, exact)}), cosines ({page_id: cosine}) and
-    priors ({page_id: prior}), the limit best."""
+    priors ({page_id: prior}), the limit best. guessed are the articles whose cosine is guess()'s: not found by
+    meaning."""
     top = max(cosines.values(), default=0.0)
     scored = []
     for page_id in found.keys() | cosines.keys():
@@ -214,7 +227,7 @@ def combine(found, cosines, space, limit, priors):
         score = (lexical(body, title, exact) + space.weight * max(0.0, cosine - space.floor)
                  + near * priors.get(page_id, 0.0))
         scored.append({"page_id": page_id, "body": body, "title": title, "exact": exact, "cosine": cosine,
-                       "meaning": cosine > space.floor, "score": score})
+                       "meaning": cosine > space.floor and page_id not in guessed, "score": score})
     scored.sort(key=lambda r: (-r["score"], r["page_id"]))
     return scored[:limit]
 
@@ -278,4 +291,5 @@ def hybrid_s(cur, lang, q, ids, query, limit):
         cur.execute(f"""SELECT page_id, 1 - VEC_DISTANCE_COSINE(embedding, VEC_FromText(%s)) AS cosine
                         FROM {space.table} WHERE {space.rows} AND page_id IN %s""", (query.vector, unmeasured))
         cosines.update((r["page_id"], r["cosine"]) for r in cur.fetchall())
-    return combine(found, cosines, space, limit, priors_s(cur, lang, found.keys() | cosines.keys()))
+    guessed = guess(cosines, unmeasured)
+    return combine(found, cosines, space, limit, priors_s(cur, lang, found.keys() | cosines.keys()), guessed)
