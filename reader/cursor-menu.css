@@ -464,9 +464,32 @@ html.qm-following ::selection {
   transition: opacity 0.14s ease;
 }
 
+.cite-tip-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .cite-tip-title {
   color: var(--ink);
   font-weight: 500;
+}
+
+/* "Open ↗" / "Show ↓": navigate from the card */
+.cite-tip-open {
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--link);
+  font: 500 12px var(--sans);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.cite-tip-open:hover {
+  text-decoration: underline;
 }
 
 .cite-tip-meta {

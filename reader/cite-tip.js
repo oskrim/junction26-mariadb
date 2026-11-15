@@ -24,8 +24,10 @@ function show(marker) {
   current?.removeAttribute("aria-describedby");
   current = marker;
   const { tipTitle, tipMeta, tipQuote } = marker.dataset;
+  const head = part("span", "cite-tip-head", "");
+  head.append(part("span", "cite-tip-title", tipTitle), action(marker));
   tip.replaceChildren(
-    part("span", "cite-tip-title", tipTitle),
+    head,
     part("span", "cite-tip-meta", tipMeta),
     ...(tipQuote ? [part("q", "cite-tip-quote", tipQuote)] : []),
   );
@@ -41,6 +43,25 @@ function hide(delay) {
     current?.removeAttribute("aria-describedby");
     current = null;
   }, delay);
+}
+
+// Top right of the card: "Open ↗" goes where the marker's link goes (another article, or another version of
+// this one); "Show ↓" finds the quote in the article being read, as clicking the marker does.
+function action(marker) {
+  if (marker.matches("a[href]")) {
+    const open = part("a", "cite-tip-open", "Open ↗");
+    open.href = marker.href;
+    if (marker.target) open.target = marker.target;
+    open.rel = "noopener";
+    return open;
+  }
+  const show = part("button", "cite-tip-open", "Show ↓");
+  show.type = "button";
+  show.addEventListener("click", () => {
+    showQuote(marker.dataset.quote);
+    hide(0);
+  });
+  return show;
 }
 
 function part(tag, className, text) {
