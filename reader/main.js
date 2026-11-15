@@ -58,6 +58,7 @@ if (!version || (!foreign && !summary)) {
     </div>`}`;
   if (foreign) body.lang = lang;
   body.innerHTML = doc.html;
+  if (foreign) markHatnotes(body);
   toc.innerHTML = renderToc(doc.toc);
   document.body.classList.add("is-ready");
   trackActiveSection(doc.toc);
@@ -186,6 +187,17 @@ async function finnishCounterpart() {
 // history): the languages button already says which language this is.
 function foreignMeta(version) {
   return `<p class="meta">Last edited ${formatDate(version.row_start)}</p>`;
+}
+
+// Swedish and English Markdown keeps Wikipedia's disambiguation notes ("För andra betydelser, se …", "This
+// article is about …", "For other uses, see …") as ordinary paragraphs; they read as notes, as on Wikipedia.
+// (A function declaration, not a const: main.js renders the article in top-level code above this line.)
+function markHatnotes(body) {
+  const hatnote = /^(för andra betydelser|för (?:artikeln|filmen|boken) om|se även|this article is about|for other uses|not to be confused with|"[^"]+" redirects here)/i;
+  for (const p of body.querySelectorAll(":scope > p")) {
+    if (!hatnote.test(p.textContent.trim())) break;
+    p.classList.add("hatnote");
+  }
 }
 
 function formatDate(rowStart) {
