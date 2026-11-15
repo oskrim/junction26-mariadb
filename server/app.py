@@ -555,8 +555,10 @@ class Handler(BaseHTTPRequestHandler):
             route = POST_ROUTES.get(urlparse(self.path).path)
             if not route:
                 return self.send(404, "application/json", b'{"error": "not found"}')
+            tracelog.start(urlparse(self.path).path)
             route(self, database)
         finally:
+            tracelog.finish(self.status)
             self.log_message('"%s" %s %.0f ms', self.requestline, self.status, (time.perf_counter() - started) * 1000)
 
     def log_request(self, code="-", size="-"):
@@ -574,10 +576,8 @@ class Handler(BaseHTTPRequestHandler):
         if path.is_dir():
             path = path / "index.html"
         if root not in path.parents or not path.is_file():
-            tracelog.start(urlparse(self.path).path)
             return self.send(404, "application/json", b'{"error": "not found"}')
         body = path.read_bytes()
-            tracelog.finish(self.status)
         # Files change on deploy, so the browser asks every time, and a revisit costs a 304 without a body.
         # A file under vendor/ never changes: a new version gets a new name.
         etag = f'"{hashlib.sha1(body).hexdigest()}"'
