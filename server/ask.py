@@ -64,7 +64,7 @@ EDIT_HISTORY = "edit history"
 FOUND_QUOTE_RULES = """- For a marker that stands for a found article as a whole, write the article's title, exactly as given,
   in place of the quote."""
 
-SEARCH_ROUNDS = 3  # turns in which Gemini may search before it must choose what to read
+SEARCH_ROUNDS = 2  # turns in which Gemini may search before it must choose what to read (a third added ~5 s, rarely an article)
 SEARCH_CALLS = 5  # searches run per turn
 SEARCH_LIMIT, SEARCH_MAX = 8, 12  # articles per search: the default and the most
 READ = 5  # found articles given to Gemini in full
