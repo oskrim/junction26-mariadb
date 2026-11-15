@@ -579,10 +579,12 @@ def texts(chunk):
 
 def wikitext_plain(wikitext):
     """Wiki markup as readable text: no infobox, tables, templates, refs or link brackets."""
-    text = "\n".join(line for line in wikitext.splitlines() if not line.lstrip().startswith(("|", "{|", "!", "}")))
-    text = re.sub(r"<ref[^>]*/>|<ref[^>]*>.*?</ref>|<!--.*?-->|<[^>]+>", "", html.unescape(text), flags=re.S)
-    for _ in range(4):  # nested templates, innermost first
+    # templates first, across lines (an infobox's "{{Henkilö" line would otherwise outlive its "| ..." and "}}" lines)
+    text = re.sub(r"<ref[^>]*/>|<ref[^>]*>.*?</ref>|<!--.*?-->", "", html.unescape(wikitext), flags=re.S)
+    for _ in range(6):  # nested templates, innermost first
         text = re.sub(r"\{\{[^{}]*\}\}", "", text)
+    text = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith(("|", "{|", "!", "}")))
+    text = re.sub(r"<[^>]+>", "", text)
     text = re.sub(r"\[\[(?:Tiedosto|Kuva|File|Image|Luokka|Category):[^\[\]]*(?:\[\[[^\]]*\]\][^\[\]]*)*\]\]", "", text, flags=re.I)
     text = re.sub(r"\[\[(?:[^|\]]*\|)?([^\]]*)\]\]", r"\1", text)
     text = re.sub(r"\[https?://\S+ ([^\]]*)\]", r"\1", text)
