@@ -65,7 +65,8 @@ FOUND_QUOTE_RULES = """- For a marker that stands for a found article as a whole
   in place of the quote."""
 
 SEARCH_ROUNDS = 2  # turns in which Gemini may search before it must choose what to read (a third added ~5 s, rarely an article)
-SEARCH_CALLS = 5  # searches run per turn
+SEARCH_CALLS = 6  # searches run in the first turn
+GAP_CALLS = 2  # and in a later one, which only fills a gap
 SEARCH_LIMIT, SEARCH_MAX = 8, 12  # articles per search: the default and the most
 READ = 5  # found articles given to Gemini in full
 READ_CHARS = 12_000  # of each: its lead and first sections
@@ -83,9 +84,13 @@ Wikipedia.
   "this" or "related articles". Good queries are Finnish article titles or names ("Elias Lönnrot", "Kanteletar"),
   keywords ("kansanrunouden keruu") and short descriptive phrases ("Kalevalan vaikutus kuvataiteeseen"). Queries in
   Finnish find the most.
-- Call search_articles 2 to {SEARCH_CALLS} times in one turn, each with a different query, to cover the question from
-  several sides. Search again (at most {SEARCH_ROUNDS} turns in all) only when the answer needs something the
-  results do not have: a person, work or event they mention, or a side of the question they did not cover.
+- In your FIRST turn call search_articles 4 to {SEARCH_CALLS} times at once, each with a different query from a
+  different angle, so that one round covers the question: the key people, the places, the concepts and terms, the
+  works and what they influenced, the history before and the aftermath, whichever fit the question. Do not repeat
+  an angle in other words. A narrow question about one named thing may take 2 or 3.
+- A second round (the last, at most {GAP_CALLS} searches) is only for one specific gap you can name: a person, work or event the
+  results mention that the answer needs and no result covers. Never use it to broaden further; when the first
+  round covers the question, go straight to read_articles.
 - Then call read_articles with the ids of the found articles the answer needs, the most useful first, at most {READ}.
   Prefer the article on a subject itself over lists and narrow sub-articles.
 - Do not search when the article itself is what answers: a fact about its own subject that its text states (a
@@ -322,7 +327,7 @@ def research(cur, progress, request, version):
             reply = gemini_tools(RESEARCH_RULES, contents, allowed)
             calls = [p["functionCall"] for p in reply.get("parts", []) if p.get("functionCall")]
             queries = [c for c in calls if c.get("name") == "search_articles"
-                       and str((c.get("args") or {}).get("query") or "").strip()][:SEARCH_CALLS]
+                       and str((c.get("args") or {}).get("query") or "").strip()][:GAP_CALLS if turn else SEARCH_CALLS]
             if not queries or turn == SEARCH_ROUNDS:
                 chosen = [i for c in calls if c.get("name") == "read_articles" for i in (c.get("args") or {}).get("ids") or []]
                 break
