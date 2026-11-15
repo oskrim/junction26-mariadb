@@ -11,7 +11,8 @@ const blockMark = (i) => `\n\u0003${i}\u0004\n`;
 const REFLIST = "<!--reflist-->";
 
 const HATNOTES = { main: "Main article", further: "Further information", "see also": "See also" };
-const CITATIONS = /^(cite\b.*|citation)$/;
+// English {{Cite web}} and friends, and the Finnish ones: {{Kirjaviite}}, {{Verkkoviite}}, {{Lehtiviite}}…
+const CITATIONS = /^(cite\b.*|citation|\p{L}*viite)$/u;
 // Finnish citation templates have many named parameters too, but they are not infoboxes.
 const NOT_INFOBOX = /viite|lähde|cite|citation/;
 const IMAGE_FILE = /\.(jpe?g|png|svg|gif|tiff?|webp)$/i;
@@ -74,8 +75,9 @@ export function renderWikitext(source, { fileUrl, renderMath }) {
       const links = pos.map((t) => inline(`[[${t}]]`)).join(", ");
       return keepBlock(`<p class="hatnote">${HATNOTES[name]}: ${links}</p>`);
     }
-    if (CITATIONS.test(name)) return keep(inline(citation(name, named)));
+    if (CITATIONS.test(name)) return keep(citation(name, named));
     if (inLead && Object.keys(named).length >= 5 && !NOT_INFOBOX.test(name)) return keepBlock(infobox(named));
+    if (name.startsWith("lang-")) return pos.at(-1) ?? "";
     switch (name) {
       case "math":
         return keep(`<span class="tmath">${inline(pos[0] ?? named[1] ?? "")}</span>`);
@@ -111,7 +113,15 @@ export function renderWikitext(source, { fileUrl, renderMath }) {
       case "hyphen":
         return "-";
       case "reflist":
+      case "references":
+      case "viitteet":
         return keepBlock(REFLIST);
+      // Wrappers that only mark their text's language or keep it on one line give the text back.
+      case "kieli":
+      case "lang":
+        return pos.at(-1) ?? "";
+      case "isbn":
+        return pos[0] ? `ISBN ${pos[0]}` : "";
       case "!":
         return "|";
       default:
@@ -165,7 +175,7 @@ export function renderWikitext(source, { fileUrl, renderMath }) {
     const name = parts[0].replace(/^(file|image|tiedosto|kuva):/i, "").trim();
     if (shownFiles.has(fileKey(name))) return "";
     const caption = parts.slice(1).filter((p) => !FILE_OPTION.test(p.trim())).at(-1) ?? "";
-    const alt = parts.find((p) => /^\s*alt=/.test(p))?.replace(/^\s*alt=/, "") ?? stripTags(restore(inline(caption)));
+    const alt = parts.find((p) => /^\s*alt=/.test(p))?.replace(/^\s*alt=/, "") ?? stripTags(restore(inline(caption))).replace(/\u0005\d+\u0006/g, "");
     return keepBlock(
       `<figure class="figure"><img src="${attr(fileUrl(name))}" alt="${attr(alt)}" loading="lazy">` +
         (caption ? `<figcaption>${inline(caption)}</figcaption>` : "") +
@@ -188,8 +198,9 @@ export function renderWikitext(source, { fileUrl, renderMath }) {
       ? keepBlock(`<div class="math-block">${renderMath(tex.trim(), true)}</div>`)
       : keep(renderMath(tex.trim(), false)),
   );
-  text = text.replace(/<references\s*\/>/gi, "{{reflist}}");
-  text = text.replace(/<ref([^>]*?)(?:\/>|>([\s\S]*?)<\/ref>)/g, (_, attrs, body) =>
+  // A <references> block can hold the footnotes it lists; their <ref>s are read below like any other.
+  text = text.replace(/<references\b[^>]*?(?:\/>|>([\s\S]*?)<\/references>)/gi, (_, refs) => `{{reflist|refs=${refs ?? ""}}}`);
+  text = text.replace(/<ref\b([^>]*?)(?:\/>|>([\s\S]*?)<\/ref>)/g, (_, attrs, body) =>
     cite(refName(attrs), body ?? null),
   );
   const firstHeading = text.search(/^==/m);
@@ -302,30 +313,88 @@ function inline(s) {
     .replace(/''(.+?)''/g, "<i>$1</i>");
 }
 
+// A citation template drawn as one line, the way Wikipedia prints it:
+// Author: Title. Description. Place: Publisher, Year. Pages. ISBN. Accessed date.
+// Parts the template leaves empty drop out; the title links to the source when there is a URL.
+const CITE_WORDS = {
+  fi: { in: "Teoksessa", ed: "toim.", pages: "s.", accessed: "Viitattu", translated: "Suomentanut" },
+  en: { in: "In", ed: "ed.", pages: "p.", accessed: "Retrieved", translated: "Translated by" },
+};
+
 function citation(kind, p) {
-  const names = [];
-  for (let k = 1; k <= 12; k++) {
-    const last = p[`last${k}`] ?? p[`author${k}`] ?? (k === 1 ? (p.last ?? p.author) : undefined);
-    if (!last) break;
-    const first = p[`first${k}`] ?? (k === 1 ? p.first : undefined);
-    names.push(first ? `${last}, ${first}` : last);
+  const words = CITE_WORDS[/viite$/.test(kind) ? "fi" : "en"];
+  const get = (...keys) => keys.map((k) => p[k]?.trim()).find(Boolean) ?? "";
+  const people = (keys, lastKeys, firstKeys) => {
+    const names = keys.map((k) => p[k]?.trim()).filter(Boolean);
+    for (let k = 1; k <= 12; k++) {
+      const last = lastKeys.map((b) => p[`${b}${k}`] ?? (k === 1 ? p[b] : undefined)).find((v) => v?.trim());
+      if (!last) break;
+      const first = firstKeys.map((b) => p[`${b}${k}`] ?? (k === 1 ? p[b] : undefined)).find((v) => v?.trim());
+      names.push(first ? `${last.trim()}, ${first.trim()}` : last.trim());
+    }
+    return names.length > 4 ? `${names[0]} et al.` : names.join(" & ");
+  };
+
+  const authors = people(
+    ["tekijä", "tekijät", "kirjoittaja", "authors", ...[2, 3, 4, 5].map((k) => `tekijä${k}`)],
+    ["last", "surname", "author"],
+    ["first", "given"],
+  );
+  const editors = people(["toimittaja", "toimittajat", "editors"], ["editor-last", "editor"], ["editor-first"]);
+  const url = get("osoite", "url", "www", "verkko-osoite", "chapter-url", "chapterurl", "arkisto", "archive-url", "archiveurl");
+  const link = /^(https?:)?\/\/\S+$/.test(url) ? url : "";
+  const chapter = get("luku", "chapter", "contribution", "artikkeli", "entry");
+  const title = get("nimeke", "otsikko", "title");
+  const container = get("julkaisu", "journal", "work", "website", "newspaper", "magazine", "periodical", "lehti", "teos", "book-title", "encyclopedia");
+  const date = get("vuosi", "ajankohta", "päivämäärä", "year", "date");
+  const volume = get("vuosikerta", "vsk", "volume");
+  const issue = get("numero", "nro", "issue");
+  const place = get("julkaisupaikka", "location", "place");
+  // A site often names itself as its own publisher; once is enough.
+  const issuer = get("julkaisija", "kustantaja", "publisher", "agency");
+  const publisher = issuer === container ? "" : issuer;
+  const pages = get("sivut", "sivu", "pages", "page", "pp", "p", "s", "at");
+  const translator = get("suomentaja", "translator");
+  const note = get("selite", "huomautus");
+  const accessed = get("viitattu", "access-date", "accessdate");
+
+  // Linked text loses its own wiki links, which an outer link cannot hold.
+  const linked = (s) =>
+    link ? `<a class="ext" href="${attr(link)}" target="_blank" rel="noopener">${inline(unlink(s))}</a>` : inline(s);
+  const host = link.replace(/^(https?:)?\/\/(www\.)?/, "").split(/[/?#]/)[0];
+  const sentence = (s) => (s && !/[.!?][)"”’]*$/.test(stripTags(s).trim()) ? `${s}.` : s);
+
+  const parts = [];
+  const lead = authors ? `${inline(authors)}: ` : "";
+  if (chapter) {
+    parts.push(sentence(`${lead}${linked(chapter)}`));
+    const by = editors ? `${inline(editors)} (${words.ed}): ` : "";
+    if (title || container) parts.push(sentence(`${words.in} ${by}<i>${inline(title || container)}</i>`));
+  } else if (container) {
+    const head = title ? linked(title) : link ? linked(host) : "";
+    if (head || lead) parts.push(sentence(`${lead}${head}`));
+    const where = [`<i>${inline(container)}</i>`, date, volume, issue && `nro ${issue}`].filter(Boolean);
+    parts.push(sentence(where.map((w, k) => (k ? inline(w) : w)).join(", ")));
+  } else {
+    const head = title ? `<i>${linked(title)}</i>` : link ? linked(host) : "";
+    if (head || lead) parts.push(sentence(`${lead}${head}`));
+    if (editors && authors) parts.push(sentence(`${inline(editors)} (${words.ed})`));
   }
-  const authors = names.length > 3 ? `${names[0]} et al.` : names.join("; ");
-  const year = (p.date ?? p.year ?? "").match(/\d{4}/)?.[0];
-  const title = p.title ? (p.url ? `[${p.url} ${p.title}]` : p.title) : "";
-  const isBook = kind === "cite book";
-  const container = p.journal ?? p.website ?? p.work ?? p.newspaper ?? p.magazine ?? p.conference ?? p["book-title"];
-  return [
-    authors && `${authors}${year ? ` (${year})` : ""}.`,
-    !authors && year && `(${year}).`,
-    title && (isBook ? `''${title}''.` : `“${title}”.`),
-    container && `''${container}''.`,
-    !container && p.publisher && `${p.publisher}.`,
-    p.eprint && `arXiv:${p.eprint}.`,
-  ]
-    .filter(Boolean)
-    .join(" ");
+  if (note) parts.push(sentence(inline(note)));
+  if (translator) parts.push(sentence(`${words.translated} ${inline(translator)}`));
+  const dateShown = container && !chapter;
+  const imprint = [place && publisher ? `${place}: ${publisher}` : publisher || place, !dateShown && date].filter(Boolean);
+  if (imprint.length) parts.push(sentence(inline(imprint.join(", "))));
+  if (pages) parts.push(sentence(inline(/^(s|p|pp)\.\s/.test(pages) ? pages : `${words.pages} ${pages}`)));
+  for (const [key, label] of [["isbn", "ISBN"], ["issn", "ISSN"], ["doi", "doi:"]]) {
+    const v = p[key]?.trim();
+    if (v) parts.push(sentence(`${label}${label.endsWith(":") ? "" : " "}${inline(v)}`));
+  }
+  if (accessed) parts.push(`<span class="cite-meta">${sentence(`${words.accessed} ${inline(accessed)}`)}</span>`);
+  return parts.length ? `<span class="citation">${parts.join(" ")}</span>` : "";
 }
+
+const unlink = (s) => s.replace(/\[\[(?:[^[\]|]*\|)?([^[\]]*)\]\]/g, "$1");
 
 // Splits on "|" that sit outside [[links]].
 function splitParams(s) {

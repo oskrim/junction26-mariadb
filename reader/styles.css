@@ -996,6 +996,11 @@ sup.ref a:hover {
   color: var(--ink);
 }
 
+/* Citation templates: when the source was looked at is bookkeeping, so it steps back. */
+.citation .cite-meta {
+  color: var(--ink-2);
+}
+
 /* Narrower screens: images move into the column, then the contents list steps aside */
 
 @media (max-width: 1380px) {
