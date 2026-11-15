@@ -609,7 +609,8 @@ export async function mountExplore(root, { id }) {
       if (visible) placed.set(n, rect);
       const dimmed = focusSet && !focusSet.has(n);
       el.style.transform = `translate(${rect.x}px, ${rect.y}px) scale(${scale})`;
-      const depthFade = n === centerId ? 1 : 0.62 + 0.38 * p.near;
+      // a history card is fully opaque, so no dot or title behind it shows through
+      const depthFade = n === centerId || pinned(n) ? 1 : 0.62 + 0.38 * p.near;
       el.style.opacity = visible ? point.a * (dimmed ? 0.3 : depthFade) : 0;
       el.style.zIndex = String(100 + priority(n) * 1000 + Math.round(p.near * 500));
       el.classList.toggle("is-hidden", !visible);
