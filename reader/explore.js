@@ -16,7 +16,7 @@ const DIST = 1060;
 const CARD_SPACING = 150;
 const RING = 260;
 const MAX_GROWN = 24;
-const GROWN_CARDS = 3;
+const GROWN_CARDS = 8;
 
 export async function mountExplore(root, { id }) {
   root.innerHTML = `
@@ -240,9 +240,11 @@ export async function mountExplore(root, { id }) {
     }
     edges = graphEdges.filter((e) => hop.has(e.source) && hop.has(e.target) && e.source !== e.target);
 
-    // The biggest new articles get a card: with their picture if they have one, or just the title.
-    const biggest = added.slice(0, GROWN_CARDS);
-    const withCards = await Promise.all(biggest.map(async (m) => ({ m, p: await preview(nodes.get(m).title) })));
+    // Up to GROWN_CARDS of the new articles get a card: the biggest ones that have a picture first, then the
+    // biggest of the rest with just the title, at most two of those.
+    const previews = await Promise.all(added.map(async (m) => ({ m, p: await preview(nodes.get(m).title) })));
+    const pictured = previews.filter(({ p }) => p?.thumbnail);
+    const withCards = [...pictured, ...previews.filter(({ p }) => !p?.thumbnail).slice(0, 2)].slice(0, GROWN_CARDS);
     for (const { m, p } of withCards) {
       const el = addCard(m, p);
       Object.assign(el, { w: el.offsetWidth, h: el.offsetHeight });
@@ -490,9 +492,9 @@ export async function mountExplore(root, { id }) {
       (m) => target.get(m),
     );
     const middle = average(points);
-    const reach = Math.max(120, ...points.map((p) => Math.hypot(p.x - middle.x, p.y - middle.y)));
+    const reach = Math.max(180, ...points.map((p) => Math.hypot(p.x - middle.x, p.y - middle.y)));
     cam.focusTo = middle;
-    cam.distTo = (FOCAL * (reach + 60)) / freeRadius();
+    cam.distTo = (FOCAL * (reach + 150)) / freeRadius();
   }
 
   // The panel covers the right side on wide screens, so the map centers in the space beside it.
