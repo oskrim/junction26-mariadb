@@ -106,3 +106,15 @@ CREATE TABLE IF NOT EXISTS article_vector_voyage (
   PRIMARY KEY (page_id),
   VECTOR INDEX (embedding) M=16 DISTANCE=cosine
 );
+
+-- One voyage-4-lite vector per Swedish and English S article (server/voyage.py s-articles), from "title\n\ntext"
+-- (Markdown), for /api/search?lang=sv|en. Their page ids are their own wikis' and collide with Finnish ones.
+CREATE TABLE IF NOT EXISTS article_vector_voyage_s (
+  lang      CHAR(2)      NOT NULL,
+  page_id   INT UNSIGNED NOT NULL,
+  model     VARCHAR(50)  NOT NULL,
+  tokens    INT          NOT NULL,
+  embedding VECTOR(2048) NOT NULL,
+  PRIMARY KEY (lang, page_id),
+  VECTOR INDEX (embedding) M=16 DISTANCE=cosine
+);

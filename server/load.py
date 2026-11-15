@@ -7,6 +7,8 @@
     uv run --with pymysql --with pyarrow python server/load.py l                  # L: the rest of Finnish Wikipedia
     uv run --with pymysql --with pyarrow --with numpy --with snowballstemmer --with PyStemmer \
       python server/load.py bm25                                                  # BM25 index of m_search
+    uv run --with pymysql --with pyarrow --with numpy --with snowballstemmer --with PyStemmer \
+      python server/load.py bm25-s                                                # BM25 of the sv and en S articles
 
 Safe to run again: articles already in the tables are skipped. --reset empties the dataset's tables first.
 Data comes from $WIKI_DATA (default ~/datasets/mariadb-wikipedia).
@@ -499,9 +501,99 @@ def load_bm25(con, cur, reset):
           f"{time.time() - started:.0f} s")
 
 
+BM25S_TABLES = ["bm25s_term", "bm25s_posting", "bm25s_stats"]
+
+
+def load_bm25_s(con, cur):
+    """The BM25 impact index of every Swedish and English s_article (Markdown text and title), stemmed with each
+    language's Snowball stemmer, into bm25s_term, bm25s_posting and bm25s_stats: the Finnish index's layout with a
+    lang column, idf and average lengths per language. Built into *_new tables and swapped in with one RENAME."""
+    import tempfile
+
+    import numpy as np
+
+    import bm25
+
+    started = time.time()
+    terms, postings, stats = [], [], []  # (lang, term_id, term, df), (lang, term_id, page_id, wb, wt), stats rows
+    next_id = 1
+    for lang in bm25.S_STEMMERS:
+        cur.execute("SELECT page_id, title, text FROM s_article WHERE lang = %s ORDER BY page_id", (lang,))
+        ids, cache, docs = {}, {}, []
+        for page_id, title, text in cur.fetchall():
+            in_title = Counter(bm25.terms_s(lang, title, cache))
+            in_body = Counter(bm25.terms_s(lang, text, cache))
+            docs.append((page_id, in_body, in_title, sum(in_body.values()), sum(in_title.values())))
+            for t in in_body.keys() | in_title.keys():
+                ids.setdefault(t, len(ids))
+        articles = len(docs)
+        lengths = np.array([[d[3], d[4]] for d in docs], dtype=np.float32)
+        averages = lengths.mean(axis=0)
+        df = Counter(t for d in docs for t in d[1].keys() | d[2].keys())
+        df_body = Counter(t for d in docs for t in d[1])
+        df_title = Counter(t for d in docs for t in d[2])
+
+        def weight(tf, n, length, average):
+            idf = np.log(1 + (articles - n + 0.5) / (n + 0.5))
+            return round(float(idf * tf * (bm25.K1 + 1) / (tf + bm25.K1 * (1 - bm25.B + bm25.B * length / max(average, 1)))), 3)
+
+        for page_id, in_body, in_title, body_length, title_length in docs:
+            for t in in_body.keys() | in_title.keys():
+                wb = weight(in_body[t], df_body[t], body_length, averages[0]) if in_body[t] else 0.0
+                wt = weight(min(in_title[t], 255), df_title[t], title_length, averages[1]) if in_title[t] else 0.0
+                postings.append((lang, next_id + ids[t], page_id, wb, wt))
+        terms += [(lang, next_id + i, t, df[t]) for t, i in ids.items()]
+        stats.append((lang, articles, float(averages[0]), float(averages[1])))
+        print(f"bm25-s: {lang}: {articles} articles, {len(ids)} terms, average text {averages[0]:.0f} terms, "
+              f"title {averages[1]:.1f}; {time.time() - started:.0f} s", flush=True)
+        next_id += len(ids)
+
+    for table in BM25S_TABLES:
+        cur.execute(f"DROP TABLE IF EXISTS {table}_new, {table}_old")
+    cur.execute(f"""CREATE TABLE bm25s_term_new (
+                      lang    CHAR(2) NOT NULL,
+                      term_id INT UNSIGNED NOT NULL PRIMARY KEY,
+                      term    VARCHAR({bm25.TERM_LENGTH}) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+                      df      INT UNSIGNED NOT NULL COMMENT 'lang articles with the term in their text or title',
+                      UNIQUE KEY term (lang, term))""")
+    cur.execute("""CREATE TABLE bm25s_posting_new (
+                     lang    CHAR(2) NOT NULL,
+                     term_id INT UNSIGNED NOT NULL,
+                     page_id INT UNSIGNED NOT NULL COMMENT 's_article page id in lang',
+                     wb      FLOAT NOT NULL COMMENT 'BM25 weight of the term in the text (bm25_posting.wb, per language)',
+                     wt      FLOAT NOT NULL COMMENT 'the same in the title',
+                     PRIMARY KEY (lang, term_id, page_id))""")
+    cur.execute("""CREATE TABLE bm25s_stats_new (
+                     lang      CHAR(2) NOT NULL PRIMARY KEY,
+                     articles  INT UNSIGNED NOT NULL,
+                     avg_body  FLOAT NOT NULL COMMENT 'terms per text',
+                     avg_title FLOAT NOT NULL COMMENT 'terms per title')""")
+    cur.executemany("INSERT INTO bm25s_stats_new VALUES (%s, %s, %s, %s)", stats)
+    with tempfile.TemporaryDirectory(prefix="bm25s-") as tmp:
+        for table, rows in (("bm25s_term_new", terms), ("bm25s_posting_new", sorted(postings, key=lambda r: r[:3]))):
+            path = Path(tmp, table + ".tsv")
+            with open(path, "w", encoding="utf-8") as f:
+                f.writelines("\t".join(map(str, row)) + "\n" for row in rows)
+            cur.execute(f"LOAD DATA LOCAL INFILE %s INTO TABLE {table} CHARACTER SET utf8mb4 FIELDS TERMINATED BY '\\t' "
+                        "ESCAPED BY ''", (str(path),))
+            con.commit()
+            print(f"bm25-s: {table}: {len(rows)} rows, {time.time() - started:.0f} s", flush=True)
+    cur.execute("""SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE()
+                   AND TABLE_NAME IN %s""", (BM25S_TABLES,))
+    live = cur.fetchone()[0]
+    if live not in (0, len(BM25S_TABLES)):
+        raise RuntimeError(f"bm25-s: only {live} of the tables {BM25S_TABLES} exist; drop them and run again")
+    swap = [f"{table}_new TO {table}" for table in BM25S_TABLES]
+    if live:
+        swap = [f"{table} TO {table}_old" for table in BM25S_TABLES] + swap
+    cur.execute("RENAME TABLE " + ", ".join(swap))
+    cur.execute("DROP TABLE IF EXISTS " + ", ".join(f"{table}_old" for table in BM25S_TABLES))
+    print(f"bm25-s: done in {time.time() - started:.0f} s")
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("dataset", choices=["s", "m", "l", "bm25", "export-vectors"])
+    parser.add_argument("dataset", choices=["s", "m", "l", "bm25", "bm25-s", "export-vectors"])
     parser.add_argument("--articles", default="20", help="how many M articles to load, or 'all'")
     parser.add_argument("--reset", action="store_true", help="drop and recreate the dataset's tables first; bm25: build again even when up to date")
     parser.add_argument("--vectors", action="store_true",
@@ -518,6 +610,8 @@ def main():
         return export_vectors(cur, args.out, args.scope)
     if args.dataset == "bm25":
         return load_bm25(con, cur, args.reset)
+    if args.dataset == "bm25-s":
+        return load_bm25_s(con, cur)
     create_tables(cur, args.dataset, args.reset)
     started = time.time()
     if args.dataset == "s":

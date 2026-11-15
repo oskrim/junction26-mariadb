@@ -2,6 +2,7 @@
 
     # every article without a Voyage vector, from any machine (see server/README.md, "Voyage vectors")
     uv run --with pymysql python server/voyage.py articles --tokens-per-minute 20000000
+    uv run --with pymysql python server/voyage.py s-articles   # Swedish and English S articles -> article_vector_voyage_s
     uv run --with pymysql --with pyarrow python server/voyage.py export --out /data/exports --scope m   # or l
     uv run --with pymysql --with pyarrow python server/voyage.py import   # the downloaded exports/ files
 
@@ -253,6 +254,46 @@ def embed_job(per_minute, concurrency, batch_tokens, chunk, limit_articles):
     print(f"voyage: done, {articles:,} articles and {tokens:,} tokens in {time.time() - started:.0f} s", flush=True)
 
 
+# --- Swedish and English S articles -----------------------------------------------------------------------
+
+S_LANGS = ("sv", "en")
+
+
+def embed_s_job(per_minute, concurrency, batch_tokens):
+    """Embeds every Swedish and English s_article without a row in article_vector_voyage_s, from "title\n\ntext"
+    (Markdown) cut at MAX_CHARS. Rows are written per request, so a run that stops is continued by the next."""
+    con = connect()
+    cur = con.cursor()
+    cur.execute("""SELECT s.lang, s.page_id, s.title, s.text FROM s_article s
+                   LEFT JOIN article_vector_voyage_s v ON v.lang = s.lang AND v.page_id = s.page_id
+                   WHERE s.lang IN %s AND v.page_id IS NULL ORDER BY s.lang, s.page_id""", (S_LANGS,))
+    rows = [((lang, p), f"{title}\n\n{text}"[:MAX_CHARS]) for lang, p, title, text in cur.fetchall()]
+    print(f"voyage: {len(rows):,} sv/en articles without a vector; {DOC_MODEL} at {URL}", flush=True)
+    if not rows:
+        return
+    api_key()
+    limit, lock, done = RateLimit(per_minute), threading.Lock(), [0, 0]
+    started = time.time()
+
+    def run(part):
+        vectors, used = call_with_retries(limit, [t for _, t in part])
+        chars = sum(len(t) for _, t in part) or 1
+        values = [(lang, p, DOC_MODEL, round(used * len(t) / chars), v) for ((lang, p), t), v in zip(part, vectors)]
+        with lock:
+            writes = connect(autocommit=False)
+            writes.cursor().executemany("""INSERT IGNORE INTO article_vector_voyage_s (lang, page_id, model, tokens, embedding)
+                                           VALUES (%s, %s, %s, %s, %s)""", values)
+            writes.commit()
+            writes.close()
+            done[0] += len(values)
+            done[1] += used
+            print(f"voyage: {done[0]:,}/{len(rows):,} sv/en articles, {done[1]:,} tokens, {time.time() - started:.0f} s", flush=True)
+
+    with ThreadPoolExecutor(concurrency) as pool:
+        list(pool.map(run, batches(sorted(rows, key=lambda r: len(r[1])), batch_tokens)))
+    print(f"voyage: done, {done[0]:,} sv/en articles and {done[1]:,} tokens in {time.time() - started:.0f} s", flush=True)
+
+
 # --- Copies for local machines ---------------------------------------------------------------------------
 
 def export(cur, out_dir, scope):
@@ -312,7 +353,7 @@ def import_exports(con, cur):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("what", choices=["articles", "export", "import"])
+    parser.add_argument("what", choices=["articles", "s-articles", "export", "import"])
     parser.add_argument("--tokens-per-minute", type=float, default=20e6, help="articles: Voyage tokens a minute")
     parser.add_argument("--concurrency", type=int, default=24, help="articles: requests at once")
     parser.add_argument("--batch-tokens", type=int, default=300_000, help="articles: estimated tokens per request (max 1M)")
@@ -323,6 +364,8 @@ def main():
     args = parser.parse_args()
     if args.what == "articles":
         return embed_job(args.tokens_per_minute, args.concurrency, args.batch_tokens, args.chunk, args.limit)
+    if args.what == "s-articles":
+        return embed_s_job(args.tokens_per_minute, args.concurrency, args.batch_tokens)
     con = connect(autocommit=False)
     if args.what == "export":
         return export(con.cursor(), args.out, args.scope)

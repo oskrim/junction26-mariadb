@@ -146,6 +146,12 @@ def hybrid(cur, q, ids, query, limit):
         cur.execute(f"""SELECT page_id, 1 - VEC_DISTANCE_COSINE(embedding, VEC_FromText(%s)) AS cosine
                         FROM {space.table} WHERE {space.rows} AND page_id IN %s""", (query.vector, lexical_only))
         cosines.update((r["page_id"], r["cosine"]) for r in cur.fetchall())
+    return combine(found, cosines, space, limit)
+
+
+def combine(found, cosines, space, limit):
+    """hybrid()'s scores of the articles in found ({page_id: (body, title, exact)}) and cosines ({page_id: cosine}),
+    the limit best."""
     # Keyword matches count in proportion to how close in meaning they are, next to the closest article: a title
     # that only shares a word with the question ("Epica" for "epic poems", "The Who" for "who led the Reds") keeps
     # a tenth of its keyword score. An exact title keeps its bonus, and an article without a vector is not judged.
@@ -163,3 +169,51 @@ def hybrid(cur, q, ids, query, limit):
                        "meaning": cosine > space.floor, "score": score})
     scored.sort(key=lambda r: (-r["score"], r["page_id"]))
     return scored[:limit]
+
+
+# --- Swedish and English: the S articles, by lang (bm25s_* and article_vector_voyage_s) --------------------------
+# Their page ids are their own wikis', so every query names lang; the Finnish tables are not read.
+
+S_LANGS = ("sv", "en")
+
+
+def voyage_s(lang):
+    """The Space of lang's S article vectors (voyage-4-lite, compared with voyage-4-large questions, as VOYAGE)."""
+    if lang not in S_LANGS:
+        raise ValueError(lang)
+    return Space("article_vector_voyage_s", f"lang = '{lang}'", VOYAGE.weight, VOYAGE.floor)
+
+
+def embed_s(lang, text):
+    """The Query for text in lang's S space: its voyage-4-large vector. Unavailable when Voyage does not answer."""
+    try:
+        return Query(voyage.embed_query(text), voyage_s(lang))
+    except voyage.Error as error:
+        raise Unavailable(str(error))
+
+
+def lexical_ranking_s(cur, lang, q, ids, limit):
+    """lexical_ranking() over lang's S articles: the article titled q (any case or accent, or with q's words
+    written together) and the limit best by bm25s, as {page_id: (bm25_body, bm25_title, exact)}."""
+    cur.execute("SELECT page_id FROM s_article WHERE lang = %s AND title IN %s", (lang, [q, "".join(q.split())]))
+    exact = [r["page_id"] for r in cur.fetchall()]
+    found = {p: (b, t, True) for p, (b, t) in bm25.scores_s(cur, lang, ids, exact).items()}
+    found.update((p, (0.0, 0.0, True)) for p in exact if p not in found)
+    for page_id, body, title in bm25.ranking_s(cur, lang, ids, KAPPA_BODY, KAPPA_TITLE, limit):
+        found.setdefault(page_id, (body, title, False))
+    return found
+
+
+def hybrid_s(cur, lang, q, ids, query, limit):
+    """hybrid() over lang's S articles: bm25s ids of q, query from embed_s(lang, q)."""
+    space = query.space
+    found = lexical_ranking_s(cur, lang, q, ids, LEXICAL_CANDIDATES)
+    cur.execute(NEAREST.format(table=space.table, rows=space.rows), (query.vector, HYBRID_CANDIDATES))
+    cosines = {r["page_id"]: 1 - r["distance"] for r in cur.fetchall()}
+    found.update((p, (b, t, False)) for p, (b, t) in bm25.scores_s(cur, lang, ids, [p for p in cosines if p not in found]).items())
+    lexical_only = [p for p in found if p not in cosines]
+    if lexical_only:
+        cur.execute(f"""SELECT page_id, 1 - VEC_DISTANCE_COSINE(embedding, VEC_FromText(%s)) AS cosine
+                        FROM {space.table} WHERE {space.rows} AND page_id IN %s""", (query.vector, lexical_only))
+        cosines.update((r["page_id"], r["cosine"]) for r in cur.fetchall())
+    return combine(found, cosines, space, limit)

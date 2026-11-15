@@ -426,14 +426,63 @@ def fold(text):
 
 MAX_WORDS = 8
 STEM_FROM = 7  # in snippets, words this long or longer are also found by their stem
+# Swedish and English hatnotes ("För andra betydelser, se …", "This article is about …"), skipped in snippets.
+HATNOTE_S = re.compile(r"^(För andra betydelser|Denna artikel (handlar|behandlar)|Den här (sidan|artikeln) handlar|Ej att förväxla|"
+                       r"Huvudartikel|Se även|For other uses|This article is about|Not to be confused|Main article|See also)\b", re.I)
+
+STOPWORDS_S = set("""a an and are as at be by did do does for from had has have how in is it its of on or the to was were
+    what when where which who whom why with och att av den det en ett för från har hur i med om på som till var vad vem
+    vilka vilken vilket när varför är""".split())
+
+
+def first_paragraph_s(title, markdown):
+    """first_paragraph() of a Swedish or English article, without its hatnotes; a lead that lost its subject to a
+    pronunciation link ("( lyssna)) är …") gets the title back."""
+    text = first_paragraph("\n".join(line for line in markdown.splitlines() if not HATNOTE_S.match(line.strip())))
+    lost = re.match(r"^\(\s*(lyssna|listen)\)\)\s*", text)
+    return f"{title} {text[lost.end():]}" if lost else text
+
+
+def search_s(cur, lang, q, limit):
+    """search() over the Swedish or English S articles (lang): bm25s and article_vector_voyage_s, scored by
+    vector.hybrid_s; each result also carries its lang. page_id is that wiki's own."""
+    if not words(q):
+        return []
+    ids = bm25.term_ids_s(cur, lang, " ".join(words(q)))
+    try:
+        ranked = [{**r, "by": by(r)} for r in vector.hybrid_s(cur, lang, q, ids, vector.embed_s(lang, q), limit)]
+    except vector.Unavailable as error:
+        print(f"search: keywords only: {error}", flush=True)
+        ranked = [{"page_id": p, "by": "keyword"} for p in list(vector.lexical_ranking_s(cur, lang, q, ids, limit))[:limit]]
+    if not ranked:
+        return []
+    cur.execute("SELECT page_id, title, text FROM s_article WHERE lang = %s AND page_id IN %s",
+                (lang, [r["page_id"] for r in ranked]))
+    rows = {r["page_id"]: r for r in cur.fetchall()}
+    # The snippet marks the query's words, not its "the" or "who" (a question in plain language).
+    marked = " ".join(w for w in words(q) if w.lower() not in STOPWORDS_S) or q
+    results = []
+    for r in ranked:
+        article = rows[r["page_id"]]
+        shown = lead(first_paragraph_s(article["title"], article["text"]) or prose(article["text"]), SNIPPET_WIDTH)
+        results.append({"page_id": r["page_id"], "title": article["title"], "snippet": shown,
+                        "match": find(shown.rstrip("…"), marked), "by": r["by"], "lang": lang})
+    return results
+
+
 def search(cur, params):
-    """Articles that match q by BM25 or by meaning, scored by vector.hybrid.
+    """Articles that match q by BM25 or by meaning, scored by vector.hybrid; with lang=sv|en, search_s.
 
     Without the embedding service, the BM25 ranking alone."""
     q = params.get("q", [""])[0].strip()
     if not q:
         raise BadRequest("q is required")
     limit = number(params, "limit", 20)
+    lang = params.get("lang", ["fi"])[0]
+    if lang in vector.S_LANGS:
+        return search_s(cur, lang, q, limit)
+    if lang != "fi":
+        raise BadRequest("lang must be fi, sv or en")
     if not words(q):
         return []
     # The words written together too: Finnish compounds are often searched apart ("Lapuan liike" for Lapuanliike).

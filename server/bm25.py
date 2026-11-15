@@ -67,3 +67,57 @@ def scores(cur, ids, page_ids):
     cur.execute("""SELECT page_id, SUM(wb) AS body, SUM(wt) AS title FROM bm25_posting
                    WHERE term_id IN %s AND page_id IN %s GROUP BY page_id""", (ids, list(page_ids)))
     return {r["page_id"]: (r["body"], r["title"]) for r in cur.fetchall()}
+
+
+# --- Swedish and English: the S articles' own index (bm25s_*), built by `load.py bm25-s` -------------------
+# Page ids are each wiki's own, so rows are keyed by (lang, page_id); a term_id belongs to one language.
+
+S_STEMMERS = {"sv": "swedish", "en": "english"}
+_s_stemmers = {}
+MARKDOWN_LINK = re.compile(r"\]\([^)]*\)")  # a link's target: URLs, not words
+
+
+def stemmer_for(lang):
+    if lang not in _s_stemmers:
+        _s_stemmers[lang] = snowballstemmer.stemmer(S_STEMMERS[lang])
+    return _s_stemmers[lang]
+
+
+def terms_s(lang, text, cache):
+    """The Snowball stem (Swedish or English, by lang) of each word of text, in order. cache maps word -> stem."""
+    stemmer, out = stemmer_for(lang), []
+    for word in words(MARKDOWN_LINK.sub("]", text)):
+        stem = cache.get(word)
+        if stem is None:
+            stem = cache[word] = stemmer.stemWord(word)[:TERM_LENGTH]
+        out.append(stem)
+    return out
+
+
+def term_ids_s(cur, lang, q):
+    """The bm25s_term ids of the query's distinct stems in lang; stems no article has are left out."""
+    stems = sorted(set(terms_s(lang, q, {})))
+    if not stems:
+        return []
+    cur.execute("SELECT term_id FROM bm25s_term WHERE lang = %s AND term IN %s ORDER BY term_id", (lang, stems))
+    return [r["term_id"] for r in cur.fetchall()]
+
+
+def ranking_s(cur, lang, ids, kappa_body, kappa_title, limit):
+    """ranking() over the lang articles' index bm25s_posting."""
+    if not ids:
+        return []
+    cur.execute(f"""SELECT page_id, SUM(wb) AS body, SUM(wt) AS title FROM bm25s_posting
+                    WHERE lang = %s AND term_id IN %s GROUP BY page_id
+                    ORDER BY SUM(wb) / ({kappa_body:g} + SUM(wb)) + SUM(wt) / ({kappa_title:g} + SUM(wt)) DESC, page_id
+                    LIMIT %s""", (lang, ids, limit))
+    return [(r["page_id"], r["body"], r["title"]) for r in cur.fetchall()]
+
+
+def scores_s(cur, lang, ids, page_ids):
+    """scores() over the lang articles' index bm25s_posting."""
+    if not ids or not page_ids:
+        return {}
+    cur.execute("""SELECT page_id, SUM(wb) AS body, SUM(wt) AS title FROM bm25s_posting
+                   WHERE lang = %s AND term_id IN %s AND page_id IN %s GROUP BY page_id""", (lang, ids, list(page_ids)))
+    return {r["page_id"]: (r["body"], r["title"]) for r in cur.fetchall()}
