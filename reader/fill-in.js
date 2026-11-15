@@ -116,7 +116,7 @@ function writeIn(heading, section, popover, msPerParagraph = MS_PER_PARAGRAPH) {
   link.target = "_blank";
   link.rel = "noopener";
   link.textContent = `${FROM[section.lang]} · ${section.source_title} ↗`;
-  source.append(link, Object.assign(document.createElement("span"), { className: "fill-note", textContent: "suomennettu" }));
+  source.append(link);
   block.append(source);
   sectionEnd(heading).before(block);
 
