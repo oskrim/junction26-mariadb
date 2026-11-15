@@ -571,6 +571,7 @@ html.qm-following ::selection {
 
 .steps[hidden],
 .steps-sum[hidden],
+.step[hidden],
 .steps-thinking[hidden],
 .steps.is-folded:not(.is-open) .steps-list,
 .steps.is-folded:not(.is-open) .steps-thinking {
