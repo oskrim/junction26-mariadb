@@ -60,8 +60,15 @@ def titled(cur, q, limit):
                    LEFT JOIN m_search m USING (page_id) WHERE s.page_id IN %s""", (LEAD_CHARS, [r["page_id"] for r in found]))
     rows = {r["page_id"]: r for r in cur.fetchall()}
     return [{"page_id": r["page_id"], "title": rows[r["page_id"]]["title"],
-             "lead": " ".join((rows[r["page_id"]]["lead"] or "").split()), "by": r["by"]}
+             "lead": lead(rows[r["page_id"]]["title"], rows[r["page_id"]]["lead"] or ""), "by": r["by"]}
             for r in found if r["page_id"] in rows]
+
+
+def lead(title, text):
+    """The start of an article's text on one line, without the "# Title" heading a Markdown text opens with."""
+    text = " ".join(text.split())
+    heading = f"# {title} "
+    return text[len(heading):] if text.startswith(heading) else text
 
 
 RERANK_POOL = 40  # hybrid results Gemini orders

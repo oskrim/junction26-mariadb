@@ -58,6 +58,9 @@ RELATED_RULES = """- Other articles, found by searching all of Finnish Wikipedia
 THEN_NOW_RULES = """- You are given two versions of the article, THEN and NOW. Say what the THEN version said about the question,
   what the NOW version says, and what changed between them (or that nothing did), each with its date. Cite
   passages from both versions."""
+FACTS_QUOTE_RULES = """- For a marker whose claim rests on the edit facts (versions, editors, reverts, edit comments) and not on the
+  article text, write the two words edit history in place of the quote."""
+EDIT_HISTORY = "edit history"
 FOUND_QUOTE_RULES = """- For a marker that stands for a found article as a whole, write the article's title, exactly as given,
   in place of the quote."""
 
@@ -103,6 +106,15 @@ TOOLS = [{"functionDeclarations": [
          "ids": {"type": "ARRAY", "items": {"type": "INTEGER"}, "description": "Ids of found articles, most useful first."}},
          "required": ["ids"]}}]}]
 YEAR = re.compile(r"\b(1[89]\d\d|20\d\d)\b")
+REVERTS_SHOWN = 30  # reverts listed in the edit facts, the latest ones
+# A question about how the article changed, in English, Finnish or Swedish.
+CHANGE = re.compile(r"chang|evolv|over time|over the years|earlier version|older version|used to say|originally|edit histor"
+                    r"|muuttu|muutoks|kehitty|aiemm|aikaisem|alun ?perin|muokkaushistoria|vuosien (?:varrella|mittaan|aikana)"
+                    r"|förändr|ändrats|tidigare version|ursprungligen|genom åren", re.I)
+# A question about the edits themselves: the edit facts answer it, no other article does.
+EDITS = re.compile(r"edit war|edit histor|revert|vandal|who (?:has |have )?edited|editors?\b"
+                   r"|muokkausso|muokkaushistoria|muokkaaj|vandalis|kumottu|kumouks|ketkä .*muoka|kuka .*muoka"
+                   r"|redigeringskrig|redigeringshistorik|återställ|vem har redigerat", re.I)
 OLD_DAYS = 30  # a version this much older than the current one is an old version
 
 FIND_RULES = """You find where one Wikipedia article says something. Read the article wikitext and return:
@@ -146,7 +158,7 @@ def serve(handler, database):
         else:
             facts = edit_facts(cur, progress, request["page_id"], version["row_start"])
             facts["passage_first"] = passage_first(cur, progress, request, version)
-            then_now = versions_to_compare(cur, progress, request, version)
+            then_now = versions_to_compare(cur, progress, request, version, facts)
             related, listed = research(cur, progress, request, version)
         if request["mode"] == "find":
             event(handler, "result", result)
@@ -248,15 +260,25 @@ def version_at(cur, page_id, at):
     return version
 
 
-def versions_to_compare(cur, progress, request, version):
+def is_current(cur, page_id, version):
+    cur.execute("SELECT row_start FROM m_article WHERE page_id = %s", (page_id,))
+    row = cur.fetchone()
+    return bool(row) and row["row_start"] == version["row_start"]
+
+
+def versions_to_compare(cur, progress, request, version, facts):
     """(then, now) when the question names an earlier year, or when the reader is on an old version: the last
     version of that year (or the one being read) and the current one. None otherwise."""
     now_moment = datetime.now(timezone.utc).replace(tzinfo=None)
     years = [int(y) for y in YEAR.findall(request["prompt"]) if int(y) < now_moment.year]
     if years:
         moment, label = datetime(years[0] + 1, 1, 1), f"the version of {years[0]}"
-    elif (now_moment - version["row_start"]).days > OLD_DAYS:
+    elif (now_moment - version["row_start"]).days > OLD_DAYS and not is_current(cur, request["page_id"], version):
         moment, label = None, f"the version of {day(version['row_start'])}"
+    elif CHANGE.search(request["prompt"]) and facts["versions"] > 1:
+        # No year named: the article halfway through its life so far, against today's.
+        moment = facts["first"] + (version["row_start"] - facts["first"]) / 2
+        label = f"a version from halfway through the article's history ({moment.year})"
     else:
         return None
     progress.step(f"Reading {label} and today's version")
@@ -265,7 +287,8 @@ def versions_to_compare(cur, progress, request, version):
     except AskError:
         progress.finish(f"The article did not exist yet in {years[0]}, so there is no earlier version to compare")
         return None
-    now = version_at(cur, request["page_id"], now_moment)
+    now = version if moment is not None and is_current(cur, request["page_id"], version) else version_at(
+        cur, request["page_id"], now_moment)
     if then["rev_id"] == now["rev_id"]:
         progress.finish(f"Reading {label}: it is also today's version, so there is nothing to compare")
         return None
@@ -287,6 +310,10 @@ def research(cur, progress, request, version):
     being read, and the other articles found as [{page_id, title, lead}]). Gemini writes the queries itself, several
     per turn, for at most SEARCH_ROUNDS turns. Nothing is found when Gemini does not answer."""
     found, chosen = {}, []
+    if EDITS.search(request["prompt"]):
+        progress.step("Answering from this article and its edit history")
+        progress.finish()
+        return [], []
     contents = [{"role": "user", "parts": [{"text": research_block(request, version)}]}]
     try:
         for turn in range(SEARCH_ROUNDS + 1):
@@ -388,11 +415,35 @@ def gemini_tools(system, contents, allowed):
 def edit_facts(cur, progress, page_id, until):
     """Edit counts up to and including the version being read. A repeated sha1 is a revert to an earlier text."""
     progress.step("Counting the edit history")
-    cur.execute("""SELECT COUNT(*) AS versions, COUNT(DISTINCT user) AS editors, MIN(row_start) AS first,
-                          COUNT(*) - COUNT(DISTINCT sha1) AS reverts
-                   FROM m_article FOR SYSTEM_TIME ALL WHERE page_id = %s AND row_start <= %s""", (page_id, until))
-    facts = cur.fetchone()
-    progress.finish(f"Counting the edit history: {facts['versions']:,} versions by {facts['editors']:,} editors")
+    cur.execute("""SELECT row_start, user, IFNULL(comment, '') AS comment, sha1
+                   FROM m_article FOR SYSTEM_TIME ALL WHERE page_id = %s AND row_start <= %s ORDER BY row_start""",
+                (page_id, until))
+    rows = cur.fetchall()
+    seen, reverted, years, months, editors = set(), [], {}, {}, {}
+    for before, row in zip([None] + rows, rows):
+        if row["sha1"] in seen:
+            undone = before and before["sha1"] != row["sha1"] and (before["comment"] or before["user"])
+            reverted.append({**row, "undone": f"; undid the edit of {before['user'] or 'anonymous'}"
+                             + (f" ({shorten(plain(before['comment']), 80)})" if before["comment"] else "") if undone else ""})
+        seen.add(row["sha1"])
+        years[row["row_start"].year] = years.get(row["row_start"].year, 0) + 1
+        month = f"{row['row_start']:%B %Y}"
+        months[month] = months.get(month, 0) + 1
+        if row["user"]:
+            editors[row["user"]] = editors.get(row["user"], 0) + 1
+    busiest = sorted(months.items(), key=lambda m: -m[1])[:3]
+    most = sorted(editors.items(), key=lambda e: -e[1])[:5]
+    log = ("Versions per year: " + ", ".join(f"{y}: {n}" for y, n in years.items())
+           + "\nBusiest months: " + ", ".join(f"{m} ({n} versions)" for m, n in busiest)
+           + "\nMost active editors: " + ", ".join(f"{u} ({n})" for u, n in most))
+    if reverted:
+        log += (f"\nThe last {min(len(reverted), REVERTS_SHOWN)} of the {len(reverted)} reverts (date, editor, edit comment; the edit it undid):\n"
+                + "\n".join(f"- {day(r['row_start'])}, {r['user'] or 'anonymous'}: {shorten(plain(r['comment']), 140) or 'no comment'}{r['undone']}"
+                            for r in reverted[-REVERTS_SHOWN:]))
+    facts = {"versions": len(rows), "editors": len(editors), "first": rows[0]["row_start"], "reverts": len(reverted),
+             "log": log}
+    progress.finish(f"Counting the edit history: {facts['versions']:,} version{'s' if len(rows) != 1 else ''}"
+                    + (f" by {facts['editors']:,} editor{'s' if len(editors) != 1 else ''}" if editors else ""))
     return facts
 
 
@@ -492,9 +543,12 @@ def stream_answer(progress, request, version, facts, then_now, related, listed):
     facts_text = (f"Edit facts up to this version: first version {day(facts['first'])}; {facts['versions']} versions; "
                   f"{facts['editors']} different editors; {facts['reverts']} versions restored an earlier text exactly "
                   f"(reverts); last edit {day(version['row_start'])} by {version['user'] or 'an anonymous editor'}, "
-                  f"comment: \"{version['comment']}\".")
+                  f"comment: \"{version['comment']}\".\n{facts['log']}")
+    facts_line = (f"{facts['versions']:,} versions by {facts['editors']:,} editors since {day(facts['first'])}; "
+                  f"{facts['reverts']:,} of them reverts to an earlier text")
     first = facts["passage_first"]
     if first:
+        facts_line += f"; the selected passage is there since {day(first['row_start'])}"
         facts_text += (f"\nThe selected passage first appears in the version of {day(first['row_start'])} "
                        f"by {first['user'] or 'an anonymous editor'}, comment: \"{first['comment']}\".")
     given = then_now_block(*then_now) if then_now else article_block(version, request["context"])
@@ -507,7 +561,7 @@ def stream_answer(progress, request, version, facts, then_now, related, listed):
     contents.append({"role": "user", "parts": [{"text": request["prompt"]}]})
     length = "2 or 3 sentences" if request["narrow"] else "3 to 6 sentences"
     rules = "\n".join([ASK_RULES.format(length=length), *([THEN_NOW_RULES] if then_now else []),
-                       *([RELATED_RULES] if related or listed else []), QUOTE_RULES,
+                       *([RELATED_RULES] if related or listed else []), QUOTE_RULES, FACTS_QUOTE_RULES,
                        *([FOUND_QUOTE_RULES] if related or listed else [])])
     progress.step("Asking Gemini…")
     started = time.perf_counter()
@@ -519,7 +573,7 @@ def stream_answer(progress, request, version, facts, then_now, related, listed):
         progress.finish(f"Asked Gemini: first words after {time.perf_counter() - started:.1f} s")
         event(progress.handler, "message", value)
     event(progress.handler, "sources", {"type": "quotes", "here": {"title": version["title"], "page_id": request["page_id"]},
-                                        "items": article_quotes(quotable(request, version, then_now, related, listed), cited)})
+                                        "items": article_quotes(quotable(request, version, then_now, related, listed), cited, facts_line)})
 
 
 def until_quotes(pieces):
@@ -550,32 +604,43 @@ def until_quotes(pieces):
 HEADING = re.compile(r"^(={2,6})\s*(.*?)\s*\1\s*$", re.M)
 
 
-def article_quotes(texts, cited):
+def article_quotes(texts, cited, facts=None):
     """The cited quotes that occur word for word in one of texts [(title, Cleaned, link)], each with the heading
     of its section there. A quote that is the title of a linked text cites that article by its first sentence."""
     items, seen = [], set()
     titles = {title.casefold(): (title, clean, link) for title, clean, link in reversed(texts) if link}
     for n, quote in cited:
         needle = Cleaned(quote).text.strip()
+        if n not in seen and facts and needle.casefold().strip(" .:") in (EDIT_HISTORY, "edit facts"):
+            seen.add(n)
+            items.append({"n": n, "title": f"Edit history of {texts[0][0]}", "section": "Version history", "quote": facts, "link": None})
+            continue
         if n not in seen and needle.casefold() in titles:
             title, clean, link = titles[needle.casefold()]
             seen.add(n)
-            items.append({"n": n, "title": title, "section": "", "quote": shorten(first_sentence(clean.text), 200), "link": link})
+            items.append({"n": n, "title": title, "section": "", "quote": shorten(first_sentence(clean.text), 200) or title, "link": link})
             continue
         if len(needle) < 12 or n in seen:
             continue
-        for title, clean, link in texts:
-            at = clean.text.find(needle)
-            if at >= 0:
+        # The whole quote, or else its longest sentence that is in a text: Gemini sometimes joins two sentences
+        # across a reference or shortens with an ellipsis.
+        pieces = sorted(re.split(r"(?<=[.!?])\s+|\s*(?:…|\.\.\.)\s*", needle), key=len, reverse=True)
+        for piece in [needle] + [p for p in pieces if len(p) >= 30 and p != needle]:
+            hit = next(((title, clean, link, clean.text.find(piece)) for title, clean, link in texts
+                        if piece in clean.text), None)
+            if hit:
+                title, clean, link, at = hit
                 seen.add(n)
                 headings = [m.group(2) for m in HEADING.finditer(clean.text, 0, at)]
                 items.append({"n": n, "title": title, "section": plain(headings[-1]) if headings else "",
-                              "quote": plain(needle), "link": link})
+                              "quote": plain(piece), "link": link})
                 break
+        else:
+            print(f"ask: quote not found: [{n}] {quote!r}", flush=True)
     return items
 
 
-NOT_SENTENCE = re.compile(r"^[{|}!=*#<\[:;]|^(thumb|pienoiskuva|right|left|oikea|vasen|Tiedosto|Kuva|File|Image)\b|\d+\s*px\|", re.I)
+NOT_SENTENCE = re.compile(r"^[{|}!=*#<\[:;]|^\w{2,20}\||^(thumb|pienoiskuva|right|left|oikea|vasen|Tiedosto|Kuva|File|Image)\b|\d+\s*px\|", re.I)
 
 
 def first_sentence(text):
@@ -583,8 +648,13 @@ def first_sentence(text):
     for line in text.splitlines():
         line = plain(line).strip()
         if len(line) > 60 and not NOT_SENTENCE.search(line):
-            return re.split(r"(?<=[a-zåäö\)]\.)\s", line, maxsplit=1)[0]
-    return ""
+            # A sentence ends before a capital or a digit: "(isl. fornaldarsögur)" does not end one.
+            parts = re.split(r"(?<=[a-zåäö\)]\.)\s+(?=[A-ZÅÄÖ0-9”\"])", line)
+            sentence = parts.pop(0)
+            while parts and len(sentence) < 60:  # "Muinaissaagat (isl. Fornaldarsögur) ovat ..." goes on
+                sentence += " " + parts.pop(0)
+            return sentence
+    return shorten(plain(" ".join(text.split())), 200)
 
 
 def event(handler, name, data):

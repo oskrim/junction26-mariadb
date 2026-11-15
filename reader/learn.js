@@ -71,7 +71,7 @@ export function citeLinks(html, { type, here, items }) {
     const tip = `data-tip-title="${escape(s.title)}" data-tip-meta="${escape(s.why ?? (s.section || "Introduction"))}" data-tip-quote="${escape(s.quote ?? "")}"`;
     return type === "quotes" && !s.link
       ? `<button type="button" class="cite" data-quote="${escape(s.quote)}" ${tip}>${items.indexOf(s) + 1}</button>`
-      : `<a class="cite" href="${escape(href(s))}" target="_blank" rel="noopener" ${tip}>${n}</a>`;
+      : `<a class="cite" href="${escape(href(s))}" target="_blank" rel="noopener" ${tip}>${type === "quotes" ? items.indexOf(s) + 1 : n}</a>`;
   };
   return html.replace(/\s*\[\d+(?:\s*,\s*\d+)*\](?:\s*,?\s*\[\d+(?:\s*,\s*\d+)*\])*/g, (run) => {
     const links = [...new Set(run.match(/\d+/g).map(Number))].map(marker).filter(Boolean);
