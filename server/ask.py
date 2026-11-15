@@ -38,11 +38,14 @@ MAX_HISTORY = 12
 THINKING = {"thinkingLevel": "low", "includeThoughts": True}
 
 NARROW_W = 700
+DATED_RULE = '- Say which version you read, by its date (for example "In the version of 12 September 2026, ...").'
+UNDATED_RULE = """- The reader is on today's version and asks about the subject: start with the answer itself. Do not mention the
+  version, its date or revision ("In the version of ...") unless the question asks about them."""
 ASK_RULES = """You answer questions about one Wikipedia article for a reader.
 - Answer in the language of the question, not the language of the article.
 - Ground every claim in the article text and edit facts given below. If they do not say, say so plainly.
 - Keep it short: {length}, plain prose, no Markdown, no lists.
-- Say which version you read, by its date (for example "In the version of 12 September 2026, ...").
+{dated}
 - End each claim that rests on the article text with a marker like [1] or [1][2], numbering the passages you
   cite: at most 4 passages, and a claim that rests on a passage already cited reuses its number."""
 QUOTE_RULES = """- After the answer, write <quotes> on its own line, then one line per marker you used: the marker, then
@@ -696,7 +699,10 @@ def stream_answer(progress, request, version, facts, then_now, related, listed):
                  for h in request["history"]]
     contents.append({"role": "user", "parts": [{"text": request["prompt"]}]})
     length = "2 or 3 sentences" if request["narrow"] else "3 to 6 sentences"
-    rules = "\n".join([ASK_RULES.format(length=length), *([THEN_NOW_RULES] if then_now else []),
+    # A version is named when the reader is on an old one or asks about history, then and now, or the edits.
+    dated = bool(then_now or first or EDITS.search(request["prompt"]) or CHANGE.search(request["prompt"])
+                 or "Disputed edits" in facts["log"])
+    rules = "\n".join([ASK_RULES.format(length=length, dated=DATED_RULE if dated else UNDATED_RULE), *([THEN_NOW_RULES] if then_now else []),
                        *([RELATED_RULES] if related or listed else []), *([DISPUTE_RULES] if "Disputed edits" in facts["log"] else []), QUOTE_RULES,
                        *([THEN_NOW_QUOTE_RULES] if then_now else []), FACTS_QUOTE_RULES,
                        *([FOUND_QUOTE_RULES] if related or listed else [])])
