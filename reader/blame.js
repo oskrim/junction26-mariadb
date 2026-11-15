@@ -177,8 +177,9 @@ function openBlame({ body, data, button }) {
     card.innerHTML = cardHtml(b.origin, b.time, now);
     const rect = el.getBoundingClientRect();
     card.classList.add("is-open");
-    const top = rect.top + window.scrollY - card.offsetHeight - 8;
-    card.style.top = `${top < window.scrollY + 64 ? rect.bottom + window.scrollY + 8 : top}px`;
+    // Below the paragraph, unless it would run off the bottom of the window.
+    const below = rect.bottom + 8 + card.offsetHeight <= innerHeight - 8 || rect.top - 8 - card.offsetHeight < 64;
+    card.style.top = `${(below ? rect.bottom + 8 : rect.top - 8 - card.offsetHeight) + window.scrollY}px`;
     card.style.left = `${Math.min(rect.left + window.scrollX, window.scrollX + document.documentElement.clientWidth - card.offsetWidth - 16)}px`;
     for (const other of painted) other.el.classList.toggle("is-lit", other.origin.rev_id === b.origin.rev_id);
   };
