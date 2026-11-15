@@ -190,9 +190,10 @@ main {
   transition: background 0.15s, color 0.15s;
 }
 .lang:hover, .lang[aria-expanded="true"] { background: rgb(0 0 0 / 0.045); color: var(--ink); }
+/* The box searches as you type and Enter opens the results, so the button stays out of sight. */
 .send {
   width: 36px; height: 36px;
-  display: grid; place-items: center;
+  display: none; place-items: center;
   border: 0;
   border-radius: 50%;
   background: var(--blue);
