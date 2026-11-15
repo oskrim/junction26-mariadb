@@ -14,6 +14,7 @@ Both modes stream Server-Sent Events, the same as /api/learn:
   done      the end
 """
 import bisect
+import difflib
 import json
 import os
 import re
@@ -24,6 +25,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 import search
+import tracelog
 import vector
 
 MODEL = "gemini-3.8-flash"
@@ -59,6 +61,15 @@ RELATED_RULES = """- Other articles, found by searching Wikipedia for this quest
 THEN_NOW_RULES = """- You are given two versions of the article, THEN and NOW. Say what the THEN version said about the question,
   what the NOW version says, and what changed between them (or that nothing did), each with its date. Cite
   passages from both versions."""
+DISPUTE_RULES = """- The edit facts list "Disputed edits": the text that reverted edits had added or removed. When asked about an edit
+  war, a dispute or vandalism, say concretely what was fought over: quote the disputed wording (translated into
+  the answer's language, the original in brackets when short), say who added it and who reverted it and when, and
+  tell vandalism (insults, nonsense, blanking) apart from a dispute over content. Describe insults and invented
+  private or sexual claims about a person by their kind, without repeating them word for word. Cite these to the
+  edit history."""
+THEN_NOW_QUOTE_RULES = """- In the quotes block, write THEN or NOW between the marker and a quote from those versions, for the version the
+  claim is about, as in: [1] THEN the quoted words. A sentence that both versions have takes the tag of the
+  version your claim describes."""
 FACTS_QUOTE_RULES = """- For a marker whose claim rests on the edit facts (versions, editors, reverts, edit comments) and not on the
   article text, write the two words edit history in place of the quote."""
 EDIT_HISTORY = "edit history"
@@ -124,7 +135,7 @@ CHANGE = re.compile(r"chang|evolv|over time|over the years|earlier version|older
                     r"|muuttu|muutoks|kehitty|aiemm|aikaisem|alun ?perin|muokkaushistoria|vuosien (?:varrella|mittaan|aikana)"
                     r"|förändr|ändrats|tidigare version|ursprungligen|genom åren", re.I)
 # A question about the edits themselves: the edit facts answer it, no other article does.
-EDITS = re.compile(r"edit war|edit histor|revert|vandal|who (?:has |have )?edited|editors?\b"
+EDITS = re.compile(r"edit war|fought over|kiistelty|edit histor|revert|vandal|who (?:has |have )?edited|editors?\b"
                    r"|muokkausso|muokkaushistoria|muokkaaj|vandalis|kumottu|kumouks|ketkä .*muoka|kuka .*muoka"
                    r"|redigeringskrig|redigeringshistorik|återställ|vem har redigerat", re.I)
 OLD_DAYS = 30  # a version this much older than the current one is an old version
@@ -169,6 +180,8 @@ def serve(handler, database):
             result = find(cur, progress, request, version)
         else:
             facts = edit_facts(cur, progress, request["page_id"], version["row_start"])
+            if EDITS.search(request["prompt"]):
+                disputed_edits(cur, progress, request["page_id"], facts)
             facts["passage_first"] = passage_first(cur, progress, request, version)
             then_now = versions_to_compare(cur, progress, request, version, facts)
             related, listed = research(cur, progress, request, version)
@@ -240,6 +253,7 @@ def read_version(cur, progress, request):
 def parse(handler):
     try:
         body = json.loads(handler.rfile.read(int(handler.headers.get("Content-Length", 0))))
+        tracelog.request_body(body)
         mode = body.get("mode", "ask")
         prompt = str(body["prompt"]).strip()
         page_id = int(body["page_id"])
@@ -468,6 +482,7 @@ def gemini_tools(system, contents, allowed):
     with gemini_request("generateContent", system, contents, {"thinkingConfig": RESEARCH_THINKING}, extra,
                         RESEARCH_MODEL) as response:
         reply = json.loads(response.read())
+    tracelog.event("gemini_reply", reply=reply)
     try:
         content = reply["candidates"][0]["content"]
     except (KeyError, IndexError):
@@ -484,10 +499,10 @@ def edit_facts(cur, progress, page_id, until):
     rows = cur.fetchall()
     seen, reverted, years, months, editors = set(), [], {}, {}, {}
     for before, row in zip([None] + rows, rows):
-        if row["sha1"] in seen:
-            undone = before and before["sha1"] != row["sha1"] and (before["comment"] or before["user"])
-            reverted.append({**row, "undone": f"; undid the edit of {before['user'] or 'anonymous'}"
-                             + (f" ({shorten(plain(before['comment']), 80)})" if before["comment"] else "") if undone else ""})
+        # A version with the text of the one before it (a protection, a null edit) restores nothing.
+        if row["sha1"] in seen and before["sha1"] != row["sha1"]:
+            reverted.append({**row, "before": before, "undone": f"; undid the edit of {before['user'] or 'anonymous'}"
+                             + (f" ({shorten(plain(before['comment']), 80)})" if before["comment"] else "")})
         seen.add(row["sha1"])
         years[row["row_start"].year] = years.get(row["row_start"].year, 0) + 1
         month = f"{row['row_start']:%B %Y}"
@@ -504,10 +519,65 @@ def edit_facts(cur, progress, page_id, until):
                 + "\n".join(f"- {day(r['row_start'])}, {r['user'] or 'anonymous'}: {shorten(plain(r['comment']), 140) or 'no comment'}{r['undone']}"
                             for r in reverted[-REVERTS_SHOWN:]))
     facts = {"versions": len(rows), "editors": len(editors), "first": rows[0]["row_start"], "reverts": len(reverted),
-             "log": log}
+             "log": log, "reverted": reverted}
     progress.finish(f"Counting the edit history: {facts['versions']:,} version{'s' if len(rows) != 1 else ''}"
                     + (f" by {facts['editors']:,} editor{'s' if len(editors) != 1 else ''}" if editors else ""))
     return facts
+
+
+DISPUTES = 8  # reverted edits whose changes are read
+DISPUTE_CHARS = 350  # of the text each added, and of the text each removed
+
+
+def disputed_edits(cur, progress, page_id, facts):
+    """Adds to the edit facts what the most fought-over reverted edits changed: for each, the text the edit added and
+    removed, which the revert took back. The most fought-over are the texts reverted most often, in the densest
+    runs of reverts."""
+    reverted = facts["reverted"]
+    if not reverted:
+        return
+    progress.step("Reading what the reverted edits changed")
+    times, weight = [r["row_start"] for r in reverted], {}
+    for r in reverted:
+        near = sum(1 for t in times if abs((t - r["row_start"]).total_seconds()) < 3 * 86400)
+        again = sum(1 for o in reverted if o["before"]["sha1"] == r["before"]["sha1"])
+        weight.setdefault(r["before"]["sha1"], (again * 3 + near, r["row_start"], r, again))
+    chosen = sorted(sorted(weight.values(), key=lambda w: w[:2], reverse=True)[:DISPUTES], key=lambda w: w[1])
+    lines = []
+    for _, _, r, again in chosen:
+        texts = []
+        for start in (r["row_start"], r["before"]["row_start"]):  # the restored text, the text with the edit
+            cur.execute("SELECT text FROM m_article FOR SYSTEM_TIME ALL WHERE page_id = %s AND row_start = %s",
+                        (page_id, start))
+            texts.append(cur.fetchone()["text"])
+        added, removed = changed(*texts)
+        if not added and not removed:
+            continue
+        lines.append(f"- {day(r['row_start'])}: {r['user'] or 'anonymous'} reverted {r['before']['user'] or 'anonymous'}"
+                     + (f" (this same text was reverted {again} times)" if again > 1 else "")
+                     + (f"\n  the reverted edit had added: «{added}»" if added else "")
+                     + (f"\n  the reverted edit had removed: «{removed}»" if removed else ""))
+    if lines:
+        facts["log"] += ("\nDisputed edits: what the most fought-over reverted edits had changed in the article text "
+                         "(… joins separate places):\n" + "\n".join(lines))
+    progress.finish(f"Read what {len(lines)} reverted edit{'s' if len(lines) != 1 else ''} changed")
+
+
+def changed(before, after):
+    """(added, removed): the words after has and before lacks, and the reverse, each with a few words around them."""
+    old, new = before.splitlines(), after.splitlines()
+    added, removed = [], []
+    for op, i1, i2, j1, j2 in difflib.SequenceMatcher(None, old, new, autojunk=False).get_opcodes():
+        if op == "equal":
+            continue
+        a, b = " ".join(old[i1:i2]).split(), " ".join(new[j1:j2]).split()
+        for op2, a1, a2, b1, b2 in difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes():
+            if op2 in ("replace", "delete"):
+                removed.append(" ".join(a[max(0, a1 - 5):a2 + 5]))
+            if op2 in ("replace", "insert"):
+                added.append(" ".join(b[max(0, b1 - 5):b2 + 5]))
+    tidy = lambda parts: shorten(plain(Cleaned(" … ".join(dict.fromkeys(parts))).text), DISPUTE_CHARS)
+    return tidy(added), tidy(removed)
 
 
 def passage_first(cur, progress, request, version):
@@ -593,15 +663,16 @@ def quotable(request, version, then_now, related, listed):
     """The texts Gemini was given, as (title, Cleaned, link): a link opens a text other than the version being read."""
     def link(page_id, row_start):
         return f"./?id={page_id}&at={int(row_start.replace(tzinfo=timezone.utc).timestamp())}"
-    texts = [(version["title"], version["clean"], None)]
-    for v in then_now or ():
+    texts, tagged = [(version["title"], version["clean"], None)], {}
+    for tag, v in zip(("THEN", "NOW"), then_now or ()):
         if v["rev_id"] != version["rev_id"]:
             texts.append((f"{v['title']} ({day(v['row_start'])})", v["clean"], link(request["page_id"], v["row_start"])))
+        tagged[tag] = texts[-1] if v["rev_id"] != version["rev_id"] else texts[0]
     texts += [(r["title"], r["clean"], link(r["page_id"], r["row_start"]) if r["lang"] == "fi"
                else f"./?id={r['page_id']}&lang={r['lang']}") for r in related]
     texts += [(f["title"], Cleaned(f["lead"]), f"./?id={f['page_id']}" + (f"&lang={f['lang']}" if f["lang"] != "fi" else ""))
               for f in listed]
-    return texts
+    return texts, tagged
 
 
 def stream_answer(progress, request, version, facts, then_now, related, listed):
@@ -626,7 +697,8 @@ def stream_answer(progress, request, version, facts, then_now, related, listed):
     contents.append({"role": "user", "parts": [{"text": request["prompt"]}]})
     length = "2 or 3 sentences" if request["narrow"] else "3 to 6 sentences"
     rules = "\n".join([ASK_RULES.format(length=length), *([THEN_NOW_RULES] if then_now else []),
-                       *([RELATED_RULES] if related or listed else []), QUOTE_RULES, FACTS_QUOTE_RULES,
+                       *([RELATED_RULES] if related or listed else []), *([DISPUTE_RULES] if "Disputed edits" in facts["log"] else []), QUOTE_RULES,
+                       *([THEN_NOW_QUOTE_RULES] if then_now else []), FACTS_QUOTE_RULES,
                        *([FOUND_QUOTE_RULES] if related or listed else [])])
     progress.step("Asking Gemini…")
     started = time.perf_counter()
@@ -637,8 +709,9 @@ def stream_answer(progress, request, version, facts, then_now, related, listed):
             continue
         progress.finish(f"Asked Gemini: first words after {time.perf_counter() - started:.1f} s")
         event(progress.handler, "message", value)
+    texts, tagged = quotable(request, version, then_now, related, listed)
     event(progress.handler, "sources", {"type": "quotes", "here": {"title": version["title"], "page_id": request["page_id"]},
-                                        "items": article_quotes(quotable(request, version, then_now, related, listed), cited, facts_line)})
+                                        "items": article_quotes(texts, cited, facts_line, tagged)})
 
 
 def until_quotes(pieces):
@@ -661,24 +734,27 @@ def until_quotes(pieces):
             buffer = buffer[keep:]
     if buffer.strip():
         yield "text", buffer.rstrip()
-    found = re.findall(r"^\s*\[(\d+)\]\s*(.+)$", block or "", re.M)
-    yield "quotes", [(int(n), q.strip().strip("\"'„“”«»")) for n, q in found]
+    found = re.findall(r"^\s*\[(\d+)\]\s*(?:(THEN|NOW)\b[:,]?\s*)?(.+)$", block or "", re.M)
+    yield "quotes", [(int(n), q.strip().strip("\"'„“”«»"), tag) for n, tag, q in found]
 
 
 # A heading line of the wikitext, as in "== Taustaa ==".
 HEADING = re.compile(r"^(={2,6})\s*(.*?)\s*\1\s*$", re.M)
 
 
-def article_quotes(texts, cited, facts=None):
+def article_quotes(texts, cited, facts=None, tagged=None):
     """The cited quotes that occur word for word in one of texts [(title, Cleaned, link)], each with the heading
     of its section there. A quote that is the title of a linked text cites that article by its first sentence."""
     items, seen = [], set()
     titles = {title.casefold(): (title, clean, link) for title, clean, link in reversed(texts) if link}
-    for n, quote in cited:
+    first, tagged = texts[0], tagged or {}
+    for n, quote, tag in cited:
+        # A quote tagged THEN or NOW is looked for in that version first: both may have the sentence.
+        texts = [tagged[tag]] + [t for t in texts if t is not tagged[tag]] if tag in tagged else texts
         needle = Cleaned(quote).text.strip()
         if n not in seen and facts and needle.casefold().strip(" .:") in (EDIT_HISTORY, "edit facts"):
             seen.add(n)
-            items.append({"n": n, "title": f"Edit history of {texts[0][0]}", "section": "Version history", "quote": facts, "link": None})
+            items.append({"n": n, "title": f"Edit history of {first[0]}", "section": "Version history", "quote": facts, "link": None})
             continue
         if n not in seen and needle.casefold() in titles:
             title, clean, link = titles[needle.casefold()]
@@ -723,6 +799,7 @@ def first_sentence(text):
 
 
 def event(handler, name, data):
+    tracelog.event("sse", name=name, data=data)
     handler.wfile.write(f"event: {name}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n".encode())
     handler.wfile.flush()
 
@@ -733,6 +810,7 @@ def gemini_request(method, system, contents, config, extra=None, model=MODEL):
         raise AskError(503, "GEMINI_API_KEY is not set on the server")
     body = {"systemInstruction": {"parts": [{"text": system}]}, "contents": contents,
             "generationConfig": {"thinkingConfig": THINKING, **config}, **(extra or {})}
+    tracelog.event("gemini_request", model=model, method=method, body=body)
     request = urllib.request.Request(f"{API}{model}:{method}", data=json.dumps(body).encode(),
                                      headers={"Content-Type": "application/json", "x-goog-api-key": key})
     try:
@@ -766,6 +844,7 @@ def gemini_json(progress, system, contents, schema):
     config = {"responseMimeType": "application/json", "responseSchema": schema}
     with gemini_request("streamGenerateContent?alt=sse", system, contents, config) as response:
         text = "".join(answer_texts(progress, response))
+    tracelog.event("gemini_reply", text=text)
     try:
         return json.loads(text)
     except ValueError as error:
