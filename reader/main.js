@@ -242,8 +242,9 @@ function renderToc(entries) {
   return `<p class="toc-label">Contents</p><ol><li data-id="top"><a href="#top">Introduction</a></li>${items}</ol>`;
 }
 
-// The section being read opens by itself as you scroll; sections with subsections also open and
-// close on click without moving the page. A click can close the auto-opened one until you scroll to another.
+// The section being read opens by itself as you scroll. A section with subsections goes to the section and opens
+// when its name is clicked; its chevron opens and closes it without moving the page, and can close the
+// auto-opened one until you scroll to another.
 function trackActiveSection(entries) {
   const headings = entries.map((e) => document.getElementById(e.id)).filter(Boolean);
   const pinned = new Set();
@@ -284,6 +285,15 @@ function trackActiveSection(entries) {
     const toggle = event.target.closest(".toc-toggle");
     if (!toggle) return;
     const id = toggle.parentElement.dataset.id;
+    // The section's name goes to the section, like any other entry, and opens its subsections; the chevron
+    // only opens and closes them.
+    if (!event.target.closest("svg")) {
+      pinned.add(id);
+      if (dismissed === id) dismissed = null;
+      render();
+      location.hash = id;
+      return;
+    }
     if (toggle.parentElement.classList.contains("is-open")) {
       pinned.delete(id);
       if (id === readingId) dismissed = id;
