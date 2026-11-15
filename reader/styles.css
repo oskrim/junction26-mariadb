@@ -464,6 +464,21 @@ a {
   margin-top: 10px;
 }
 
+/* With the image margin beside the column, the button ends where that margin does, like Wikipedia's at the
+   page's right edge, level with the middle of the title. */
+@media (min-width: 1381px) {
+  html:not(.chat-docked) .head-title {
+    position: relative;
+  }
+
+  html:not(.chat-docked) .lang-picker {
+    position: absolute;
+    top: 13px;
+    right: calc(-1 * (var(--pad) + var(--gap) + var(--side)));
+    margin-top: 0;
+  }
+}
+
 .lang-button {
   display: inline-flex;
   align-items: center;
@@ -507,7 +522,7 @@ a {
   right: 0;
   z-index: 30;
   width: 264px;
-  padding: 10px 0 0;
+  padding: 6px 0;
   border: 1px solid var(--rule);
   border-radius: 6px;
   background: var(--paper);
@@ -555,13 +570,6 @@ a {
   color: var(--ink-3);
   font-variant-numeric: tabular-nums;
 }
-
-.lang-item:not(.is-current)::after {
-  content: "";
-  width: 12px; /* the check's room, so the counts line up */
-}
-
-/* A Swedish or English article: where it is from, instead of its history */
 
 /* Explore and History need the Finnish history */
 .is-foreign .views {
