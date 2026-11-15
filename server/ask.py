@@ -24,7 +24,11 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
+import pymysql
+
+import bm25
 import search
+import snippets
 import tracelog
 import vector
 
@@ -54,13 +58,17 @@ QUOTE_RULES = """- After the answer, write <quotes> on its own line, then one li
   the last quote."""
 QUOTES_TAG = "<quotes>"
 RELATED_RULES = """- Other articles, found by searching Wikipedia for this question (Finnish Wikipedia, or Swedish or English where the
-  title says so), follow the article: some in
-  full ("Found article"), the rest as a title and its first words ("Also found"). Use them for what the article
-  itself does not say, and then name the article ("The article on X says ..."). Cite their passages like the
-  article's; here up to 6 passages may be cited.
+  title says so), follow the article: some in full ("Found article"), the rest as a title, its first words and the
+  passages of its text that matched the search ("Also found"). Use them for what the article itself does not say,
+  and then name the article ("The article on X says ..."). Cite their passages like the article's; here up to 6
+  passages may be cited.
 - When the reader asks for related articles or further reading, name the 4 to 6 found articles that matter most for
   this article's subject, each with a clause on how it relates and a marker of its own. Do not name an article that
   was not found."""
+VERSIONS_RULES = """- Earlier versions follow too, each titled with its date and a tag like @2008-12-31. Say what a version said
+  with its date, and what differs from the version being read. In the quotes block, write the tag between the marker
+  and a quote taken from that version, as in: [2] @2008-12-31 the quoted words. A sentence that the version being
+  read also has takes the tag when your claim is about the earlier version."""
 THEN_NOW_RULES = """- You are given two versions of the article, THEN and NOW. Say what the THEN version said about the question,
   what the NOW version says, and what changed between them (or that nothing did), each with its date. Cite
   passages from both versions."""
@@ -79,58 +87,96 @@ EDIT_HISTORY = "edit history"
 FOUND_QUOTE_RULES = """- For a marker that stands for a found article as a whole, write the article's title, exactly as given,
   in place of the quote."""
 
-SEARCH_ROUNDS = 2  # turns in which Gemini may search before it must choose what to read (a third added ~5 s, rarely an article)
-SEARCH_CALLS = 6  # searches run in the first turn
+TOOL_ROUNDS = 4  # turns in which Gemini may use the tools before the answer is written
+SEARCH_CALLS = 6  # searches run in the first turn that searches
 GAP_CALLS = 2  # and in a later one, which only fills a gap
 SEARCH_LIMIT, SEARCH_MAX = 8, 12  # articles per search: the default and the most
-READ = 5  # found articles given to Gemini in full
-READ_CHARS = 12_000  # of each: its lead and first sections
-LISTED = 24  # other found articles given as a title and a lead
+READ_MAX = 10  # articles read in full for one answer
+READ_CHARS = 12_000  # of each article read: its lead and first sections, cut where a paragraph ends
+READ_CALL_CHARS = 60_000  # of text returned by one read call
+VERSIONS_MAX = 4  # earlier versions fetched for one answer
+VERSION_CHARS = 100_000  # of each, for the writer of the answer
+LISTED = 24  # other found articles given as a title, a lead and their matching passages
 ARTICLE_START = 6_000  # characters of the article shown while searching; the answer gets all of it
-# Searching is two or three short turns before the answer starts, so the fast model: measured on page 498, a turn
+# The tool turns are short and come before the answer starts, so the fast model: measured on page 498, a turn
 # takes ~1 s on 3.5 Flash and ~3 s on 3.8 Flash, and both write the same kind of queries.
 RESEARCH_MODEL, RESEARCH_THINKING = os.environ.get("RESEARCH_MODEL", "gemini-3.5-flash"), {"thinkingLevel": "minimal"}
-RESEARCH_RULES = f"""You find what else to read before a question about one Wikipedia article is answered.
+RESEARCH_RULES = f"""You gather what a question about one Wikipedia article needs before the answer is written.
 You get the start of the article, its section headings and the reader's question. The writer of the answer gets the
-whole article; your work is to find the OTHER articles the answer needs, among all 568,873 articles of Finnish
-Wikipedia.
-- search_articles is a hybrid search (BM25 keywords and vector meaning) over the articles' titles and texts. Write the
+whole article, its basic edit facts, and everything you read with the tools: use them to find what the answer needs
+from OTHER articles (among all 568,873 articles of Finnish Wikipedia), from earlier versions, or from the edit
+history. You have at most {TOOL_ROUNDS} turns; call several tools in one turn whenever you can, and call answer
+as soon as the writer has enough.
+- FIRST decide whether anything needs looking up at all. Call answer at once, alone, when what the writer already
+  has answers the question: a fact about the article's own subject that its text states (a number, a date, a name,
+  a definition, what it says about something in its sections), its wording, or a comparison of versions the writer
+  is said to have already. Look things up only when the question reaches past that: related or further reading,
+  influence, causes, what came before or after, comparisons with other subjects, people, works and events the
+  article only mentions, an earlier version the writer does not have, or the edit history.
+- search is a hybrid search (BM25 keywords and vector meaning) over the articles' titles and texts. Each result has
+  its id, title, opening words and the one or two passages of its text that best match your query. Write the
   queries yourself, from the article's subject and what the question is after; never pass the reader's words like
   "this" or "related articles". Good queries are Finnish article titles or names ("Elias Lönnrot", "Kanteletar"),
   keywords ("kansanrunouden keruu") and short descriptive phrases ("Kalevalan vaikutus kuvataiteeseen"). Queries in
   Finnish find the most.
-- In your FIRST turn call search_articles 4 to {SEARCH_CALLS} times at once, each with a different query from a
+- In the first turn that searches, call search 4 to {SEARCH_CALLS} times at once, each with a different query from a
   different angle, so that one round covers the question: the key people, the places, the concepts and terms, the
   works and what they influenced, the history before and the aftermath, whichever fit the question. Do not repeat
   an angle in other words. A narrow question about one named thing may take 2 or 3.
-- A second round (the last, at most {GAP_CALLS} searches) is only for one specific gap you can name: a person, work or event the
-  results mention that the answer needs and no result covers. Never use it to broaden further; when the first
-  round covers the question, go straight to read_articles.
+- One later round of searches (the last; at most {GAP_CALLS}) is only for one specific gap you can name: a person, work or
+  event the results mention that the answer needs and no result covers. Never use it to broaden further.
 - Leave lang out: Finnish Wikipedia is the one with every article. Search Swedish (lang "sv") or English ("en")
   Wikipedia, with the query in that language, only when the question is about what another language's Wikipedia
   says or how its coverage differs, or when the reader writes in Swedish or English and the Finnish searches found
-  little for the question. Their ids are negative numbers; pass them to read_articles as they are.
-- Then call read_articles with the ids of the found articles the answer needs, the most useful first, at most {READ}.
-  Prefer the article on a subject itself over lists and narrow sub-articles.
-- Do not search when the article itself is what answers: a fact about its own subject that its text states (a
-  number, a date, a name, a definition, what it says about something in its sections), its wording, what an
-  earlier version of it said, or its edit history. Then call read_articles with an empty list at once. Search when
-  the question reaches past the article: related or further reading, influence, causes, what came before or after,
-  comparisons, or people, works and events the article only mentions."""
+  little for the question. Their ids are negative numbers; pass them to read as they are.
+- read returns the text of found articles, as they were at the moment the reader is on; the writer gets every
+  article you read, in full. Read the 2 to 5 found articles the answer needs, the most useful first, in one call;
+  prefer the article on a subject itself over lists and narrow sub-articles. The passages of the other results
+  reach the writer too, so do not read an article whose passage already says what is needed. When the articles
+  you read are all the answer needs, which is the usual case, call answer in the same turn as read.
+- history returns the edit history of the article being read: versions per year, the busiest months, the most
+  active editors, the reverts with their edit comments, and what the most fought-over reverted edits had changed
+  in the text. Call it, with answer in the same turn, for questions about edit wars, disputes, vandalism, reverts
+  or who edited the article.
+- version returns the article as it was on a date (a year like 2008 means the end of that year), so that the
+  writer can compare then and now. Call it, once per date and with answer in the same turn, when the question asks
+  what the article said at some time, how it has changed, or when something was added, and the writer does not
+  have that version yet; with id, for a found article instead.
+- since finds when some exact words first appeared in the article being read (a binary search over its versions).
+  Call it, with answer in the same turn, when the question asks when the article first mentioned something or who
+  added it; pass a name or short phrase the article's text has, in the article's language."""
 TOOLS = [{"functionDeclarations": [
-    {"name": "search_articles",
-     "description": "Searches Finnish Wikipedia by keywords and meaning. Returns the best articles: id, title and first words.",
+    {"name": "search",
+     "description": "Searches Wikipedia by keywords and meaning. Returns the best articles: id, title, opening words and the passages that best match the query.",
      "parameters": {"type": "OBJECT", "properties": {
          "query": {"type": "STRING", "description": "A title, name, keywords or a short descriptive phrase, best in Finnish."},
          "limit": {"type": "INTEGER", "description": f"How many articles to return: {SEARCH_LIMIT} by default, at most {SEARCH_MAX}."},
          "lang": {"type": "STRING", "enum": ["fi", "sv", "en"],
                   "description": "Which Wikipedia: fi (default, all articles), or sv or en (about 5,000 articles each; write the query in that language)."}},
          "required": ["query"]}},
-    {"name": "read_articles",
-     "description": "Ends the search: the found articles to read in full for the answer. An empty list when none is needed.",
+    {"name": "read",
+     "description": "Returns the text of found articles and gives them in full to the writer of the answer.",
      "parameters": {"type": "OBJECT", "properties": {
          "ids": {"type": "ARRAY", "items": {"type": "INTEGER"}, "description": "Ids of found articles, most useful first."}},
-         "required": ["ids"]}}]}]
+         "required": ["ids"]}},
+    {"name": "history",
+     "description": "Returns the edit history of the article being read: activity, editors, reverts and what the disputed edits changed.",
+     "parameters": {"type": "OBJECT", "properties": {}}},
+    {"name": "version",
+     "description": "Returns the article as it was on a date and gives that version to the writer of the answer.",
+     "parameters": {"type": "OBJECT", "properties": {
+         "date": {"type": "STRING", "description": "YYYY, YYYY-MM or YYYY-MM-DD."},
+         "id": {"type": "INTEGER", "description": "A found Finnish article's id; leave out for the article being read."}},
+         "required": ["date"]}},
+    {"name": "since",
+     "description": "Finds the first version of the article being read that contains some exact words, with its date, editor and edit comment.",
+     "parameters": {"type": "OBJECT", "properties": {
+         "words": {"type": "STRING", "description": "A name or short phrase exactly as the article writes it, e.g. Tolkien."}},
+         "required": ["words"]}},
+    {"name": "answer",
+     "description": "Ends the gathering: the answer is written from the article and everything read.",
+     "parameters": {"type": "OBJECT", "properties": {}}}]}]
+TOOL_NAMES = [f["name"] for f in TOOLS[0]["functionDeclarations"]]
 YEAR = re.compile(r"\b(1[89]\d\d|20\d\d)\b")
 REVERTS_SHOWN = 30  # reverts listed in the edit facts, the latest ones
 # A question about how the article changed, in English, Finnish or Swedish.
@@ -187,11 +233,11 @@ def serve(handler, database):
                 disputed_edits(cur, progress, request["page_id"], facts)
             facts["passage_first"] = passage_first(cur, progress, request, version)
             then_now = versions_to_compare(cur, progress, request, version, facts)
-            related, listed = research(cur, progress, request, version)
+            related, listed, versions = research(cur, progress, request, version, facts, then_now)
         if request["mode"] == "find":
             event(handler, "result", result)
         else:
-            stream_answer(progress, request, version, facts, then_now, related, listed)
+            stream_answer(progress, request, version, facts, then_now, related, listed, versions)
 
 
 class Progress:
@@ -334,54 +380,203 @@ def vector_count(cur):
     return _count["n"]
 
 
-def research(cur, progress, request, version):
-    """What Gemini found for the question by searching: (the articles it chose to read, each as it was at the moment
-    being read, and the other articles found as [{page_id, title, lead}]). Gemini writes the queries itself, several
-    per turn, for at most SEARCH_ROUNDS turns. Nothing is found when Gemini does not answer."""
-    found, chosen = {}, []
+def research(cur, progress, request, version, facts, then_now):
+    """What Gemini gathered for the question with the tools: (the articles it read, each as it was at the moment
+    being read; the other articles found, as [{page_id, title, lead, passages}]; the earlier versions it asked for).
+    Gemini writes the queries itself and may search, read, look at the edit history and fetch versions for at most
+    TOOL_ROUNDS turns, several calls a turn; the calls of one turn run at the same time. Nothing is gathered when
+    Gemini does not answer."""
+    found, read, versions, searched = {}, {}, [], 0
     if EDITS.search(request["prompt"]):
         progress.step("Answering from this article and its edit history")
         progress.finish()
-        return [], []
-    contents = [{"role": "user", "parts": [{"text": research_block(request, version)}]}]
+        return [], [], []
+    contents = [{"role": "user", "parts": [{"text": research_block(request, version, facts, then_now)}]}]
     try:
-        for turn in range(SEARCH_ROUNDS + 1):
-            progress.step("Choosing what to read" if found else "Deciding what to search for")
-            allowed = ["read_articles"] if turn == SEARCH_ROUNDS else ["search_articles", "read_articles"]
-            reply = gemini_tools(RESEARCH_RULES, contents, allowed)
+        for turn in range(TOOL_ROUNDS):
+            open_step(progress, "Deciding what else to look up" if turn else "Deciding what to look up")
+            reply = gemini_tools(RESEARCH_RULES, contents, TOOL_NAMES)
             calls = [p["functionCall"] for p in reply.get("parts", []) if p.get("functionCall")]
-            queries = [c for c in calls if c.get("name") == "search_articles"
-                       and str((c.get("args") or {}).get("query") or "").strip()][:GAP_CALLS if turn else SEARCH_CALLS]
-            if not queries or turn == SEARCH_ROUNDS:
-                chosen = [i for c in calls if c.get("name") == "read_articles" for i in (c.get("args") or {}).get("ids") or []]
+            answers = {}
+            queries = [i for i, c in enumerate(calls) if c.get("name") == "search"
+                       and str((c.get("args") or {}).get("query") or "").strip()][:(SEARCH_CALLS, GAP_CALLS, 0)[min(searched, 2)]]
+            if queries:
+                names = [LANG_NAMES[lang] for lang in LANG_NAMES if any(call_lang(calls[i]) == lang for i in queries)]
+                progress.update(f"Searching {' and '.join(names)} Wikipedia")
+                answers.update(zip(queries, run_searches(progress, request, [calls[i] for i in queries], found)))
+                searched += 1
+            for i, call in enumerate(calls):
+                name, args = call.get("name"), call.get("args") or {}
+                if name == "read":
+                    answers[i] = run_read(progress, request, args, found, read)
+                elif name == "history":
+                    answers[i] = run_history(cur, progress, request, version, facts)
+                elif name == "since":
+                    answers[i] = run_since(cur, progress, request, version, args, facts)
+                elif name == "version":
+                    answers[i] = run_version(cur, progress, request, version, args, found, versions, then_now)
+                elif i not in answers:
+                    answers[i] = {"ok": True} if name == "answer" else {"error": "not run: no more searches; read what was found or call answer"}
+            tracelog.event("tools", turn=turn, calls=calls, answers=answers)
+            if not calls or any(c.get("name") == "answer" for c in calls):
                 break
-            names = [LANG_NAMES[lang] for lang in LANG_NAMES if any(call_lang(c) == lang for c in queries)]
-            progress.finish(f"Searching {' and '.join(names)} Wikipedia")
-            contents += [reply, {"role": "user", "parts": run_searches(cur, progress, request, queries, found)}]
+            contents += [reply, {"role": "user", "parts": [
+                {"functionResponse": {"name": c.get("name"), "response": answers[i], **({"id": c["id"]} if c.get("id") else {})}}
+                for i, c in enumerate(calls)]}]
     except AskError as error:
-        progress.finish(f"Searching other articles: stopped, {error}")
-    read = []
-    if progress.text is None:
-        progress.step("Choosing what to read")
-    opened = set()
-    for key in dict.fromkeys(i for i in chosen if i in found):
-        hit = found[key]
+        progress.finish(f"Looking things up: stopped, {error}")
+    listed = [f for key, f in found.items() if key not in read][:LISTED]
+    if progress.text is not None:
+        progress.finish("Answering from this article alone" if not (found or versions or then_now or facts.get("since") or "Disputed edits" in facts["log"])
+                        else f"Found {len(found)} articles; their passages are enough" if found and not read
+                        else "Answering from what was read")
+    return list(read.values()), listed, versions
+
+
+def connect():
+    """A MariaDB connection of its own for one tool call that runs beside others (app.py's is one per worker)."""
+    con = pymysql.connect(
+        host=os.environ.get("DB_HOST", "127.0.0.1"), port=int(os.environ.get("DB_PORT", 3309)),
+        user=os.environ.get("DB_USER", "wiki"), password=os.environ.get("DB_PASSWORD", "wiki"),
+        database=os.environ.get("DB_NAME", "wiki"), charset="utf8mb4", cursorclass=pymysql.cursors.DictCursor,
+        autocommit=True, ssl={"verify_mode": False} if os.environ.get("DB_SSL") == "1" else None)
+    cur = con.cursor()
+    cur.execute("SET time_zone = '+00:00'")
+    cur.execute(f"SET mhnsw_ef_search = {vector.EF_SEARCH}")
+    cur.execute(bm25.session_sql())
+    return con
+
+
+def together(work, items):
+    """work(cur, item) for each item at the same time, each on a connection of its own; the results in order. A
+    call that fails gives its exception as the result."""
+    def one(item):
         try:
-            read.append(foreign_article(cur, hit) if hit["lang"] != "fi"
-                        else {**version_at(cur, hit["page_id"], request["at"]), "page_id": hit["page_id"], "lang": "fi"})
-        except AskError:  # the article did not exist yet at that moment
-            continue
-        opened.add(key)
-        if len(read) == READ:
-            break
-    listed = [f for key, f in found.items() if key not in opened][:LISTED]
-    if not found:
-        progress.finish("Answering from this article alone" if not chosen else None)
-    elif read:
-        progress.finish(f"Reading {len(read)} of the {len(found)} articles found: " + "; ".join(r["title"] for r in read))
+            con = connect()
+            try:
+                return work(con.cursor(), item)
+            finally:
+                con.close()
+        except Exception as error:  # one failed call must not lose the others
+            return error
+    if not items:
+        return []
+    with ThreadPoolExecutor(len(items)) as pool:
+        return list(pool.map(one, items))
+
+
+def open_step(progress, text):
+    """A step for one tool call: the turn's "Deciding ..." step becomes it when that is still open."""
+    if progress.text is not None:
+        progress.update(text)
     else:
-        progress.finish(f"Found {len(found)} articles; none needs reading in full")
-    return read, listed
+        progress.step(text)
+
+
+def cut_paragraph(text, limit):
+    """text within limit characters, cut where a paragraph ends, with "…" when it is longer."""
+    if len(text) <= limit:
+        return text
+    cut = text.rfind("\n", 0, limit)
+    return text[:cut if cut > limit * 0.6 else limit].rstrip() + "\n…"
+
+
+def run_read(progress, request, args, found, read):
+    """The read tool: the texts of found articles, which also go to the writer of the answer in full. The articles
+    are fetched at the same time."""
+    open_step(progress, "Reading the articles")
+    ids = args.get("ids") if isinstance(args.get("ids"), list) else []
+    keys = list(dict.fromkeys(i for i in ids if isinstance(i, int)))
+    new = [k for k in keys if k in found and k not in read and k != request["page_id"]][:max(0, READ_MAX - len(read))]
+
+    def fetch(cur, key):
+        hit = found[key]
+        return foreign_article(cur, hit) if hit["lang"] != "fi" else {
+            **version_at(cur, hit["page_id"], request["at"]), "page_id": hit["page_id"], "lang": "fi"}
+    failed = {}
+    for key, article in zip(new, together(fetch, new)):
+        if isinstance(article, Exception):
+            failed[key] = ("the article did not exist yet at the moment the reader is on" if isinstance(article, AskError)
+                           else f"could not be read: {article}")
+        else:
+            read[key] = article
+    out, titles, budget = [], [], READ_CALL_CHARS
+    for key in keys:
+        if key == request["page_id"]:
+            out.append({"id": key, "note": "this is the article being read: the writer has it in full"})
+        elif key not in found:
+            out.append({"id": key, "error": "not a found article: search for it first"})
+        elif key not in read:
+            out.append({"id": key, "error": failed.get(key, f"not read: {READ_MAX} articles are read already")})
+        else:
+            text = cut_paragraph(read[key]["clean"].text, min(READ_CHARS, budget)) if budget > 1000 else ""
+            budget -= len(text)
+            titles.append(read[key]["title"])
+            out.append({"id": key, "title": read[key]["title"],
+                        "text": text or "(not shown: this call returned enough text; the writer gets the article)"})
+    progress.finish("Read " + ", ".join(titles) if titles else "Read no article")
+    return {"articles": out}
+
+
+def run_history(cur, progress, request, version, facts):
+    """The history tool: the edit facts of the article being read, with what its disputed edits changed."""
+    open_step(progress, f"Looking at the edit history of {version['title']}")
+    progress.finish(f"Looked at the edit history of {version['title']}")
+    if "Disputed edits" not in facts["log"]:
+        disputed_edits(cur, progress, request["page_id"], facts)
+    return {"edit_history": f"{facts['versions']} versions by {facts['editors']} editors since {day(facts['first'])}; "
+                            f"{facts['reverts']} reverts to an earlier text.\n{facts['log']}"}
+
+
+def run_since(cur, progress, request, version, args, facts):
+    """The since tool: the first version of the article being read that has the words."""
+    words = " ".join(str(args.get("words") or "").split())[:200]
+    if len(words) < 3 or words not in " ".join(version["text"].split()) and words not in version["text"]:
+        return {"error": "the version being read does not contain these exact words: pass words copied from its text"}
+    if progress.text is not None:  # first_version_with reports its own step
+        progress.finish(f"Looking through the versions of {version['title']}")
+    first = first_version_with(cur, progress, f"“{shorten(words, 40)}”", request["page_id"], version["row_start"], words)
+    found = (f"The words “{words}” first appear in the version of {day(first['row_start'])} by "
+             f"{first['user'] or 'an anonymous editor'}, comment: \"{first['comment']}\" (found by a binary search over the "
+             f"versions, which assumes they stayed once added).")
+    facts["log"] += "\n" + found
+    facts["since"] = True
+    return {"found": found}
+
+
+DATE = re.compile(r"^\s*(\d{4})(?:-(\d{1,2}))?(?:-(\d{1,2}))?\s*$")
+
+
+def run_version(cur, progress, request, version, args, found, versions, then_now):
+    """The version tool: an article as it was at the end of a day, a month or a year (FOR SYSTEM_TIME AS OF)."""
+    key = args.get("id") if isinstance(args.get("id"), int) else request["page_id"]
+    hit = found.get(key)
+    if key != request["page_id"] and not (hit and hit["lang"] == "fi"):
+        return {"error": "not a found Finnish article: only those have earlier versions here"}
+    page_id, title = (request["page_id"], version["title"]) if key == request["page_id"] else (hit["page_id"], hit["title"])
+    date = DATE.match(str(args.get("date") or ""))
+    try:
+        year, month, dom = (int(g) if g else None for g in date.groups())
+        moment = (datetime(year, month, dom, 23, 59, 59) if dom else datetime(year + month // 12, month % 12 + 1, 1)
+                  if month else datetime(year + 1, 1, 1))
+    except (AttributeError, ValueError):
+        return {"error": "date must be YYYY, YYYY-MM or YYYY-MM-DD"}
+    moment = min(moment, datetime.now(timezone.utc).replace(tzinfo=None))
+    cur.execute("SELECT rev_id, row_start FROM m_article FOR SYSTEM_TIME AS OF TIMESTAMP %s WHERE page_id = %s",
+                (moment.strftime("%Y-%m-%d %H:%M:%S.%f"), page_id))
+    at = cur.fetchone()
+    if at and page_id == request["page_id"] and at["rev_id"] in [v["rev_id"] for v in (version, *(then_now or ()))]:
+        return {"note": f"the writer already has that version ({day(at['row_start'])}) in full"}
+    open_step(progress, f"Reading {title} as it was on {day(moment)}")
+    try:
+        old = version_at(cur, page_id, moment)
+    except AskError:
+        progress.finish(f"{title} did not exist yet on {day(moment)}")
+        return {"error": "the article did not exist yet on that date"}
+    progress.finish(f"Read {title} as it was on {day(old['row_start'])}")
+    if not any(v["rev_id"] == old["rev_id"] for v in versions) and len(versions) < VERSIONS_MAX:
+        versions.append({**old, "page_id": page_id, "tag": f"@{old['row_start']:%Y-%m-%d}"})
+    return {"title": title, "version_of": day(old["row_start"]), "text": cut_paragraph(old["clean"].text, READ_CHARS)}
 
 
 LANG_NAMES = {"fi": "Finnish", "sv": "Swedish", "en": "English"}
@@ -399,14 +594,14 @@ def foreign_titled(cur, lang, query, limit):
     if not ranked:
         return []
     cur.execute("SELECT page_id, title, LEFT(text, %s) AS lead FROM s_article WHERE lang = %s AND page_id IN %s",
-                (search.LEAD_CHARS + 260, lang, [r["page_id"] for r in ranked]))
+                (snippets.TEXT_CHARS, lang, [r["page_id"] for r in ranked]))
     rows = {r["page_id"]: r for r in cur.fetchall()}
     hits = []
     for r in ranked:
         row = rows.get(r["page_id"])
         if row:
-            lead = " ".join(row["lead"].split()).removeprefix(f"# {row['title']} ")[:search.LEAD_CHARS]
-            hits.append({"page_id": row["page_id"], "lang": lang, "lead": lead,
+            lead = " ".join(row["lead"][:search.LEAD_CHARS + 260].split()).removeprefix(f"# {row['title']} ")[:search.LEAD_CHARS]
+            hits.append({"page_id": row["page_id"], "lang": lang, "lead": lead, "text": row["lead"], "name": row["title"],
                          "title": f"{row['title']} ({LANG_NAMES[lang]} Wikipedia)"})
     return hits
 
@@ -423,7 +618,7 @@ def foreign_article(cur, hit):
             "page_id": hit["page_id"], "lang": hit["lang"]}
 
 
-def research_block(request, version):
+def research_block(request, version, facts, then_now):
     """What Gemini sees while it searches: the start of the article, its headings, the talk so far, the question."""
     clean = version["clean"].text
     headings = "; ".join(plain(m.group(2)) for m in HEADING.finditer(clean))
@@ -433,49 +628,64 @@ def research_block(request, version):
     return (f"Article: {version['title']} (id {request['page_id']}), read as it was on {day(version['row_start'])}\n\n"
             f"Start of the article:\n<<<\n{clean[:ARTICLE_START]}\n>>>\n\nIts sections: {headings or 'none'}{passage}"
             + (f"\n\nThe conversation so far:{earlier}" if earlier else "")
+            + f"\n\nIts first version is of {day(facts['first'])}. Today is {day(datetime.now(timezone.utc))}."
+            + (f"\nThe writer already has two versions of the article to compare, of {day(then_now[0]['row_start'])} and "
+               f"of {day(then_now[1]['row_start'])}: for a question about what the article said then and says now, "
+               f"call answer at once." if then_now else "")
+            + ("\nThe writer already knows when the selected passage first appeared, who added it and with what edit "
+               "comment: for a question about that, call answer at once." if facts.get("passage_first") else "")
             + f"\n\nThe reader's question: {request['prompt']}")
 
 
-def run_searches(cur, progress, request, calls, found):
-    """Runs Gemini's search calls, adding new articles to found ({page_id: {page_id, title, lead}}); returns the
-    functionResponse parts. The questions are embedded together; MariaDB is asked one search at a time."""
-    queries = [str(c["args"]["query"]).strip()[:200] for c in calls]
-    with ThreadPoolExecutor(len(queries)) as pool:  # fills voyage's cache, so search.titled() below does not wait
-        list(pool.map(warm_embedding, queries, [call_lang(c) for c in calls]))
-    parts = []
-    for call, query in zip(calls, queries):
+def run_searches(progress, request, calls, found):
+    """Runs Gemini's search calls of one turn at the same time, adding new articles to found ({id: {page_id, title,
+    lead, passages, lang}}); returns each call's response: the articles, without the one being read, with the
+    passages that best match the query (snippets.py)."""
+    def limit_of(call):
         try:
-            limit = max(1, min(SEARCH_MAX, int(call["args"].get("limit") or SEARCH_LIMIT)))
+            return max(1, min(SEARCH_MAX, int(call["args"].get("limit") or SEARCH_LIMIT)))
         except (ValueError, TypeError):
-            limit = SEARCH_LIMIT
-        progress.step(f"Searching “{shorten(query, 70)}”")
-        lang = call_lang(call)
-        if lang == "fi":
-            hits = [{**h, "lang": "fi", "id": h["page_id"]} for h in search.titled(cur, query, limit + 1)
-                    if h["page_id"] != request["page_id"]][:limit]
-        else:  # their page ids are another wiki's: Gemini gets a negative number of this request's own
+            return SEARCH_LIMIT
+
+    def one(cur, call):
+        query, lang, limit = str(call["args"]["query"]).strip()[:200], call_lang(call), limit_of(call)
+        if lang != "fi":
             hits = foreign_titled(cur, lang, query, limit)
-            ids = {(f["lang"], f["page_id"]): key for key, f in found.items()}
-            for hit in hits:
-                hit["id"] = ids.get((lang, hit["page_id"])) or -(1 + sum(1 for key in found if key < 0))
-                found.setdefault(hit["id"], hit)
-        new = sum(1 for h in hits if h["id"] not in found or found[h["id"]] is h)
+        else:
+            hits = [{**h, "lang": "fi"} for h in search.titled(cur, query, limit + 1) if h["page_id"] != request["page_id"]][:limit]
+            if hits:
+                cur.execute("SELECT page_id, LEFT(text, %s) AS text FROM m_search WHERE page_id IN %s",
+                            (snippets.TEXT_CHARS, [h["page_id"] for h in hits]))
+                texts = {r["page_id"]: r["text"] for r in cur.fetchall()}
+                for hit in hits:
+                    hit["text"] = texts.get(hit["page_id"], "")
         for hit in hits:
-            found.setdefault(hit["id"], hit)
+            hit["passages"] = snippets.best(hit.pop("text", ""), query, hit.pop("name", hit["title"]), lang, skip=hit["lead"])
+        return hits
+    parts = []
+    for call, hits in zip(calls, together(one, calls)):
+        query = shorten(str(call["args"]["query"]).strip(), 70)
+        progress.step(f"Searching “{query}”")
+        if isinstance(hits, Exception):
+            progress.finish(f"Searched “{query}” → 0 articles")
+            parts.append({"error": f"the search failed: {hits}"})
+            continue
+        ids, new = {(f["lang"], f["page_id"]): key for key, f in found.items()}, 0
+        for hit in hits:
+            # Another wiki's page ids can equal Finnish ones: Gemini gets a negative number of this request's own.
+            hit["id"] = ids.get((hit["lang"], hit["page_id"])) or (
+                hit["page_id"] if hit["lang"] == "fi" else -(1 + sum(1 for key in found if key < 0)))
+            kept = found.setdefault(hit["id"], hit)
+            if kept is hit:
+                new += 1
+            else:  # found before by another query: its passages for this one are kept too
+                kept["passages"] = list(dict.fromkeys(kept["passages"] + hit["passages"]))[:3]
         names = "; ".join(h["title"] for h in hits[:6]) + ("…" if len(hits) > 6 else "")
-        progress.finish(f"Searched “{shorten(query, 70)}” → {len(hits)} article{'s' if len(hits) != 1 else ''}"
+        progress.finish(f"Searched “{query}” → {len(hits)} article{'s' if len(hits) != 1 else ''}"
                         + (f" ({new} new)" if new != len(hits) else "") + (f": {names}" if names else ""))
-        response = {"articles": [{"id": h["id"], "title": h["title"], "start": h["lead"]} for h in hits]}
-        parts.append({"functionResponse": {"name": "search_articles", "response": response,
-                                           **({"id": call["id"]} if call.get("id") else {})}})
+        parts.append({"articles": [{"id": h["id"], "title": h["title"], "start": h["lead"],
+                                    **({"passages": h["passages"]} if h["passages"] else {})} for h in hits]})
     return parts
-
-
-def warm_embedding(query, lang="fi"):
-    try:
-        vector.embed(query) if lang == "fi" else vector.embed_s(lang, query)
-    except vector.Unavailable:
-        pass  # the search itself goes on with keywords
 
 
 def gemini_tools(system, contents, allowed):
@@ -649,10 +859,11 @@ def article_block(version, context):
 
 
 def related_block(related, listed):
-    blocks = [f"Found article: {r['title']}" + (f" (version of {day(r['row_start'])})" if r["row_start"] else "") + f"\n<<<\n{r['clean'].text[:READ_CHARS]}\n>>>"
+    blocks = [f"Found article: {r['title']}" + (f" (version of {day(r['row_start'])})" if r["row_start"] else "") + f"\n<<<\n{cut_paragraph(r['clean'].text, READ_CHARS)}\n>>>"
               for r in related]
     if listed:
-        blocks.append("Also found (title: first words):\n" + "\n".join(f"- {f['title']}: {f['lead']}" for f in listed))
+        blocks.append("Also found (title: first words, then the passages that matched the search):\n" + "\n".join(
+            f"- {f['title']}: {f['lead']}" + "".join(f"\n    … {p}" for p in f["passages"]) for f in listed))
     return "\n\n".join(blocks)
 
 
@@ -662,7 +873,7 @@ def then_now_block(then, now):
             f"\n\nNOW: the version of {day(now['row_start'])} (revision {now['rev_id']}):\n<<<\n{now['clean'].text[:half]}\n>>>")
 
 
-def quotable(request, version, then_now, related, listed):
+def quotable(request, version, then_now, related, listed, versions=()):
     """The texts Gemini was given, as (title, Cleaned, link): a link opens a text other than the version being read."""
     def link(page_id, row_start):
         return f"./?id={page_id}&at={int(row_start.replace(tzinfo=timezone.utc).timestamp())}"
@@ -673,12 +884,15 @@ def quotable(request, version, then_now, related, listed):
         tagged[tag] = texts[-1] if v["rev_id"] != version["rev_id"] else texts[0]
     texts += [(r["title"], r["clean"], link(r["page_id"], r["row_start"]) if r["lang"] == "fi"
                else f"./?id={r['page_id']}&lang={r['lang']}") for r in related]
-    texts += [(f["title"], Cleaned(f["lead"]), f"./?id={f['page_id']}" + (f"&lang={f['lang']}" if f["lang"] != "fi" else ""))
-              for f in listed]
+    for v in versions:
+        texts.append((f"{v['title']} ({day(v['row_start'])})", v["clean"], link(v["page_id"], v["row_start"])))
+        tagged[v["tag"]] = texts[-1]
+    texts += [(f["title"], Cleaned("\n".join([f["lead"], *f["passages"]])),
+               f"./?id={f['page_id']}" + (f"&lang={f['lang']}" if f["lang"] != "fi" else "")) for f in listed]
     return texts, tagged
 
 
-def stream_answer(progress, request, version, facts, then_now, related, listed):
+def stream_answer(progress, request, version, facts, then_now, related, listed, versions=()):
     facts_text = (f"Edit facts up to this version: first version {day(facts['first'])}; {facts['versions']} versions; "
                   f"{facts['editors']} different editors; {facts['reverts']} versions restored an earlier text exactly "
                   f"(reverts); last edit {day(version['row_start'])} by {version['user'] or 'an anonymous editor'}, "
@@ -693,6 +907,9 @@ def stream_answer(progress, request, version, facts, then_now, related, listed):
     given = then_now_block(*then_now) if then_now else article_block(version, request["context"])
     if related or listed:
         given += "\n\n" + related_block(related, listed)
+    for v in versions:
+        given += (f"\n\nEarlier version: {v['title']} as it was on {day(v['row_start'])} (tag {v['tag']}):\n<<<\n"
+                  f"{v['clean'].text[:VERSION_CHARS]}\n>>>")
     contents = [{"role": "user", "parts": [{"text": given + "\n\n" + facts_text}]},
                 {"role": "model", "parts": [{"text": "I have read that version and its edit facts."}]}]
     contents += [{"role": "user" if h.get("role") == "user" else "model", "parts": [{"text": str(h["text"])}]}
@@ -700,10 +917,11 @@ def stream_answer(progress, request, version, facts, then_now, related, listed):
     contents.append({"role": "user", "parts": [{"text": request["prompt"]}]})
     length = "2 or 3 sentences" if request["narrow"] else "3 to 6 sentences"
     # A version is named when the reader is on an old one or asks about history, then and now, or the edits.
-    dated = bool(then_now or first or EDITS.search(request["prompt"]) or CHANGE.search(request["prompt"])
+    dated = bool(then_now or first or versions or facts.get("since") or EDITS.search(request["prompt"]) or CHANGE.search(request["prompt"])
                  or "Disputed edits" in facts["log"])
     rules = "\n".join([ASK_RULES.format(length=length, dated=DATED_RULE if dated else UNDATED_RULE), *([THEN_NOW_RULES] if then_now else []),
-                       *([RELATED_RULES] if related or listed else []), *([DISPUTE_RULES] if "Disputed edits" in facts["log"] else []), QUOTE_RULES,
+                       *([RELATED_RULES] if related or listed else []),
+                       *([VERSIONS_RULES] if versions else []), *([DISPUTE_RULES] if "Disputed edits" in facts["log"] else []), QUOTE_RULES,
                        *([THEN_NOW_QUOTE_RULES] if then_now else []), FACTS_QUOTE_RULES,
                        *([FOUND_QUOTE_RULES] if related or listed else [])])
     progress.step("Asking Gemini…")
@@ -715,7 +933,7 @@ def stream_answer(progress, request, version, facts, then_now, related, listed):
             continue
         progress.finish(f"Asked Gemini: first words after {time.perf_counter() - started:.1f} s")
         event(progress.handler, "message", value)
-    texts, tagged = quotable(request, version, then_now, related, listed)
+    texts, tagged = quotable(request, version, then_now, related, listed, versions)
     event(progress.handler, "sources", {"type": "quotes", "here": {"title": version["title"], "page_id": request["page_id"]},
                                         "items": article_quotes(texts, cited, facts_line, tagged)})
 
@@ -740,7 +958,7 @@ def until_quotes(pieces):
             buffer = buffer[keep:]
     if buffer.strip():
         yield "text", buffer.rstrip()
-    found = re.findall(r"^\s*\[(\d+)\]\s*(?:(THEN|NOW)\b[:,]?\s*)?(.+)$", block or "", re.M)
+    found = re.findall(r"^\s*\[(\d+)\]\s*(?:(THEN|NOW|@[\d-]+)(?![\w-])[:,]?\s*)?(.+)$", block or "", re.M)
     yield "quotes", [(int(n), q.strip().strip("\"'„“”«»"), tag) for n, tag, q in found]
 
 
@@ -753,6 +971,8 @@ def article_quotes(texts, cited, facts=None, tagged=None):
     of its section there. A quote that is the title of a linked text cites that article by its first sentence."""
     items, seen = [], set()
     titles = {title.casefold(): (title, clean, link) for title, clean, link in reversed(texts) if link}
+    # "Winter War" also names "Winter War (English Wikipedia)".
+    titles = {**{t.rsplit(" (", 1)[0]: v for t, v in titles.items() if t.endswith(" wikipedia)")}, **titles}
     first, tagged = texts[0], tagged or {}
     for n, quote, tag in cited:
         # A quote tagged THEN or NOW is looked for in that version first: both may have the sentence.
