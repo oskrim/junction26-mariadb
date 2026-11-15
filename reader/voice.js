@@ -77,6 +77,26 @@ const CONNECT_S = 20;
 const WEBRTC_S = 45;
 const MIC_BLOCKED = "the microphone is blocked. Allow it for this site, and on a Mac for the browser too (System Settings › Privacy & Security › Microphone), then reload";
 
+// Loads the voice client and fetches this conversation's credentials ahead of time (when a lesson is ready), so
+// pressing Talk only starts the microphone and connects. Credentials are used once and kept at most PREPARED_MS.
+const PREPARED_MS = 4 * 60 * 1000;
+let prepared = null;
+export function prepareTalk(context) {
+  const key = JSON.stringify(context);
+  if (prepared?.key === key && performance.now() - prepared.at < PREPARED_MS) return prepared.promise;
+  const promise = Promise.all([
+    import(CLIENT),
+    fetch(BASE + "/api/voice", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: key,
+    }).then(async (r) => (r.ok ? r.json() : Promise.reject(new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`)))),
+  ]);
+  prepared = { key, at: performance.now(), promise };
+  promise.catch(() => prepared?.promise === promise && (prepared = null));
+  return promise;
+}
+
 export async function startTalk({ context, onStatus, onMessage }) {
   const step = async (label, work, seconds = CONNECT_S) => {
     onStatus("connecting", label);
@@ -106,16 +126,8 @@ export async function startTalk({ context, onStatus, onMessage }) {
     tracks.forEach((t) => t.stop());
     if (dead) throw new Error(MIC_BLOCKED);
   });
-  const [{ VoiceConversation }, started] = await step("Loading the voice…", () =>
-    Promise.all([
-      import(CLIENT),
-      fetch(BASE + "/api/voice", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(context),
-      }).then(async (r) => (r.ok ? r.json() : Promise.reject(new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`)))),
-    ]),
-  );
+  const [{ VoiceConversation }, started] = await step("Loading the voice…", () => prepareTalk(context));
+  prepared = null; // its credentials are this conversation's now
   let mode = "listening";
   let connected = false;
   const callbacks = {

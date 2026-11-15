@@ -10,7 +10,7 @@ import { emphasis } from "./format.js";
 import { citeLinks, learn } from "./learn.js";
 import { stepsView } from "./steps.js";
 import { listenView } from "./learn-audio.js";
-import { startTalk } from "./voice.js";
+import { prepareTalk, startTalk } from "./voice.js";
 
 const W = 920;
 const EDGE = 16;
@@ -245,13 +245,7 @@ export function learnView({ article }) {
     const me = talk;
     try {
       const session = await startTalk({
-        context: {
-          page_id: article.page_id,
-          title: lesson.parsed.title ?? article.title,
-          article: document.querySelector(".body")?.innerText.slice(0, 6000) ?? "",
-          answer: lesson.text.replace(/^Terms:[\s\S]*$/m, "").replace(CITES, "").replace(/[{}#>]/g, ""),
-          sources: (lesson.sources?.items ?? []).map((s) => ({ title: s.title, why: s.why, text: s.text })),
-        },
+        context: talkContext(lesson),
         onStatus: (status, detail) => {
           if (talk !== me) return;
           if (status === "ended") finishTalk(detail);
@@ -294,7 +288,20 @@ export function learnView({ article }) {
     if (lesson === current && mode === "listen") renderThread();
   }
 
+  // What the voice agent is told about the lesson; the same object prepares the talk ahead of time.
+  function talkContext(lesson) {
+    return {
+      page_id: article.page_id,
+      title: lesson.parsed.title ?? article.title,
+      article: document.querySelector(".body")?.innerText.slice(0, 6000) ?? "",
+      answer: lesson.text.replace(/^Terms:[\s\S]*$/m, "").replace(CITES, "").replace(/[{}#>]/g, ""),
+      sources: (lesson.sources?.items ?? []).map((s) => ({ title: s.title, why: s.why, text: s.text })),
+    };
+  }
+
   function renderTalk() {
+    // A finished lesson gets its voice ready, so Talk connects without loading first.
+    if (!talk && current?.done) prepareTalk(talkContext(current)).catch(() => {});
     const on = !!talk;
     const label = !on ? "Talk" : talk.status === "connecting" ? "Connecting…" : "End";
     const status = !on
