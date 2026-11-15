@@ -21,6 +21,7 @@ if (foreign) {
   document.querySelector(".bar .search input").placeholder = `Search ${LANGUAGE_NAMES[lang]} articles`;
 }
 setUpViews();
+setUpToTop();
 // Enter in the top bar's search opens Find with what was typed, once the article view has set it up.
 const search = setUpSearch(document.querySelector(".bar .search"));
 const [articles, { version }] = await Promise.all([foreign ? [] : getArticles(id), getArticle(id, now(), lang)]);
@@ -318,4 +319,26 @@ async function renderPreview(link) {
       </div>`
     : "";
   return `${media}<div class="card-text">${preview.extract}</div>`;
+}
+
+// Article view: once the page is scrolled a screen down, a button at the lower right (like Explore's Back) takes
+// the reader back to the top. Not while "Watch it being written" has its bar at the bottom.
+function setUpToTop() {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "to-top";
+  button.hidden = true;
+  button.innerHTML = `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 10l5-5 5 5" /></svg>Top`;
+  button.addEventListener("click", () => scrollTo({ top: 0, behavior: "smooth" }));
+  document.body.append(button);
+  const update = () => {
+    const article = document.querySelector(".layout");
+    button.hidden = scrollY < innerHeight * 0.8 || !article || article.hidden || !!document.querySelector(".hp-dock");
+  };
+  addEventListener("scroll", update, { passive: true });
+  addEventListener("resize", update);
+  const watch = new MutationObserver(update);
+  watch.observe(document.body, { childList: true }); // the history player's dock comes and goes
+  const article = document.querySelector(".layout");
+  if (article) watch.observe(article, { attributes: true, attributeFilter: ["hidden"] }); // Explore and back
 }
