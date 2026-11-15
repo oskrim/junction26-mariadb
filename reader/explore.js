@@ -613,7 +613,8 @@ export async function mountExplore(root, { id }) {
       el.style.transform = `translate(${rect.x}px, ${rect.y}px) scale(${scale})`;
       // the pinned card is fully opaque, so no dot or title behind it shows through
       const depthFade = (n === centerId && !opened) || pinned(n) ? 1 : 0.62 + 0.38 * p.near;
-      el.style.opacity = visible ? point.a * (dimmed ? 0.3 : depthFade) : 0;
+      // with a link opened, the middle card fades back like the rest of the old ring
+      el.style.opacity = visible ? point.a * (dimmed || (opened && n === centerId) ? 0.3 : depthFade) : 0;
       el.style.zIndex = String(100 + priority(n) * 1000 + Math.round(p.near * 500));
       el.classList.toggle("is-hidden", !visible);
       el.classList.toggle("is-selected", n === selectedId);
