@@ -4,6 +4,9 @@ import { getArticle, getGraph, getPreview, now as currentTime } from "./api.js";
 // with around it, grouped by topic, and a fainter ring of articles one step further out.
 // Dots and lines are drawn on a canvas; the picture cards and topic labels are regular elements.
 
+// Articles about history ("historia" in the title) are always shown on top: their cards first and above the
+// others, their dots drawn last with their titles clear.
+const PINNED = /historia/i;
 const FIRST_YEAR = 2003;
 const LAST_YEAR = 2026;
 const MAX_CARDS = 12;
@@ -49,6 +52,7 @@ export async function mountExplore(root, { id }) {
   // The part of the link graph loaded so far: each article the map centers on or grows from brings
   // its own neighborhood.
   const nodes = new Map();
+  const pinned = (n) => PINNED.test(nodes.get(n)?.title ?? "");
   const links = new Map();
   const linksOut = new Set();
   const graphEdges = [];
@@ -336,8 +340,10 @@ export async function mountExplore(root, { id }) {
     ).filter(({ p }) => p?.thumbnail);
     const score = (n) => nodes.get(n).chars + 4000 * [...links.get(n)].filter((m) => nearSet.has(m)).length;
     withPictures.sort((a, b) => score(b.n) - score(a.n));
-    const chosen = [];
-    for (const group of Map.groupBy(withPictures, ({ n }) => topics[n]).values()) chosen.push(...group.slice(0, 2));
+    // History articles, when linked, get their cards first.
+    const chosen = withPictures.filter(({ n }) => pinned(n));
+    for (const group of Map.groupBy(withPictures, ({ n }) => topics[n]).values())
+      chosen.push(...group.slice(0, 2).filter((item) => !chosen.includes(item)));
     for (const item of withPictures) if (chosen.length < MAX_CARDS && !chosen.includes(item)) chosen.push(item);
     chosen.length = Math.min(chosen.length, MAX_CARDS);
     return chosen;
@@ -549,7 +555,7 @@ export async function mountExplore(root, { id }) {
       ctx.stroke();
     }
 
-    const order = [...projected].sort((a, b) => a[1].near - b[1].near);
+    const order = [...projected].sort((a, b) => pinned(a[0]) - pinned(b[0]) || a[1].near - b[1].near);
     for (const [n, p] of order) {
       const point = pos.get(n);
       if (point.a < 0.02 || placedCards.has(n)) continue;
@@ -578,7 +584,7 @@ export async function mountExplore(root, { id }) {
       ctx.textAlign = left ? "right" : "left";
       ctx.textBaseline = "middle";
       ctx.fillStyle = n === lit ? "rgb(51 102 204)" : "rgb(84 89 93)";
-      ctx.globalAlpha = point.a * (dimmed ? 0.2 : 0.85);
+      ctx.globalAlpha = point.a * (dimmed ? 0.2 : pinned(n) ? 1 : 0.85);
       ctx.fillText(label, p.x + (left ? -1 : 1) * (size + 5), p.y);
     }
     ctx.globalAlpha = 1;
@@ -586,8 +592,9 @@ export async function mountExplore(root, { id }) {
 
   // Nearer cards win; a card that would cover a nearer one steps back and shows as a dot instead.
   function placeCards(focusSet) {
+    // A history article's card is always shown, above every other card but the middle, chosen and hovered ones.
     const priority = (n) =>
-      n === centerId ? 3 : n === selectedId ? 2 : n === hoverId ? 1 : 0;
+      n === centerId ? 3 : n === selectedId ? 2 : n === hoverId ? 1 : pinned(n) ? 0.5 : 0;
     const list = [...cards].sort(
       ([a], [b]) => priority(b) - priority(a) || projected.get(b).near - projected.get(a).near,
     );
