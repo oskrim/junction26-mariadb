@@ -56,7 +56,6 @@ const DOCK = `
   <div class="hp-war" hidden></div>
   <div class="hp-row">
     <button type="button" class="hp-play" aria-label="Pause">${PAUSE}</button>
-    <button type="button" class="hp-speed" aria-label="Playback speed">1×</button>
     <div class="hp-when">
       <p class="hp-date">Loading history…</p>
       <p class="hp-who"></p>
@@ -118,7 +117,6 @@ export function startHistoryPlay({ id, body, onClose }) {
   addEventListener("scroll", onPageScroll, { passive: true });
   const $ = (selector) => dock.querySelector(selector) ?? side.querySelector(selector);
   const playButton = $(".hp-play");
-  const speedButton = $(".hp-speed");
 
   let frames = [];
   let edits = [];
@@ -1060,10 +1058,6 @@ export function startHistoryPlay({ id, body, onClose }) {
   addEventListener("wheel", onHands, { passive: true });
   addEventListener("touchmove", onHands, { passive: true });
   playButton.addEventListener("click", () => setPlaying(!playing));
-  speedButton.addEventListener("click", () => {
-    speed = SPEEDS[(SPEEDS.indexOf(speed) + 1) % SPEEDS.length];
-    speedButton.textContent = `${speed}×`;
-  });
   $(".hp-close").addEventListener("click", close);
 
   setUp().catch(() => {
