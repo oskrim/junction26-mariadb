@@ -165,13 +165,65 @@ def priors(cur, page_ids):
     return {r["page_id"]: prior(0, r["versions"]) for r in cur.fetchall()}
 
 
+# Of EXACT_BONUS, for an article whose title the query is an inflected form of. All of it: the main article on a
+# large subject is far from a one-word query in meaning (Helsinki: cosine 0.17 for "Helsingin"), and with less its
+# sub-articles ("Helsingin historia") stay above it.
+INFLECTED = 1.0
+# Finnish case endings a searched title carries ("talvisodan", "Helsingissä", "Kalevalasta", "Mannerheimin").
+CASE_ENDINGS = ("ssa", "ssä", "sta", "stä", "lla", "llä", "lta", "ltä", "lle", "ksi", "na", "nä", "ta", "tä",
+                "in", "en", "n", "a", "ä", "t")
+# Consonant gradation, weak grade (before the ending) to strong (in the title): sodan - sota, Helsingin - Helsinki.
+GRADES = (("d", "t"), ("ng", "nk"), ("mm", "mp"), ("nn", "nt"), ("ll", "lt"), ("rr", "rt"), ("v", "p"),
+          ("k", "kk"), ("p", "pp"), ("t", "tt"))
+GRADE_CHARS = 4  # the grade changes this close to the end of the stem
+
+
+def base_forms(q):
+    """The titles q may be an inflected form of, lowercase: q without a case ending, with the stem's end as in the
+    nominative (Suome-n: Suomi, Kekkose-n: Kekkonen, Sibeliukse-n: Sibelius) and its consonants in the strong
+    grade. A guess by rules: only the ones that are titles matter."""
+    asked = " ".join(q.lower().split())
+    forms = set()
+    for ending in CASE_ENDINGS:
+        stem = asked[:-len(ending)]
+        if not asked.endswith(ending) or len(stem) < 3:
+            continue
+        stems = {stem}
+        if stem.endswith("kse"):
+            stems.add(stem[:-3] + "s")
+        if stem.endswith("se"):
+            stems.add(stem[:-2] + "nen")
+        if stem.endswith("e"):
+            stems.add(stem[:-1] + "i")
+        for one in list(stems):
+            head, tail = one[:-GRADE_CHARS], one[-GRADE_CHARS:]
+            for weak, strong in GRADES:
+                at = tail.rfind(weak)
+                if at >= 0:
+                    stems.add(head + tail[:at] + strong + tail[at + len(weak):])
+        forms |= stems
+    return forms - {asked}
+
+
+def inflected(cur, q):
+    """The page ids of the articles q is an inflected form of the title of: Talvisota for "talvisodan", Helsinki
+    for "Helsingissä". The Snowball stems differ where the consonants change (sota, sodan), so BM25 alone finds
+    the sub-articles titled "Talvisodan …" and not the article itself."""
+    forms = base_forms(q)
+    if not forms:
+        return []
+    cur.execute("SELECT page_id, title FROM m_article_stats WHERE title IN %s", (sorted(forms),))
+    return [r["page_id"] for r in cur.fetchall() if r["title"].lower() in forms]  # the collation also finds "Türki"
+
+
 def lexical_ranking(cur, q, ids, limit):
     """{page_id: (bm25_body, bm25_title, exact)} of the article titled q (any case or accent, or with q's words
-    written together) and the limit articles with the highest lexical score for the terms ids, best first."""
+    written together; exact is True), else the ones q is an inflected form of (exact is INFLECTED), and the limit
+    articles with the highest lexical score for the terms ids, best first."""
     cur.execute("SELECT page_id FROM m_article_stats WHERE title IN %s", ([q, "".join(q.split())],))
-    exact = [r["page_id"] for r in cur.fetchall()]
-    found = {p: (b, t, True) for p, (b, t) in bm25.scores(cur, ids, exact).items()}
-    found.update((p, (0.0, 0.0, True)) for p in exact if p not in found)
+    exact = {r["page_id"]: True for r in cur.fetchall()} or {p: INFLECTED for p in inflected(cur, q)}
+    found = {p: (b, t, exact[p]) for p, (b, t) in bm25.scores(cur, ids, list(exact)).items()}
+    found.update((p, (0.0, 0.0, how)) for p, how in exact.items() if p not in found)
     for page_id, body, title in bm25.ranking(cur, ids, KAPPA_BODY, W_TITLE, KAPPA_TITLE, limit):
         found.setdefault(page_id, (body, title, False))
     return found

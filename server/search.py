@@ -22,7 +22,7 @@ LEAD_CHARS = 240  # of each article's plain text, for the assistant
 
 def words(q):
     """The words of a search query, at most MAX_WORDS of them."""
-    return re.findall(r"\w+", q)[:MAX_WORDS]
+    return re.findall(r"[^\W_]+", q)[:MAX_WORDS]
 
 
 def by(scored):
@@ -54,10 +54,41 @@ def _ranked(cur, q, limit, lang="fi"):
     # The words written together too: Finnish compounds are often searched apart ("Lapuan liike" for Lapuanliike).
     ids = bm25.term_ids(cur, " ".join(found) + (" " + "".join(found) if len(found) > 1 else ""))
     try:
-        return [{**r, "by": by(r)} for r in vector.hybrid(cur, q, ids, vector.embed(q), limit)]
+        results = [{**r, "by": by(r)} for r in vector.hybrid(cur, q, ids, vector.embed(q), limit)]
     except vector.Unavailable as error:
         print(f"search: keywords only: {error}", flush=True)
-        return [{"page_id": p, "by": "keyword"} for p in vector.lexical_only(cur, q, ids, limit)]
+        results = [{"page_id": p, "by": "keyword"} for p in vector.lexical_only(cur, q, ids, limit)]
+    return resolved(cur, results)
+
+
+REDIRECT = re.compile(r"#(?:REDIRECT|OHJAUS|UUDELLEENOHJAUS)\s*:?\s*\[\[\s*([^\]|#]+)", re.I)
+
+
+def resolved(cur, results):
+    """results with each redirect page replaced by the article it points to ("Ahvenanmaa" is a page that only says
+    #REDIRECT [[Ahvenanmaan maakunta]]), once; a redirect to an article that is not there is left out."""
+    if not results:
+        return results
+    cur.execute("SELECT page_id, LEFT(text, 300) AS start FROM m_search WHERE page_id IN %s AND text LIKE %s",
+                ([r["page_id"] for r in results], "#%"))
+    targets = {r["page_id"]: m.group(1).replace("_", " ").strip() for r in cur.fetchall()
+               if (m := REDIRECT.match(r["start"]))}
+    if not targets:
+        return results
+    cur.execute("SELECT page_id, title FROM m_article_stats WHERE title IN %s AND page_id NOT IN %s",
+                (list(set(targets.values())), list(targets)))
+    pages = {r["title"].lower(): r["page_id"] for r in cur.fetchall()}
+    out, seen = [], set()
+    for r in results:
+        if r["page_id"] in targets:
+            target = pages.get(targets[r["page_id"]].lower())
+            if target is None:
+                continue
+            r = {**r, "page_id": target}
+        if r["page_id"] not in seen:
+            seen.add(r["page_id"])
+            out.append(r)
+    return out
 
 
 def titled(cur, q, limit):

@@ -330,15 +330,23 @@ def previews(cur, params):
     return {title: preview_of(cur, title) for title in titles}
 
 
-NOT_PROSE = re.compile(r"^(#|\||!|>|[-*+] |\d+[.)] |(Pääartikkeli|Katso myös|Tämä artikkeli|Tämä on|Ei pidä sekoittaa)\b)", re.I)
+NOT_PROSE = re.compile(r"^(#|\||!|>|[-*+] |\d+[.)] |(Pääartikkeli|Katso myös|Tämä artikkeli|Tämä on|Ei pidä sekoittaa|"
+                       r"Tässä artikkelissa käytetään)\b)", re.I)
 
 
 def first_paragraph(markdown):
     """The first real paragraph of an S article's Markdown: no heading, table, image, list, hatnote ("Pääartikkeli:",
     "Tämä artikkeli käsittelee…") or fragment, with links as their text. Wikipedia's opening sentences are its best
     summary of an article. Empty when there is none."""
+    lines = []
     for line in markdown.splitlines():
         line = line.strip()
+        # A sentence broken before its bracket ("Pohjois-Atlantin liitto" / "(engl. …) eli Nato on …") is one line.
+        if line[:1] in ("(", ")", ",") and lines and lines[-1] and not NOT_PROSE.match(lines[-1]):
+            lines[-1] += ("" if line[0] in "),"  else " ") + line
+        else:
+            lines.append(line)
+    for line in lines:
         if not line or NOT_PROSE.match(line):
             continue
         text = " ".join(re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", line).replace("**", "").split())
@@ -376,8 +384,12 @@ SNIPPET_WIDTH = 200
 
 
 def lead(text, width):
-    """The first sentence of at least 40 characters, cut to width."""
-    end = next((m.end() for m in re.finditer(r"[.!?](?=\s+[A-ZÅÄÖ0-9]|\s*$)", text) if m.end() >= 40), len(text))
+    """The first sentence of at least 40 characters, cut to width. A full stop inside brackets is an abbreviation's
+    ("(engl. North Atlantic Treaty Organization, lyh. NATO)"), not the sentence's."""
+    def closed(end):
+        return text.count("(", 0, end) <= text.count(")", 0, end) and text.count("[", 0, end) <= text.count("]", 0, end)
+    end = next((m.end() for m in re.finditer(r"[.!?](?=\s+[A-ZÅÄÖ0-9]|\s*$)", text) if m.end() >= 40 and closed(m.end())),
+               len(text))
     sentence = text[:end]
     return sentence if len(sentence) <= width else sentence[:width].rsplit(" ", 1)[0] + "…"
 
@@ -429,6 +441,8 @@ def fold(text):
 
 
 MAX_WORDS = 8
+MAX_QUERY_CHARS = 2000  # of a pasted passage; the rest adds nothing to its words or its meaning
+MAX_RESULTS = 100
 STEM_FROM = 7  # in snippets, words this long or longer are also found by their stem
 # Swedish and English hatnotes ("För andra betydelser, se …", "This article is about …"), skipped in snippets.
 HATNOTE_S = re.compile(r"^(För andra betydelser|Denna artikel (handlar|behandlar)|Den här (sidan|artikeln) handlar|Ej att förväxla|"
@@ -460,7 +474,9 @@ def search_s(cur, lang, q, limit):
     marked = " ".join(w for w in words(q) if w.lower() not in STOPWORDS_S) or q
     results = []
     for r in ranked:
-        article = rows[r["page_id"]]
+        article = rows.get(r["page_id"])
+        if not article:  # a vector or index row of an article that is not loaded
+            continue
         shown = lead(first_paragraph_s(article["title"], article["text"]) or prose(article["text"]), SNIPPET_WIDTH)
         results.append({"page_id": r["page_id"], "title": article["title"], "snippet": shown,
                         "match": find(shown.rstrip("…"), marked), "by": r["by"], "lang": lang})
@@ -475,7 +491,8 @@ def search(cur, params):
     q = params.get("q", [""])[0].strip()
     if not q:
         raise BadRequest("q is required")
-    limit = number(params, "limit", 20)
+    q = q[:MAX_QUERY_CHARS]
+    limit = max(1, min(number(params, "limit", 20), MAX_RESULTS))
     lang = params.get("lang", ["fi"])[0]
     if params.get("rerank", ["0"])[0] == "1":  # Gemini orders the hybrid top RERANK_POOL: better, ~0.8 s slower
         pool = search(cur, {"q": [q], "lang": [lang], "limit": [str(max(limit, search_ranking.RERANK_POOL))]})
@@ -495,7 +512,9 @@ def search(cur, params):
     rows = {r["page_id"]: r for r in cur.fetchall()}
     results = []
     for r in ranked:
-        article = rows[r["page_id"]]
+        article = rows.get(r["page_id"])
+        if not article:  # a vector or index row of an article that is not loaded
+            continue
         # The snippet is the start of the article's first paragraph, with the query marked when it is there.
         text = (first_paragraph(article["text"]) or prose(article["text"])) if article["format"] == "markdown" \
             else unwiki(article["text"])
