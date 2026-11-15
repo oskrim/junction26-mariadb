@@ -181,10 +181,18 @@ def feed(folder, watch, workers=1):
         body = data[4 + size:]
         rows = [(p, head["model"], t, body[i * BYTES:(i + 1) * BYTES])
                 for i, (p, t) in enumerate(zip(head["ids"], head["tokens"]))]
-        for at in range(0, len(rows), INSERT):
-            k.executemany("""INSERT IGNORE INTO article_vector_voyage (page_id, model, tokens, embedding)
-                             VALUES (%s, %s, %s, %s)""", rows[at:at + INSERT])
-        c.commit()
+        for attempt in range(20):  # loaders at once can deadlock on the vector index: that shard starts over
+            try:
+                for at in range(0, len(rows), INSERT):
+                    k.executemany("""INSERT IGNORE INTO article_vector_voyage (page_id, model, tokens, embedding)
+                                     VALUES (%s, %s, %s, %s)""", rows[at:at + INSERT])
+                c.commit()
+                break
+            except Exception as error:
+                c.rollback()
+                if "Deadlock" not in str(error) or attempt == 19:
+                    raise
+                time.sleep(0.2 * (attempt + 1))
         with lock:
             with open(ledger, "a") as f:
                 f.write(path.name + "\n")
