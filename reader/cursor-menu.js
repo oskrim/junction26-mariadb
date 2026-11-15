@@ -141,8 +141,10 @@ export function cursorMenu({ root, onSubmit, onFind = null }) {
     // A passage painted in a paragraph written in from another language (fill-in.js) carries that language, so
     // Ask also searches that Wikipedia.
     const node = paint?.range.commonAncestorContainer;
-    const contextLang = (node?.nodeType === 1 ? node : node?.parentElement)?.closest(".fill-in[data-lang], [data-lang]")?.dataset.lang ?? null;
-    onSubmit({ mode: mode.id, label: mode.label, prompt: typed || mode.fallback, typed, context: paint?.text ?? null, contextLang, from });
+    const filled = (node?.nodeType === 1 ? node : node?.parentElement)?.closest("[data-lang]");
+    const contextLang = filled?.dataset.lang ?? null;
+    const contextSource = filled?.dataset.sourceUrl ? { url: filled.dataset.sourceUrl, original: filled.dataset.original ?? "" } : null;
+    onSubmit({ mode: mode.id, label: mode.label, prompt: typed || mode.fallback, typed, context: paint?.text ?? null, contextLang, contextSource, from });
     close({ keepPaint: true });
   });
 

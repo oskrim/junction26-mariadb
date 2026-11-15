@@ -18,6 +18,7 @@ import difflib
 import json
 import os
 import re
+from urllib.parse import unquote
 import time
 import urllib.error
 import urllib.request
@@ -320,7 +321,12 @@ def parse(handler):
         raise AskError(400, f"bad request: {error}")
     # the language of the paragraph the selected passage is in, when it was written in from another Wikipedia
     context_lang = body.get("context_lang") if body.get("context_lang") in ("sv", "en") else None
+    # and the article it was translated from, as its Wikipedia URL
+    given = body.get("context_source") if isinstance(body.get("context_source"), dict) else {}
+    source = re.fullmatch(r"https://(sv|en)\.wikipedia\.org/wiki/([^#]+)(?:#.*)?", str(given.get("url") or ""))
+    context_source = (source[1], unquote(source[2]).replace("_", " "), str(given.get("original") or "")[:3000]) if source else None
     return {"mode": mode, "prompt": prompt, "context": body.get("context") or None, "context_lang": context_lang,
+            "context_source": context_source,
             "page_id": page_id, "at": at, "history": history, "narrow": width < NARROW_W}
 
 
@@ -391,10 +397,11 @@ def research(cur, progress, request, version, facts, then_now):
     TOOL_ROUNDS turns, several calls a turn; the calls of one turn run at the same time. Nothing is gathered when
     Gemini does not answer."""
     found, read, versions, searched = {}, {}, [], 0
+    read_source(cur, progress, request, found, read)
     if EDITS.search(request["prompt"]):
         progress.step("Answering from this article and its edit history")
         progress.finish()
-        return [], [], []
+        return list(read.values()), [], []
     contents = [{"role": "user", "parts": [{"text": research_block(request, version, facts, then_now)}]}]
     try:
         for turn in range(TOOL_ROUNDS):
@@ -626,13 +633,46 @@ def foreign_article(cur, hit):
             "page_id": hit["page_id"], "lang": hit["lang"]}
 
 
+def read_source(cur, progress, request, found, read):
+    """A passage translated in from another Wikipedia: that article is read before anything else, as found id -1."""
+    if not request.get("context_source"):
+        return
+    lang, title, _ = request["context_source"]
+    cur.execute("SELECT page_id, LEFT(text, %s) AS lead FROM s_article WHERE lang = %s AND title = %s LIMIT 1",
+                (search.LEAD_CHARS + 260, lang, title))
+    row = cur.fetchone()
+    if not row:
+        return
+    hit = {"page_id": row["page_id"], "lang": lang, "title": f"{title} ({LANG_NAMES[lang]} Wikipedia)", "passages": [],
+           "lead": " ".join(row["lead"].split()).removeprefix(f"# {title} ")[:search.LEAD_CHARS]}
+    found[-1] = hit
+    read[-1] = foreign_article(cur, hit)
+    progress.step(f"Read {hit['title']}, where the passage was translated from")
+    progress.finish()
+
+
+def source_note(request):
+    """What to know about a selected passage that was translated in from another Wikipedia."""
+    if not request.get("context_source"):
+        return ""
+    lang, title, original = request["context_source"]
+    return (f"\nThis passage is not part of the Finnish article: the reader's page shows it as a Finnish translation of "
+            f"a paragraph of the {LANG_NAMES[lang]} Wikipedia article “{title}”, which this Finnish article lacks. "
+            f"That article is given as a found article, “{title} ({LANG_NAMES[lang]} Wikipedia)”. Asked where the "
+            f"passage comes from or what it is based on, say first that it is translated from that article, with a marker "
+            f"citing a short excerpt of the matching original sentence, then what that article itself says or cites "
+            f"about it. Don't say the passage is missing from the article."
+            + (f"\nThe original {LANG_NAMES[lang]} paragraph, as it stands in “{title}”:\n<<<\n{original}\n>>>" if original else ""))
+
+
 def research_block(request, version, facts, then_now):
     """What Gemini sees while it searches: the start of the article, its headings, the talk so far, the question."""
     clean = version["clean"].text
     headings = "; ".join(plain(m.group(2)) for m in HEADING.finditer(clean))
     passage = f"\n\nThe reader selected this passage and asks about it:\n<<<\n{request['context']}\n>>>" if request["context"] else ""
     if passage and request.get("context_lang"):
-        passage += (f"\n(The passage is translated from {LANG_NAMES[request['context_lang']]} Wikipedia; every search also "
+        passage += (source_note(request) + " It has been read already (id -1)." if request.get("context_source") else
+                    f"\n(The passage is translated from {LANG_NAMES[request['context_lang']]} Wikipedia; every search also "
                     f"runs there, and its articles are worth reading.)")
     earlier = "".join(f"\n{'Reader' if h.get('role') == 'user' else 'Answer'}: {shorten(str(h['text']), 600)}"
                       for h in request["history"])
@@ -875,9 +915,9 @@ class Cleaned:
         return self.original[self.origin(start):self.origin(start + len(needle), end=True)] if start >= 0 else None
 
 
-def article_block(version, context):
+def article_block(version, context, note=""):
     text = version["clean"].text[:MAX_TEXT]
-    passage = f"\n\nThe reader selected this passage and asks about it:\n<<<\n{context}\n>>>" if context else ""
+    passage = f"\n\nThe reader selected this passage and asks about it:\n<<<\n{context}\n>>>{note}" if context else ""
     return (f"Article: {version['title']}\nVersion read: {day(version['row_start'])} "
             f"(revision {version['rev_id']} by {version['user'] or 'an anonymous editor'})"
             f"{passage}\n\nArticle wikitext of that version:\n<<<\n{text}\n>>>")
@@ -929,7 +969,7 @@ def stream_answer(progress, request, version, facts, then_now, related, listed, 
         facts_line += f"; the selected passage is there since {day(first['row_start'])}"
         facts_text += (f"\nThe selected passage first appears in the version of {day(first['row_start'])} "
                        f"by {first['user'] or 'an anonymous editor'}, comment: \"{first['comment']}\".")
-    given = then_now_block(*then_now) if then_now else article_block(version, request["context"])
+    given = then_now_block(*then_now) if then_now else article_block(version, request["context"], source_note(request))
     if related or listed:
         given += "\n\n" + related_block(related, listed)
     for v in versions:

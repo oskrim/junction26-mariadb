@@ -165,6 +165,7 @@ function writeIn(heading, section, popover, msPerParagraph = MS_PER_PARAGRAPH, {
     el.className = "fill-in fill-p";
     el.dataset.lang = section.lang;
     el.dataset.sourceUrl = section.source_url;
+    el.dataset.original = p.text; // Ask is told the original paragraph of a passage selected in it
     el.tabIndex = 0;
     el.addEventListener("mouseenter", () => el.classList.contains("is-done") && popover.show(el, p.text, section.lang));
     el.addEventListener("focus", () => el.classList.contains("is-done") && popover.show(el, p.text, section.lang));

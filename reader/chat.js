@@ -126,10 +126,10 @@ export function chatPanel({ article, onClose }) {
   }
 
   // A request from the menu: a new chat, opened beside where it came from.
-  function ask({ mode, label, prompt, context, contextLang, from }) {
+  function ask({ mode, label, prompt, context, contextLang, contextSource, from }) {
     const chat = create({ title: shorten(prompt, 38) });
     show(chat, { from });
-    send(chat, { mode, label, prompt, context, contextLang });
+    send(chat, { mode, label, prompt, context, contextLang, contextSource });
   }
 
   function create({ title }) {
@@ -175,7 +175,7 @@ export function chatPanel({ article, onClose }) {
     onClose?.();
   }
 
-  async function send(chat, { mode, label, prompt, context, contextLang = null }) {
+  async function send(chat, { mode, label, prompt, context, contextLang = null, contextSource = null }) {
     chat.busy = true;
     chat.label ??= label;
     if (chat.turn === 0) {
@@ -199,7 +199,7 @@ export function chatPanel({ article, onClose }) {
     let text = "";
     // However the answer ends, the chat takes the next message: a broken stream must not leave it busy for good.
     try {
-      const { stream, attachment } = (mode === "learn" ? learn : respond)({ mode, prompt, context, contextLang, article, turn: chat.turn, history: (chat.history ??= []), onStep });
+      const { stream, attachment } = (mode === "learn" ? learn : respond)({ mode, prompt, context, contextLang, contextSource, article, turn: chat.turn, history: (chat.history ??= []), onStep });
       chat.turn++;
       for await (const piece of stream) {
         text += piece;
