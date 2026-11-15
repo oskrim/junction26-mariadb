@@ -547,7 +547,7 @@ export async function mountExplore(root, { id }) {
         ctx.globalAlpha = 0.3 * alpha;
       } else {
         ctx.strokeStyle = "rgb(32 33 34)";
-        ctx.globalAlpha = alpha * (fromCenter ? spokeAlpha : 0.09) * (0.5 + 0.5 * (pa.near + pb.near) / 2) * (focusSet ? 0.4 : 1);
+        ctx.globalAlpha = alpha * (fromCenter ? spokeAlpha : 0.09) * (0.5 + 0.5 * (pa.near + pb.near) / 2) * (focusSet ? (trail.length ? 0.12 : 0.4) : 1);
       }
       ctx.beginPath();
       ctx.moveTo(pa.x, pa.y);
@@ -563,7 +563,9 @@ export async function mountExplore(root, { id }) {
       const size = (2 + Math.sqrt(nodes.get(n).chars) / 90) * (p.s / (FOCAL / fitDist)) * (h === 2 ? 0.85 : 1.1);
       const shade = Math.round(36 + (1 - p.near) * 150 + (h === 2 ? 40 : 0));
       const dimmed = focusSet && !focusSet.has(n);
-      ctx.globalAlpha = point.a * (dimmed ? 0.25 : 1);
+      // with a link opened, the rest of the old map all but disappears: faint dots, no titles
+      const gone = dimmed && trail.length > 0;
+      ctx.globalAlpha = point.a * (gone ? 0.08 : dimmed ? 0.25 : 1);
       ctx.fillStyle = focusSet?.has(n) && n !== lit ? "rgb(51 102 204)" : `rgb(${shade} ${shade + 2} ${shade + 5})`;
       ctx.beginPath();
       ctx.arc(p.x, p.y, n === lit ? size + 2 : size, 0, Math.PI * 2);
@@ -584,6 +586,7 @@ export async function mountExplore(root, { id }) {
       ctx.textAlign = left ? "right" : "left";
       ctx.textBaseline = "middle";
       ctx.fillStyle = n === lit ? "rgb(51 102 204)" : "rgb(84 89 93)";
+      if (gone) continue;
       ctx.globalAlpha = point.a * (dimmed ? 0.2 : pinned(n) ? 1 : 0.85);
       ctx.fillText(label, p.x + (left ? -1 : 1) * (size + 5), p.y);
     }
@@ -607,7 +610,8 @@ export async function mountExplore(root, { id }) {
       const scale = clamp(p.s / (FOCAL / fitDist), 0.7, 1.15) * (n === centerId ? (opened ? 0.6 : 1) : 0.92 + 0.08 * p.near);
       const rect = { x: p.x - (el.w * scale) / 2, y: p.y - (el.h * scale) / 2, w: el.w * scale, h: el.h * scale };
       const covered = [...placed.values()].some((r) => overlaps(r, rect, -14));
-      const visible = point.a > 0.3 && (!covered || priority(n) > 0);
+      // with a link opened, the old ring's cards go (the middle one stays, faded)
+      const visible = point.a > 0.3 && (!covered || priority(n) > 0) && !(opened && focusSet && !focusSet.has(n) && n !== centerId);
       if (visible) placed.set(n, rect);
       const dimmed = focusSet && !focusSet.has(n);
       el.style.transform = `translate(${rect.x}px, ${rect.y}px) scale(${scale})`;
@@ -645,7 +649,7 @@ export async function mountExplore(root, { id }) {
       }
       rects.push(rect);
       pill.el.style.transform = `translate(${rect.x}px, ${rect.y}px)`;
-      pill.el.style.opacity = focusOn() ? 0.35 : 0.75 + 0.25 * p.near;
+      pill.el.style.opacity = trail.length ? 0 : focusOn() ? 0.35 : 0.75 + 0.25 * p.near;
     }
   }
 
