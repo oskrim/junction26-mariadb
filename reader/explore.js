@@ -476,7 +476,9 @@ export async function mountExplore(root, { id }) {
   // Smart zoom: the ring always fills the free space beside the panel, whatever the article's size.
   function fitView() {
     fitDist = (FOCAL * (RING * 1.15 + 40)) / freeRadius();
-    cam.distTo = fitDist;
+    // with a link opened, the view stays fitted to that branch alone
+    if (selectedId !== null && selectedId !== centerId && trail.length) focusBranch(selectedId);
+    else cam.distTo = fitDist;
   }
 
   // Half the size of the space beside the panel, in pixels.
@@ -492,9 +494,10 @@ export async function mountExplore(root, { id }) {
       (m) => target.get(m),
     );
     const middle = average(points);
-    const reach = Math.max(180, ...points.map((p) => Math.hypot(p.x - middle.x, p.y - middle.y)));
+    // fitted to the branch alone (the old map around it doesn't count), with just room for the titles
+    const reach = Math.max(110, ...points.map((p) => Math.hypot(p.x - middle.x, p.y - middle.y)));
     cam.focusTo = middle;
-    cam.distTo = (FOCAL * (reach + 150)) / freeRadius();
+    cam.distTo = (FOCAL * (reach + 30)) / freeRadius();
   }
 
   // The panel covers the right side on wide screens, so the map centers in the space beside it.
