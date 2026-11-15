@@ -8,10 +8,13 @@ Only Finnish vectors are searched: every article the app can open has one. Swedi
 for cross-language features; both models are multilingual, so an English question already finds Finnish text.
 """
 import json
+import math
 import os
 from typing import NamedTuple
 import urllib.error
 import urllib.request
+
+import pymysql
 
 import bm25
 import voyage
@@ -36,9 +39,9 @@ class Space(NamedTuple):
 
 
 # bge-m3 gives unrelated texts a cosine of about 0.4. A voyage-4-large question gives 200 random articles a median
-# of 0.05 and a 95th percentile of 0.07-0.23, and its best matches 0.4-0.6; the weight gives those what bge-m3's get.
+# of 0.05 and a 95th percentile of 0.07-0.23, and its best matches 0.4-0.6; its weight is tuned with search_eval.py.
 BGE = Space("article_vector", "lang = 'fi'", 4, 0.4)
-VOYAGE = Space("article_vector_voyage", "TRUE", 3, 0.15)
+VOYAGE = Space("article_vector_voyage", "TRUE", 8, 0.15)
 VECTOR_MODEL = os.environ.get("VECTOR_MODEL", "bge")
 SPACE = VOYAGE if VECTOR_MODEL == "voyage" else BGE
 
@@ -99,19 +102,62 @@ def count(cur):
     return cur.fetchone()["n"]
 
 
-# Hybrid search: a linear sum of saturated scores (server/README.md). Each raw BM25 score x becomes x / (kappa + x),
-# 0.5 at x = kappa: about the median BM25 score of the top 50 articles over the example queries in server/README.md.
+# Hybrid search: a plain weighted sum (server/README.md, tuned with search_eval.py)
+#
+#     body / (KAPPA_BODY + body) + W_TITLE * title / (KAPPA_TITLE + title) + EXACT_BONUS * exact
+#         + space.weight * max(0, cosine - space.floor) + prior
+#
+# over the union of the best LEXICAL_CANDIDATES of the BM25 index and the nearest HYBRID_CANDIDATES of the vector
+# index; every candidate gets both its BM25 scores and its cosine. Each raw BM25 score x is saturated to
+# x / (kappa + x), 0.5 at x = kappa: about the median BM25 score of the top 50 articles. The prior says how much of
+# an article there is (its length and, for the articles with history, how often it was edited): among articles that
+# match alike, the main one on the subject comes first ("Mannerheim" finds the marshal, not the film project).
+#
+# Measured on the 42 Finnish queries of search_eval.py (hit@1 / hit@5 / MRR), candidates 200 + 200:
+#     the sum without the prior, vector weight 3    0.43 / 0.60 / 0.49   (+ the keyword gate: 0.45 / 0.64 / 0.55)
+#     the sum without the prior, vector weight 8    0.55 / 0.69 / 0.60   (+ the gate: the same)
+#     with the prior                                0.76 / 0.95 / 0.83   (+ the gate: 0.74 / 0.93 / 0.81)
+# so there is no gate. 50 vector candidates instead of 200 cost 0.03 MRR; 400 + 400 gave nothing over 200 + 200.
 KAPPA_BODY, KAPPA_TITLE = 10, 8
+W_TITLE = 0.5
 EXACT_BONUS = 3  # more than every other term together: the article titled as the query comes first
 LEXICAL_CANDIDATES = 200  # from the BM25 index
-HYBRID_CANDIDATES = 50  # from the vector index
-MIN_GATE = 0.1  # the share of its keyword score an article unrelated in meaning keeps
+HYBRID_CANDIDATES = 200  # from the vector index; no more than EF_SEARCH
+W_LENGTH = 1.0  # for a text of 100,000 characters or more; 0 for 1,000 or fewer, by the logarithm between
+W_VERSIONS = 0.3  # for each power of ten of versions in the edit history
+WORD_CHARS = 7  # about the characters per word, where only the word count is known
 
 
 def lexical(body, title, exact):
     """The lexical score of an article from its BM25 scores in its text and its title, and whether its title is
     the query."""
-    return body / (KAPPA_BODY + body) + title / (KAPPA_TITLE + title) + EXACT_BONUS * exact
+    return body / (KAPPA_BODY + body) + W_TITLE * title / (KAPPA_TITLE + title) + EXACT_BONUS * exact
+
+
+def prior(chars, versions=1):
+    """The score an article gets for its size alone: its text length in characters and its number of versions."""
+    return (W_LENGTH * min(1.0, max(0.0, (math.log10(max(chars or 0, 1)) - 3) / 2))
+            + W_VERSIONS * math.log10(max(versions or 1, 1)))
+
+
+_no_lengths = False  # m_search_length is missing: lengths are not asked for again
+
+
+def priors(cur, page_ids):
+    """{page_id: prior} of Finnish articles, from m_search_length and m_article_stats.versions."""
+    global _no_lengths
+    if not page_ids:
+        return {}
+    if not _no_lengths:
+        try:
+            cur.execute("""SELECT s.page_id, s.versions, l.chars FROM m_article_stats s
+                           LEFT JOIN m_search_length l USING (page_id) WHERE s.page_id IN %s""", (list(page_ids),))
+            return {r["page_id"]: prior(r["chars"], r["versions"]) for r in cur.fetchall()}
+        except pymysql.err.ProgrammingError as error:  # built by `load.py bm25`; without it, versions alone
+            print(f"vector: no article lengths: {error}", flush=True)
+            _no_lengths = True
+    cur.execute("SELECT page_id, versions FROM m_article_stats WHERE page_id IN %s", (list(page_ids),))
+    return {r["page_id"]: prior(0, r["versions"]) for r in cur.fetchall()}
 
 
 def lexical_ranking(cur, q, ids, limit):
@@ -121,18 +167,19 @@ def lexical_ranking(cur, q, ids, limit):
     exact = [r["page_id"] for r in cur.fetchall()]
     found = {p: (b, t, True) for p, (b, t) in bm25.scores(cur, ids, exact).items()}
     found.update((p, (0.0, 0.0, True)) for p in exact if p not in found)
-    for page_id, body, title in bm25.ranking(cur, ids, KAPPA_BODY, KAPPA_TITLE, limit):
+    for page_id, body, title in bm25.ranking(cur, ids, KAPPA_BODY, W_TITLE, KAPPA_TITLE, limit):
         found.setdefault(page_id, (body, title, False))
     return found
 
 
+def lexical_only(cur, q, ids, limit):
+    """Without vectors: the page ids of the limit best by lexical score and prior."""
+    found = lexical_ranking(cur, q, ids, LEXICAL_CANDIDATES)
+    return [r["page_id"] for r in combine(found, {}, SPACE, limit, priors(cur, found))]
+
+
 def hybrid(cur, q, ids, query, limit):
-    """The limit best of the lexical top LEXICAL_CANDIDATES and the vector top HYBRID_CANDIDATES, each scored
-
-        gate * lexical(bm25_body, bm25_title) + EXACT_BONUS * exact + space.weight * max(0, cosine - space.floor)
-
-    where gate (0.1 to 1) is the article's cosine next to the best one's
-
+    """The limit best of the lexical top LEXICAL_CANDIDATES and the vector top HYBRID_CANDIDATES by the sum above,
     as [{page_id, body, title, exact, cosine, meaning, score}], with meaning = cosine > space.floor. ids are q's
     bm25_term ids, query its Query."""
     space = query.space
@@ -141,30 +188,22 @@ def hybrid(cur, q, ids, query, limit):
                     JOIN m_article_stats s USING (page_id)""", (query.vector, HYBRID_CANDIDATES))
     cosines = {r["page_id"]: r["cosine"] for r in cur.fetchall()}
     found.update((p, (b, t, False)) for p, (b, t) in bm25.scores(cur, ids, [p for p in cosines if p not in found]).items())
-    lexical_only = [p for p in found if p not in cosines]
-    if lexical_only:
+    unmeasured = [p for p in found if p not in cosines]
+    if unmeasured:
         cur.execute(f"""SELECT page_id, 1 - VEC_DISTANCE_COSINE(embedding, VEC_FromText(%s)) AS cosine
-                        FROM {space.table} WHERE {space.rows} AND page_id IN %s""", (query.vector, lexical_only))
+                        FROM {space.table} WHERE {space.rows} AND page_id IN %s""", (query.vector, unmeasured))
         cosines.update((r["page_id"], r["cosine"]) for r in cur.fetchall())
-    return combine(found, cosines, space, limit)
+    return combine(found, cosines, space, limit, priors(cur, found.keys() | cosines.keys()))
 
 
-def combine(found, cosines, space, limit):
-    """hybrid()'s scores of the articles in found ({page_id: (body, title, exact)}) and cosines ({page_id: cosine}),
-    the limit best."""
-    # Keyword matches count in proportion to how close in meaning they are, next to the closest article: a title
-    # that only shares a word with the question ("Epica" for "epic poems", "The Who" for "who led the Reds") keeps
-    # a tenth of its keyword score. An exact title keeps its bonus, and an article without a vector is not judged.
-    top = max(cosines.values(), default=0.0)
+def combine(found, cosines, space, limit, priors):
+    """The sum above for the articles in found ({page_id: (body, title, exact)}), cosines ({page_id: cosine}) and
+    priors ({page_id: prior}), the limit best."""
     scored = []
     for page_id in found.keys() | cosines.keys():
         body, title, exact = found.get(page_id, (0.0, 0.0, False))
         cosine = cosines.get(page_id, 0.0)
-        if page_id in cosines and top > space.floor:
-            gate = MIN_GATE + (1 - MIN_GATE) * min(1.0, max(0.0, (cosine - space.floor) / (top - space.floor)))
-        else:
-            gate = 1.0
-        score = gate * lexical(body, title, False) + EXACT_BONUS * exact + space.weight * max(0.0, cosine - space.floor)
+        score = lexical(body, title, exact) + space.weight * max(0.0, cosine - space.floor) + priors.get(page_id, 0.0)
         scored.append({"page_id": page_id, "body": body, "title": title, "exact": exact, "cosine": cosine,
                        "meaning": cosine > space.floor, "score": score})
     scored.sort(key=lambda r: (-r["score"], r["page_id"]))
@@ -199,9 +238,23 @@ def lexical_ranking_s(cur, lang, q, ids, limit):
     exact = [r["page_id"] for r in cur.fetchall()]
     found = {p: (b, t, True) for p, (b, t) in bm25.scores_s(cur, lang, ids, exact).items()}
     found.update((p, (0.0, 0.0, True)) for p in exact if p not in found)
-    for page_id, body, title in bm25.ranking_s(cur, lang, ids, KAPPA_BODY, KAPPA_TITLE, limit):
+    for page_id, body, title in bm25.ranking_s(cur, lang, ids, KAPPA_BODY, W_TITLE, KAPPA_TITLE, limit):
         found.setdefault(page_id, (body, title, False))
     return found
+
+
+def priors_s(cur, lang, page_ids):
+    """{page_id: prior} of lang's S articles, from their word counts in article_language."""
+    if not page_ids:
+        return {}
+    cur.execute("SELECT page_id, words FROM article_language WHERE lang = %s AND page_id IN %s", (lang, list(page_ids)))
+    return {r["page_id"]: prior(r["words"] * WORD_CHARS) for r in cur.fetchall()}
+
+
+def lexical_only_s(cur, lang, q, ids, limit):
+    """lexical_only() over lang's S articles."""
+    found = lexical_ranking_s(cur, lang, q, ids, LEXICAL_CANDIDATES)
+    return [r["page_id"] for r in combine(found, {}, SPACE, limit, priors_s(cur, lang, found))]
 
 
 def hybrid_s(cur, lang, q, ids, query, limit):
@@ -211,9 +264,9 @@ def hybrid_s(cur, lang, q, ids, query, limit):
     cur.execute(NEAREST.format(table=space.table, rows=space.rows), (query.vector, HYBRID_CANDIDATES))
     cosines = {r["page_id"]: 1 - r["distance"] for r in cur.fetchall()}
     found.update((p, (b, t, False)) for p, (b, t) in bm25.scores_s(cur, lang, ids, [p for p in cosines if p not in found]).items())
-    lexical_only = [p for p in found if p not in cosines]
-    if lexical_only:
+    unmeasured = [p for p in found if p not in cosines]
+    if unmeasured:
         cur.execute(f"""SELECT page_id, 1 - VEC_DISTANCE_COSINE(embedding, VEC_FromText(%s)) AS cosine
-                        FROM {space.table} WHERE {space.rows} AND page_id IN %s""", (query.vector, lexical_only))
+                        FROM {space.table} WHERE {space.rows} AND page_id IN %s""", (query.vector, unmeasured))
         cosines.update((r["page_id"], r["cosine"]) for r in cur.fetchall())
-    return combine(found, cosines, space, limit)
+    return combine(found, cosines, space, limit, priors_s(cur, lang, found.keys() | cosines.keys()))

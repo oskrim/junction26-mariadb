@@ -24,6 +24,7 @@ import blame
 import bm25
 import fill
 import learn
+import search as search_ranking
 import tellings
 import vector
 import voice
@@ -446,16 +447,9 @@ def first_paragraph_s(title, markdown):
 
 
 def search_s(cur, lang, q, limit):
-    """search() over the Swedish or English S articles (lang): bm25s and article_vector_voyage_s, scored by
-    vector.hybrid_s; each result also carries its lang. page_id is that wiki's own."""
-    if not words(q):
-        return []
-    ids = bm25.term_ids_s(cur, lang, " ".join(words(q)))
-    try:
-        ranked = [{**r, "by": by(r)} for r in vector.hybrid_s(cur, lang, q, ids, vector.embed_s(lang, q), limit)]
-    except vector.Unavailable as error:
-        print(f"search: keywords only: {error}", flush=True)
-        ranked = [{"page_id": p, "by": "keyword"} for p in list(vector.lexical_ranking_s(cur, lang, q, ids, limit))[:limit]]
+    """search() over the Swedish or English S articles (lang): bm25s and article_vector_voyage_s, ranked by
+    search.py (vector.hybrid_s); each result also carries its lang. page_id is that wiki's own."""
+    ranked = search_ranking.ranked(cur, q, limit, lang)
     if not ranked:
         return []
     cur.execute("SELECT page_id, title, text FROM s_article WHERE lang = %s AND page_id IN %s",
@@ -473,7 +467,7 @@ def search_s(cur, lang, q, limit):
 
 
 def search(cur, params):
-    """Articles that match q by BM25 or by meaning, scored by vector.hybrid; with lang=sv|en, search_s.
+    """Articles that match q by BM25 or by meaning, ranked by search.py (vector.hybrid); with lang=sv|en, search_s.
 
     Without the embedding service, the BM25 ranking alone."""
     q = params.get("q", [""])[0].strip()
@@ -485,16 +479,7 @@ def search(cur, params):
         return search_s(cur, lang, q, limit)
     if lang != "fi":
         raise BadRequest("lang must be fi, sv or en")
-    if not words(q):
-        return []
-    # The words written together too: Finnish compounds are often searched apart ("Lapuan liike" for Lapuanliike).
-    ids = bm25.term_ids(cur, " ".join(words(q)) + (" " + "".join(words(q)) if len(words(q)) > 1 else ""))
-    try:
-        query = vector.embed(q)
-        ranked = [{**r, "by": by(r)} for r in vector.hybrid(cur, q, ids, query, limit)]
-    except vector.Unavailable as error:
-        print(f"search: keywords only: {error}", flush=True)
-        ranked = [{"page_id": p, "by": "keyword"} for p in list(vector.lexical_ranking(cur, q, ids, limit))[:limit]]
+    ranked = search_ranking.ranked(cur, q, limit)
     if not ranked:
         return []
     # Text by primary key; IF reads the m_article text only for articles without S text.
@@ -513,12 +498,6 @@ def search(cur, params):
         match = find(shown.rstrip("…"), q)
         results.append({"page_id": r["page_id"], "title": article["title"], "snippet": shown, "match": match, "by": r["by"]})
     return results
-
-
-def by(scored):
-    """What found a hybrid search result: its words, its meaning, or both."""
-    lexical = scored["exact"] or scored["body"] or scored["title"]
-    return "both" if lexical and scored["meaning"] else "keyword" if lexical else "meaning"
 
 
 ROUTES = {"/api/articles": articles, "/api/article": article, "/api/history": history, "/api/change": change,

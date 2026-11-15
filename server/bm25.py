@@ -47,14 +47,14 @@ def term_ids(cur, q):
     return [r["term_id"] for r in cur.fetchall()]
 
 
-def ranking(cur, ids, kappa_body, kappa_title, limit):
+def ranking(cur, ids, kappa_body, w_title, kappa_title, limit):
     """[(page_id, bm25_body, bm25_title)] of the limit articles with the highest
-    bm25_body / (kappa_body + bm25_body) + bm25_title / (kappa_title + bm25_title) for the terms ids."""
+    bm25_body / (kappa_body + bm25_body) + w_title * bm25_title / (kappa_title + bm25_title) for the terms ids."""
     if not ids:
         return []
     cur.execute(f"""SELECT page_id, SUM(wb) AS body, SUM(wt) AS title FROM bm25_posting WHERE term_id IN %s
                     GROUP BY page_id
-                    ORDER BY SUM(wb) / ({kappa_body:g} + SUM(wb)) + SUM(wt) / ({kappa_title:g} + SUM(wt)) DESC, page_id
+                    ORDER BY SUM(wb) / ({kappa_body:g} + SUM(wb)) + {w_title:g} * SUM(wt) / ({kappa_title:g} + SUM(wt)) DESC, page_id
                     LIMIT %s""", (ids, limit))
     return [(r["page_id"], r["body"], r["title"]) for r in cur.fetchall()]
 
@@ -103,13 +103,13 @@ def term_ids_s(cur, lang, q):
     return [r["term_id"] for r in cur.fetchall()]
 
 
-def ranking_s(cur, lang, ids, kappa_body, kappa_title, limit):
+def ranking_s(cur, lang, ids, kappa_body, w_title, kappa_title, limit):
     """ranking() over the lang articles' index bm25s_posting."""
     if not ids:
         return []
     cur.execute(f"""SELECT page_id, SUM(wb) AS body, SUM(wt) AS title FROM bm25s_posting
                     WHERE lang = %s AND term_id IN %s GROUP BY page_id
-                    ORDER BY SUM(wb) / ({kappa_body:g} + SUM(wb)) + SUM(wt) / ({kappa_title:g} + SUM(wt)) DESC, page_id
+                    ORDER BY SUM(wb) / ({kappa_body:g} + SUM(wb)) + {w_title:g} * SUM(wt) / ({kappa_title:g} + SUM(wt)) DESC, page_id
                     LIMIT %s""", (lang, ids, limit))
     return [(r["page_id"], r["body"], r["title"]) for r in cur.fetchall()]
 

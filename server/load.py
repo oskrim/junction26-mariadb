@@ -385,6 +385,17 @@ def bm25_fresh(cur):
     return bool(cur.fetchone()[0])
 
 
+def load_lengths(cur):
+    """m_search_length: the length of every m_search text, which vector.priors reads when ranking (reading the
+    texts themselves for 400 candidates takes 0.3 s)."""
+    cur.execute("""CREATE TABLE IF NOT EXISTS m_search_length (
+                     page_id INT UNSIGNED NOT NULL PRIMARY KEY,
+                     chars   INT UNSIGNED NOT NULL COMMENT 'CHAR_LENGTH of m_search.text') ENGINE=InnoDB""")
+    cur.execute("""REPLACE INTO m_search_length SELECT page_id, CHAR_LENGTH(text) FROM m_search
+                   WHERE (SELECT COUNT(*) FROM m_search_length) <> (SELECT COUNT(*) FROM m_search)""")
+    print(f"m_search_length: {cur.rowcount} rows written", flush=True)
+
+
 def load_bm25(con, cur, reset):
     """The BM25 impact index (server/bm25.py) of every m_search text and its m_article_stats title, built into
     *_new tables and swapped in with one RENAME TABLE, so searches see the old index or the new one, never half.
@@ -398,6 +409,7 @@ def load_bm25(con, cur, reset):
     import pyarrow.csv as pacsv
 
     import bm25
+    load_lengths(cur)
 
     if not reset and bm25_fresh(cur):
         print("bm25: up to date")
