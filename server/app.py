@@ -22,6 +22,7 @@ import pymysql
 import ask
 import blame
 import bm25
+import fill
 import learn
 import tellings
 import vector
@@ -522,7 +523,8 @@ def by(scored):
 
 ROUTES = {"/api/articles": articles, "/api/article": article, "/api/history": history, "/api/change": change,
           "/api/graph": graph, "/api/topics": topics, "/api/preview": preview, "/api/previews": previews, "/api/search": search,
-          "/api/tellings": tellings.serve, "/api/blame": lambda cur, params: blame.blame(number(params, "id"), cur)}
+          "/api/tellings": tellings.serve, "/api/blame": lambda cur, params: blame.blame(number(params, "id"), cur),
+          "/api/fill": fill.serve}
 # POST handlers write their own response, so they can stream.
 POST_ROUTES = {"/api/ask": ask.serve, "/api/learn": learn.serve, "/api/speak": voice.speak, "/api/voice": voice.voice}
 
