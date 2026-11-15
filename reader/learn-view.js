@@ -428,7 +428,6 @@ export function learnView({ article }) {
       ${goal ? `<p class="lesson-goal">${prose(goal, lesson)}</p>` : ""}
       ${lesson.context && !lesson.from ? `<blockquote class="lesson-quote">${escape(shorten(lesson.context, 220))}</blockquote>` : ""}`;
     lesson.page.querySelector(".lesson-content").innerHTML = `
-      ${sourcesHtml(lesson)}
       ${!started && !lesson.done ? `<div class="lesson-skeleton" aria-hidden="true"><i></i><i></i><i></i><i></i></div>` : ""}
       ${sections
         .map(
@@ -446,7 +445,8 @@ export function learnView({ article }) {
               )
               .join("")}</dl></section>`
           : ""
-      }`;
+      }
+      ${lesson.done ? sourcesHtml(lesson) : ""}`;
   }
 
   // The sheet is centred; the chat sits just left of it and the two are centred together.
@@ -559,22 +559,18 @@ function termCard(paragraph, lesson) {
   </aside>`;
 }
 
-// The linked articles the lesson was built from, each with why it was read.
+// References: the articles the lesson was built from, numbered as its citations, each with why it was read.
 function sourcesHtml(lesson) {
   const items = lesson.sources?.items ?? [];
   if (!items.length) return "";
-  return `<div class="lesson-sources">
-    <p class="lesson-sources-label">Built from ${items.length} of the ${lesson.sources.explored.toLocaleString("en-US")} linked articles</p>
-    <ul>${items
+  return `<section class="lesson-refs"><h2>References</h2>
+    <ol>${items
       .map(
-        (s) => `<li><a href="${escape(s.page_id ? `./?id=${s.page_id}` : s.url)}" target="_blank" rel="noopener">
-          <span class="lesson-source-n">${s.n}</span>
-          <span class="lesson-source-title">${escape(s.title)}</span>
-          <span class="lesson-source-why">${escape(s.why)}</span>
-        </a></li>`,
+        (s) => `<li><span class="lesson-ref-n">${s.n}</span><span><a href="${escape(s.page_id ? `./?id=${s.page_id}` : s.url)}" target="_blank" rel="noopener">${escape(s.title)}</a>${s.why ? `<span class="lesson-ref-why"> — ${escape(s.why)}</span>` : ""}</span></li>`,
       )
-      .join("")}</ul>
-  </div>`;
+      .join("")}</ol>
+    <p class="lesson-refs-note">Chosen from ${lesson.sources.explored.toLocaleString("en-US")} linked and searched articles</p>
+  </section>`;
 }
 
 export function turnHtml(turn, lesson) {

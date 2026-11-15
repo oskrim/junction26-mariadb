@@ -190,64 +190,46 @@ html.lesson-open {
   font: italic 14.5px/1.5 var(--serif);
 }
 
-.lesson-sources {
-  margin: 26px 0 6px;
+.lesson-refs {
+  margin-top: 8px;
+  font: 14px/1.5 var(--sans);
 }
 
-.lesson-sources-label {
-  margin: 0 0 8px;
-  color: var(--ink-3);
-  font: 500 12px/1.3 var(--sans);
-}
-
-.lesson-sources ul {
-  display: flex;
-  gap: 8px;
-  margin: 0 -48px;
-  padding: 2px 48px 6px;
-  overflow-x: auto;
-  list-style: none;
-  scrollbar-width: none;
-}
-
-.lesson-sources li {
-  flex: none;
-}
-
-.lesson-sources a {
+.lesson-refs ol {
   display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 2px 7px;
-  width: 196px;
-  height: 100%;
-  padding: 10px 12px;
-  border-radius: 12px;
-  background: var(--chip);
-  color: inherit;
-  text-decoration: none;
-  transition: background 140ms;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
-.lesson-sources a:hover {
-  background: #e9ebef;
+.lesson-refs li {
+  display: grid;
+  grid-template-columns: 22px 1fr;
 }
 
-.lesson-source-n {
+.lesson-ref-n {
   color: var(--link);
-  font: 500 11px/1.6 var(--sans);
+  font-weight: 500;
 }
 
-.lesson-source-title {
-  overflow: hidden;
-  font: 500 13px/1.35 var(--sans);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.lesson-refs a {
+  color: var(--link);
+  text-decoration: none;
 }
 
-.lesson-source-why {
-  grid-column: 2;
+.lesson-refs a:hover {
+  text-decoration: underline;
+}
+
+.lesson-ref-why {
   color: var(--ink-2);
-  font: 12px/1.4 var(--sans);
+}
+
+.lesson-refs-note {
+  margin: 10px 0 0;
+  color: var(--ink-3);
+  font-size: 12px;
 }
 
 .lesson-skeleton {
@@ -290,6 +272,7 @@ html.lesson-open {
 
 .lesson-section h2,
 .lesson-terms h2,
+.lesson-refs h2,
 .lesson-qa h2 {
   margin: 30px 0 6px;
   font: 500 19px/1.3 var(--serif);
@@ -900,11 +883,6 @@ html.lesson-open {
   .listen-transcript {
     padding-left: 20px;
     padding-right: 20px;
-  }
-
-  .lesson-sources ul {
-    margin: 0 -20px;
-    padding: 2px 20px 6px;
   }
 
   .lesson-title,
