@@ -44,6 +44,10 @@ export async function writeInAll({ onSection } = {}) {
   await scrollRest();
   if (run !== writing) return;
   let finished = 0;
+  // Chrome's scroll anchoring would keep the heading below a growing block still and so move the page: off
+  // while the paragraphs are written, so the page holds still.
+  const root = document.documentElement;
+  root.style.overflowAnchor = "none";
   const opened = todo.map((c) => c.open(FAST_MS, { scroll: false }));
   await Promise.all(
     opened.map(({ done }) =>
@@ -52,6 +56,7 @@ export async function writeInAll({ onSection } = {}) {
       }),
     ),
   );
+  root.style.removeProperty("overflow-anchor");
 }
 
 // Resolves when the page has stopped scrolling (or at once with reduced motion).
