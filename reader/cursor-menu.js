@@ -138,7 +138,11 @@ export function cursorMenu({ root, onSubmit, onFind = null }) {
     const mode = chosen;
     const from = el.bar.getBoundingClientRect();
     const typed = el.input.value.trim();
-    onSubmit({ mode: mode.id, label: mode.label, prompt: typed || mode.fallback, typed, context: paint?.text ?? null, from });
+    // A passage painted in a paragraph written in from another language (fill-in.js) carries that language, so
+    // Ask also searches that Wikipedia.
+    const node = paint?.range.commonAncestorContainer;
+    const contextLang = (node?.nodeType === 1 ? node : node?.parentElement)?.closest(".fill-in[data-lang], [data-lang]")?.dataset.lang ?? null;
+    onSubmit({ mode: mode.id, label: mode.label, prompt: typed || mode.fallback, typed, context: paint?.text ?? null, contextLang, from });
     close({ keepPaint: true });
   });
 

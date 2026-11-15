@@ -318,7 +318,9 @@ def parse(handler):
         width = int((body.get("viewport") or {}).get("w") or 1200)
     except (ValueError, TypeError, AttributeError) as error:
         raise AskError(400, f"bad request: {error}")
-    return {"mode": mode, "prompt": prompt, "context": body.get("context") or None,
+    # the language of the paragraph the selected passage is in, when it was written in from another Wikipedia
+    context_lang = body.get("context_lang") if body.get("context_lang") in ("sv", "en") else None
+    return {"mode": mode, "prompt": prompt, "context": body.get("context") or None, "context_lang": context_lang,
             "page_id": page_id, "at": at, "history": history, "narrow": width < NARROW_W}
 
 
@@ -403,7 +405,8 @@ def research(cur, progress, request, version, facts, then_now):
             queries = [i for i, c in enumerate(calls) if c.get("name") == "search"
                        and str((c.get("args") or {}).get("query") or "").strip()][:(SEARCH_CALLS, GAP_CALLS, 0)[min(searched, 2)]]
             if queries:
-                names = [LANG_NAMES[lang] for lang in LANG_NAMES if any(call_lang(calls[i]) == lang for i in queries)]
+                names = [LANG_NAMES[lang] for lang in LANG_NAMES
+                         if lang == request.get("context_lang") or any(call_lang(calls[i]) == lang for i in queries)]
                 progress.update(f"Searching {' and '.join(names)} Wikipedia")
                 answers.update(zip(queries, run_searches(progress, request, [calls[i] for i in queries], found)))
                 searched += 1
@@ -628,6 +631,9 @@ def research_block(request, version, facts, then_now):
     clean = version["clean"].text
     headings = "; ".join(plain(m.group(2)) for m in HEADING.finditer(clean))
     passage = f"\n\nThe reader selected this passage and asks about it:\n<<<\n{request['context']}\n>>>" if request["context"] else ""
+    if passage and request.get("context_lang"):
+        passage += (f"\n(The passage is translated from {LANG_NAMES[request['context_lang']]} Wikipedia; every search also "
+                    f"runs there, and its articles are worth reading.)")
     earlier = "".join(f"\n{'Reader' if h.get('role') == 'user' else 'Answer'}: {shorten(str(h['text']), 600)}"
                       for h in request["history"])
     return (f"Article: {version['title']} (id {request['page_id']}), read as it was on {day(version['row_start'])}\n\n"
@@ -667,6 +673,15 @@ def run_searches(progress, request, calls, found):
         for hit in hits:
             hit["passages"] = snippets.best(hit.pop("text", ""), query, hit.pop("name", hit["title"]), lang, skip=hit["lead"])
         return hits
+    # A passage selected in a paragraph translated from Swedish or English: every search also runs on that
+    # Wikipedia, beside the language Gemini asked for.
+    source, asked = request.get("context_lang"), len(calls)
+    origin = list(range(asked))
+    if source:
+        extra = [(k, {**call, "args": {**(call.get("args") or {}), "lang": source}})
+                 for k, call in enumerate(calls) if call_lang(call) != source]
+        calls = calls + [c for _, c in extra]
+        origin += [k for k, _ in extra]
     parts = []
     for call, hits in zip(calls, together(one, calls)):
         query = shorten(str(call["args"]["query"]).strip(), 70)
@@ -690,7 +705,12 @@ def run_searches(progress, request, calls, found):
                         + (f" ({new} new)" if new != len(hits) else "") + (f": {names}" if names else ""))
         parts.append({"articles": [{"id": h["id"], "title": h["title"], "start": h["lead"],
                                     **({"passages": h["passages"]} if h["passages"] else {})} for h in hits]})
-    return parts
+    # one response per call Gemini made: a search also run on the source language adds its articles to it
+    merged = parts[:asked]
+    for k, part in zip(origin[asked:], parts[asked:]):
+        if "articles" in part:
+            merged[k] = {"articles": merged[k].get("articles", []) + part["articles"]}
+    return merged
 
 
 def gemini_tools(system, contents, allowed):

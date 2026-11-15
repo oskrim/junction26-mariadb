@@ -11,9 +11,9 @@ export const PAST_CHATS = [];
 
 const at = () => Number(new URLSearchParams(location.search).get("at")) || Math.floor(Date.now() / 1000);
 
-export function respond({ mode, prompt, context, article, turn = 0, history = [], onStep = null }) {
+export function respond({ mode, prompt, context, contextLang = null, article, turn = 0, history = [], onStep = null }) {
   if (mode === "visualise") return cannedRespond({ mode, prompt, context, article, turn });
-  const request = { mode, prompt, context, page_id: article.page_id, at: at(), viewport: { w: innerWidth, h: innerHeight }, history: history.slice() };
+  const request = { mode, prompt, context, context_lang: contextLang, page_id: article.page_id, at: at(), viewport: { w: innerWidth, h: innerHeight }, history: history.slice() };
   history.push({ role: "user", text: prompt });
   let found = null;
   const attachment = new Promise((resolve) => (found = resolve));
