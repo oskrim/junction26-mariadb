@@ -297,7 +297,7 @@ class Progress:
 def read_version(cur, progress, request):
     progress.step(f"Reading the article as it was on {day(request['at'])}")
     version = version_at(cur, request["page_id"], request["at"])
-    progress.finish(f"Reading {version['title']} as it was on {day(request['at'])} (version {version['rev_id']})")
+    progress.finish(f"Read {version['title']} as of {day(request['at'])}")
     return version
 
 

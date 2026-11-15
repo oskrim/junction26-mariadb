@@ -182,8 +182,9 @@ def serve(handler, database):
         seen |= {c["title"] for c, _, _ in picks}
 
         def read(picks):
+            if picks:
+                progress.step("Read " + ", ".join(c["title"] for c, _, _ in picks))
             for c, why, focus in picks:
-                progress.step(f"Reading {c['title']}")
                 sources.append({**c, "why": why, "section": section(c["text"], focus)})
 
         for round_ in range(2, MAX_ROUNDS + 1):
@@ -191,11 +192,11 @@ def serve(handler, database):
             if not picks or len(sources) >= MAX_SOURCES:
                 picks = []
                 break
-            label = f"Going deeper, round {round_} of {MAX_ROUNDS}"
-            progress.step(f"{label}: following the links of what was just read")
+            label = f"Round {round_}"
+            progress.step("Reading the articles those link to")
             hop = linked_articles(cur, progress, [c["page_id"] for c, _, _ in picks if c["page_id"]], request["at"],
                                   skip=seen, limit=HOP_CANDIDATES, quiet=True)
-            progress.finish(f"{label}: {len(hop):,} articles one link further")
+            progress.finish(f"Read {len(hop):,} articles one link further")
             if gap == request["prompt"]:  # nothing new to search for yet: what the first search found, unread
                 hop += [c for c in found if c["title"] not in seen | {h["title"] for h in hop}]
             else:
@@ -289,13 +290,13 @@ def linked_articles(cur, progress, page_ids, at, skip=(), limit=None, quiet=Fals
         return []
     stamp = at.strftime("%Y-%m-%d %H:%M:%S.%f")
     if not quiet:
-        progress.step(f"Reading the articles this one links to (as of {day(at)})")
+        progress.step("Reading the articles this one links to")
     cur.execute("SELECT src, dst FROM m_link FOR SYSTEM_TIME AS OF TIMESTAMP %s WHERE src IN %s", (stamp, page_ids))
     rows = sorted(cur.fetchall(), key=lambda r: page_ids.index(r["src"]))  # each source's links in turn
     titles = list(dict.fromkeys(r["dst"] for r in rows if r["dst"] not in skip))[:limit]
     if not titles:
         return []
-    label = f"Reading the {len(titles):,} articles this one links to (as of {day(at)})"
+    label = f"Reading the {len(titles):,} articles this one links to"
     if not quiet:
         progress.update(label)
     found = {}
@@ -321,7 +322,7 @@ def linked_articles(cur, progress, page_ids, at, skip=(), limit=None, quiet=Fals
                                    "text": markdown_plain(row["text"])[:READ_CHARS]}
     candidates = [{**found[t], "lead": found[t]["text"][:LEAD_CHARS]} for t in titles if t in found and found[t]["text"]]
     if not quiet:
-        progress.finish(f"Read {len(candidates):,} of the {len(titles):,} articles this one links to (as of {day(at)})")
+        progress.finish(f"Read the {len(candidates):,} articles this one links to")
     return candidates
 
 
@@ -391,10 +392,9 @@ def searched(cur, queries):
 def related_articles(cur, progress, request, here, query, linked, skip=(), queries=None):
     """Up to RELATED articles found by searching (search.py: BM25 and meaning) with queries Gemini writes for query
     (or the ones given), as of `at`: not this one, not the linked ones (page ids), and none whose title is in skip."""
-    progress.step("Searching Wikipedia for more articles")
+    progress.step("Choosing what to search for")
     queries = queries or search_queries(request, here, query)
-    label = "Searched " + ", ".join(f"“{q}”" for q in queries)
-    progress.update(label)
+    progress.update(f"Searching “{queries[0]}”")
     ranked = searched(cur, queries)
     # The first of each search, then the second of each, ...: every query gets its best results in.
     order = dict.fromkeys(p for rank_ in range(RELATED) for found_ in ranked for p in found_[rank_:rank_ + 1])
@@ -412,8 +412,14 @@ def related_articles(cur, progress, request, here, query, linked, skip=(), queri
                           "text": text, "lead": text[:LEAD_CHARS]})
         if len(found) == RELATED:
             break
-    progress.finish(f"{label} → {len(found)} more article{'s' if len(found) != 1 else ''}"
-                    + (": " + "; ".join(f["title"] for f in found[:5]) + ("…" if len(found) > 5 else "") if found else ""))
+    # one line per query, as Ask shows its searches: the query, how many of the kept articles it found, which
+    kept = {f["page_id"]: f["title"] for f in found}
+    for i, (q, ids) in enumerate(zip(queries, ranked)):
+        titles = [kept[p] for p in ids if p in kept]
+        text = f"Searched “{q}” → {len(titles)} articles: " + "; ".join(titles)
+        if i:
+            progress.step(text)
+        progress.finish(text)
     return found
 
 
@@ -429,7 +435,7 @@ def rank(progress, request, here, candidates):
         progress.finish("None of the linked articles helps with this question, so the explanation uses this article alone")
         return []
     picks = picks[:MAX_PICKS]
-    progress.finish(f"Chose {len(picks)}: " + "; ".join(f"{c['title']} — {why.rstrip('.')}" for c, why, _ in picks))
+    progress.finish("Chose " + ", ".join(c["title"] for c, _, _ in picks))
     return picks
 
 
@@ -437,7 +443,7 @@ def more(progress, request, here, sources, candidates, label):
     """(gap, picks) for one later round: what is still missing and the candidates to read for it, or ("", [])
     when what has been read is enough or nothing further helps."""
     if not candidates:
-        progress.step(f"{label}: nothing further to follow")
+        progress.step("Nothing further to follow")
         progress.finish()
         return "", []
     read = "\n\n".join(f"[{i + 1}] {s['title']}: {s['section'][:DIGEST_CHARS]}" for i, s in enumerate(sources))
@@ -446,21 +452,21 @@ def more(progress, request, here, sources, candidates, label):
             f"Question: {wanted(request)}\nWrite the gap and each \"why\" in the language of this question."
             + ("\nThe lesson was written from what has been read. A message about its style or length (simpler, "
                "shorter, clearer) needs nothing further: enough is true." if request["topic"] else ""))
-    progress.step(f"{label}: is anything still missing?")
+    progress.step("Checking what is still missing")
     reply = generate_json(MORE_RULES, [{"role": "user", "parts": [{"text": text}]}], MORE_SCHEMA, WRITE_MODEL)
     request.setdefault("language", named(reply))
     if reply.get("enough"):
-        progress.finish(f"{label}: what has been read explains it")
+        progress.finish("What has been read explains it")
         return "", []
     picks = numbered(reply, candidates)[:MORE_PICKS]
     gap = str(reply.get("gap") or "").strip()
     if plain(gap) in plain(request["prompt"]):  # no gap, or the question again: nothing specific is missing
-        progress.finish(f"{label}: what has been read explains it")
+        progress.finish("What has been read explains it")
         return "", []
     if not picks:
-        progress.finish(f"{label}: still missing {gap or 'something'}, but none of the {len(candidates)} further articles helps")
+        progress.finish(f"Still missing {gap or 'something'}, but nothing further helps")
         return "", []
-    progress.finish(f"{label}: still missing {gap}; chose " + "; ".join(f"{c['title']} — {why.rstrip('.')}" for c, why, _ in picks))
+    progress.finish(f"Still missing {gap}")
     return gap, picks
 
 

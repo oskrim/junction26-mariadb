@@ -82,7 +82,7 @@ function kindOf(text) {
   if (SEARCHING.test(text)) return "web";
   if (/^reading|^read /i.test(text)) return "read";
   if (/edit history|versions? |version of|compar|first appeared|when the|then and now/i.test(text)) return "history";
-  if (/gemini|writing|choosing|thinking|answer/i.test(text)) return "gemini";
+  if (/gemini|writing|choos|chose|thinking|answer|missing|explains it/i.test(text)) return "gemini";
   return "dot";
 }
 
