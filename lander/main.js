@@ -189,6 +189,7 @@ form.addEventListener("submit", async (e) => {
   results.hidden = false;
   results.style.animation = "none"; void results.offsetWidth; results.style.animation = "";
   results.innerHTML = `<div class="loading"><i></i><i></i><i></i></div>`;
+  fitResults();
 
   const { terms, pages, related } = await searchPages(text);
   found = new Map([...pages, ...related].map((a) => [a.page_id, a]));
@@ -198,8 +199,17 @@ form.addEventListener("submit", async (e) => {
   if (related.length) html += `<h2>${question ? "Might answer your question" : "Pages that mention it"}</h2>` + related.map((a, i) => hitHTML(a, terms, i + pages.length)).join("");
   if (!html) html = `<p class="empty">No pages match “${esc(text)}”.<br>Try one word, like <em>Moon</em>, or ask a question.</p>`;
   results.innerHTML = html;
-  results.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  results.scrollTop = 0;
+  fitResults();
 });
+
+// the results scroll inside their panel, which ends at the bottom of the screen, so the page itself stays still
+function fitResults() {
+  if (results.hidden) return;
+  const gap = parseFloat(getComputedStyle(results.parentElement).paddingBottom);
+  results.style.maxHeight = `${Math.max(200, innerHeight - results.getBoundingClientRect().top - gap)}px`;
+}
+addEventListener("resize", fitResults);
 
 examples.addEventListener("click", (e) => {
   const b = e.target.closest("button");
