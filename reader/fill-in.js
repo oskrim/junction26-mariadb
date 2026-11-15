@@ -29,21 +29,22 @@ export const pendingFillIns = () => chips.filter((c) => !c.isOpen()).reduce((n, 
 let writing = 0; // bumped by closeAllFillIns, so a writeInAll under way stops
 const FAST_MS = 1200; // per paragraph when all are written in at once
 
-// Writes in every section not yet written in. The page first scrolls, once and smoothly, to where the first
-// block goes; when the scroll has come to rest, every section starts typing at once, so the reader watches the
-// first one being written. onSection(i, n) as each finishes. Resolves when all are typed.
+// Writes in every section not yet written in. The page first scrolls, once and smoothly, so that where the first
+// block goes is near the top of the window; when the scroll has come to rest, every section starts typing at
+// once and the page stays still, so the reader watches the first one being written. onSection(i, n) as each finishes. Resolves when all are typed.
 export async function writeInAll({ onSection } = {}) {
   await fillInsReady;
   const run = ++writing;
   const todo = chips.filter((c) => !c.isOpen());
   if (!todo.length) return;
-  sectionEnd(todo[0].heading).scrollIntoView({ behavior: reducedMotion() ? "auto" : "smooth", block: "center" });
+  // Where the first block will appear goes a quarter of the way down the window, leaving room below for it to
+  // grow; the page then stays still while the paragraphs are typed.
+  const spot = sectionEnd(todo[0].heading).getBoundingClientRect().top + scrollY - innerHeight * 0.25;
+  scrollTo({ top: Math.max(0, spot), behavior: reducedMotion() ? "auto" : "smooth" });
   await scrollRest();
   if (run !== writing) return;
   let finished = 0;
-  // Only the first block is followed: it is kept in the middle of the window while it grows.
   const opened = todo.map((c) => c.open(FAST_MS, { scroll: false }));
-  const stopFollowing = follow(opened[0].block, opened[0].done);
   await Promise.all(
     opened.map(({ done }) =>
       done.then(() => {
@@ -51,32 +52,6 @@ export async function writeInAll({ onSection } = {}) {
       }),
     ),
   );
-  stopFollowing();
-}
-
-// Keeps block centred in the window until done resolves: when its middle drifts more than a few lines from the
-// window's middle as text is typed into it, the page glides to bring it back. Stops if the reader scrolls.
-function follow(block, done) {
-  if (reducedMotion()) return () => {};
-  let stopped = false;
-  const stop = () => (stopped = true);
-  const byHand = () => stop();
-  addEventListener("wheel", byHand, { passive: true, once: true });
-  addEventListener("touchmove", byHand, { passive: true, once: true });
-  const tick = () => {
-    if (stopped || !block.isConnected) return;
-    const r = block.getBoundingClientRect();
-    const drift = r.top + Math.min(r.height, innerHeight * 0.8) / 2 - innerHeight / 2;
-    if (Math.abs(drift) > 48) scrollBy({ top: drift, behavior: "smooth" });
-    setTimeout(tick, 400);
-  };
-  tick();
-  done.then(stop);
-  return () => {
-    stop();
-    removeEventListener("wheel", byHand);
-    removeEventListener("touchmove", byHand);
-  };
 }
 
 // Resolves when the page has stopped scrolling (or at once with reduced motion).
