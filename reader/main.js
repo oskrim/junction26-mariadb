@@ -344,13 +344,13 @@ function setUpToTop() {
   if (article) watch.observe(article, { attributes: true, attributeFilter: ["hidden"] }); // Explore and back
 }
 
-// Article view: a small hint at the lower left that Q opens the menu at the pointer (cursor-menu.js). Clicking
+// Article view: a small hint at the bottom centre that Q opens the menu at the pointer (cursor-menu.js). Clicking
 // it presses Q. Not in Explore, nor while "Watch it being written" has its bar at the bottom.
 function setUpKeyHint() {
   const hint = document.createElement("button");
   hint.type = "button";
   hint.className = "key-hint";
-  hint.innerHTML = `<kbd>Q</kbd>Ask · Find · Learn`;
+  hint.innerHTML = `Press<kbd>Q</kbd>for menu`;
   hint.addEventListener("click", () => document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "q", bubbles: true })));
   document.body.append(hint);
   const update = () => {
