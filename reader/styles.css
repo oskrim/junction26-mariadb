@@ -11,8 +11,8 @@
   --sans: "Inter", system-ui, sans-serif;
 
   --toc: 196px;
-  --gap: 64px;
-  --col: 640px;
+  --gap: 36px;
+  --col: 696px; /* 640 + the 56px the gaps beside it gave up, so the page keeps its width */
   --pad: 48px;
   --side: 272px;
 }
