@@ -11,7 +11,7 @@
   --sans: "Inter", system-ui, sans-serif;
 
   --toc: 196px;
-  --gap: 64px;
+  --gap: 56px;
   --col: 670px; /* the header's three buttons (574px) + --pad on both sides */
   --pad: 48px;
   --side: 272px;
