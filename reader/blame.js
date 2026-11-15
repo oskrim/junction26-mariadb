@@ -253,8 +253,21 @@ function cardHtml(origin, time, now) {
 // "/* Historia */ korjaus" -> section "Historia", summary "korjaus".
 function parseComment(comment = "") {
   const m = comment.match(/\/\*\s*(.*?)\s*\*\//);
-  const summary = comment.replace(/\/\*.*?\*\//, "").replace(/^[\s:*-]+|\s+$/g, "");
+  const summary = plainSummary(comment.replace(/\/\*.*?\*\//, "")).replace(/^[\s:*-]+|\s+$/g, "");
   return { section: m?.[1] ?? "", summary: summary.length > 140 ? summary.slice(0, 139) + "…" : summary };
+}
+
+// An edit summary's wiki markup as the words a reader would see: "[[Toiminnot:Ero/1|pyyntö]]" is "pyyntö",
+// "[[Project:AWB]]" is "AWB", "[https://… lähde]" is "lähde"; bold and italic quotes and templates go.
+function plainSummary(text) {
+  return text
+    .replace(/\{\{[^{}]*\}\}/g, "")
+    .replace(/\[\[([^\]|]*)\|([^\]]*)\]\]/g, "$2")
+    .replace(/\[\[([^\]]*)\]\]/g, (_, target) => target.replace(/^[^:]*:/, "").replace(/#.*$/, ""))
+    .replace(/\[(?:https?:)?\/\/\S+\s+([^\]]+)\]/g, "$1")
+    .replace(/\[(?:https?:)?\/\/[^\]\s]+\]/g, "")
+    .replace(/'{2,}/g, "")
+    .replace(/\s+/g, " ");
 }
 
 function age(ms) {

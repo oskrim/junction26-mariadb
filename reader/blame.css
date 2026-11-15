@@ -136,7 +136,9 @@
 .blame-card {
   position: absolute;
   z-index: 60;
-  max-width: 340px;
+  box-sizing: border-box;
+  width: 340px; /* the same as a written-in paragraph's "Original" card (fill-in.js) */
+  max-width: calc(100vw - 32px);
   padding: 10px 14px 11px;
   border: 1px solid var(--rule);
   border-radius: 10px;

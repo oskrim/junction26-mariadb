@@ -215,8 +215,8 @@ function originalPopover() {
       const r = el.getBoundingClientRect();
       const column = el.closest(".body").getBoundingClientRect();
       const margin = document.documentElement.clientWidth - column.right - 32;
-      if (margin >= 300) {
-        pop.style.width = `${Math.min(440, margin)}px`;
+      if (margin >= 340) {
+        pop.style.width = "340px"; // the same as the "Who wrote this?" card (blame.css)
         pop.style.left = `${column.right + 16 + scrollX}px`;
         pop.style.top = `${Math.min(Math.max(r.top, 72), innerHeight - pop.offsetHeight - 16) + scrollY}px`;
       } else {
