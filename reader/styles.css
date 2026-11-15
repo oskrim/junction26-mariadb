@@ -574,16 +574,13 @@ a {
 /* Explore and History need the Finnish history */
 /* A Swedish or English article has no action buttons under its title, so its header ends closer to the text. */
 .is-foreign .head {
-  padding-bottom: 28px;
+  padding-bottom: 40px;
 }
 
-/* Disambiguation notes at the top of a Swedish or English article, as Wikipedia shows them */
+/* Disambiguation notes at the top of a Swedish or English article: on Wikipedia they link to a page of other
+   meanings, which this data does not have, so they would lead nowhere. */
 .body > p.hatnote {
-  margin: 0 0 1.2em;
-  padding-left: 1.6em;
-  font-size: 0.92em;
-  font-style: italic;
-  color: var(--ink-2);
+  display: none;
 }
 
 .is-foreign .views {
@@ -635,8 +632,12 @@ a {
 }
 
 /* The first line's capitals start where the column's rules do. */
-.body > p:first-of-type {
+.body > p:not(.hatnote) {
   text-box: trim-start cap alphabetic;
+}
+
+.body > p:not(.hatnote) ~ p {
+  text-box: normal;
 }
 
 .body h2,
