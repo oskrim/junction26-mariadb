@@ -53,7 +53,7 @@
   content: "";
   position: absolute;
   z-index: -1;
-  inset: calc(-1 * (var(--blame-gap, 0px) + var(--trimmed, 0px))) -10px -2px calc(-1 * var(--blame-bleed));
+  inset: calc(-1 * var(--blame-gap, 0px)) -10px -2px calc(-1 * var(--blame-bleed));
   border-left: 2px solid var(--blame-rule);
   background: var(--blame-bg);
   pointer-events: none;

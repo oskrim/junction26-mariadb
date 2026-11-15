@@ -26,29 +26,27 @@ export const fillInsReady = new Promise((resolve) => (markReady = resolve));
 // How many borrowed paragraphs are not in the article yet.
 export const pendingFillIns = () => chips.filter((c) => !c.isOpen()).reduce((n, c) => n + c.section.paragraphs.length, 0);
 
-// Writes in every section not yet written in, one after another: a gentle scroll to where they go, then the
-// paragraphs typed a little faster than by a chip. onSection(i, n) before each. Resolves when all are typed.
 let writing = 0; // bumped by closeAllFillIns, so a writeInAll under way stops
+const FAST_MS = 700; // per paragraph when all are written in at once
 
+// Writes in every section not yet written in, all at once and quickly. The page scrolls once, smoothly, to the
+// first block so the reader sees it being written; the others are written where they are. onSection(i, n) as
+// each finishes. Resolves when all are typed.
 export async function writeInAll({ onSection } = {}) {
   await fillInsReady;
   const run = ++writing;
   const todo = chips.filter((c) => !c.isOpen());
-  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, reducedMotion() ? 0 : ms));
-  for (const [i, c] of todo.entries()) {
-    onSection?.(i, todo.length);
-    // Where the paragraphs will go: the end of the section, in the middle of the window.
-    sectionEnd(c.heading).scrollIntoView({ behavior: reducedMotion() ? "auto" : "smooth", block: "center" });
-    await wait(650);
-    if (run !== writing) return;
-    if (c.isOpen()) continue;
-    const { block, done } = c.open(1500);
-    // Pictures loading on the way can push the section down: bring the block itself to the middle.
-    setTimeout(() => block.scrollIntoView({ behavior: reducedMotion() ? "auto" : "smooth", block: "center" }), 120);
-    await done;
-    if (run !== writing) return;
-    await wait(350);
-  }
+  let finished = 0;
+  const opened = todo.map((c) => c.open(FAST_MS));
+  const first = opened[0]?.block;
+  if (first) requestAnimationFrame(() => first.scrollIntoView({ behavior: reducedMotion() ? "auto" : "smooth", block: "center" }));
+  await Promise.all(
+    opened.map(({ done }) =>
+      done.then(() => {
+        if (run === writing) onSection?.(finished++, todo.length);
+      }),
+    ),
+  );
 }
 
 // Takes every written-in block out again and stops a writeInAll under way: the article as it was. Called when
