@@ -132,8 +132,9 @@ as soon as the writer has enough.
 - read returns the text of found articles, as they were at the moment the reader is on; the writer gets every
   article you read, in full. Read the 2 to 5 found articles the answer needs, the most useful first, in one call;
   prefer the article on a subject itself over lists and narrow sub-articles. The passages of the other results
-  reach the writer too, so do not read an article whose passage already says what is needed. When the articles
-  you read are all the answer needs, which is the usual case, call answer in the same turn as read.
+  reach the writer too, so do not read an article whose passage already says what is needed. After a read the
+  answer is written, as if you had called answer; pass more: true only when you must see the texts first to
+  decide what else to search or read.
 - history returns the edit history of the article being read: versions per year, the busiest months, the most
   active editors, the reverts with their edit comments, and what the most fought-over reverted edits had changed
   in the text. Call it, with answer in the same turn, for questions about edit wars, disputes, vandalism, reverts
@@ -157,7 +158,8 @@ TOOLS = [{"functionDeclarations": [
     {"name": "read",
      "description": "Returns the text of found articles and gives them in full to the writer of the answer.",
      "parameters": {"type": "OBJECT", "properties": {
-         "ids": {"type": "ARRAY", "items": {"type": "INTEGER"}, "description": "Ids of found articles, most useful first."}},
+         "ids": {"type": "ARRAY", "items": {"type": "INTEGER"}, "description": "Ids of found articles, most useful first."},
+         "more": {"type": "BOOLEAN", "description": "true only when you must see these texts before deciding what else to look up; otherwise the answer is written next."}},
          "required": ["ids"]}},
     {"name": "history",
      "description": "Returns the edit history of the article being read: activity, editors, reverts and what the disputed edits changed.",
@@ -418,7 +420,10 @@ def research(cur, progress, request, version, facts, then_now):
                 elif i not in answers:
                     answers[i] = {"ok": True} if name == "answer" else {"error": "not run: no more searches; read what was found or call answer"}
             tracelog.event("tools", turn=turn, calls=calls, answers=answers)
-            if not calls or any(c.get("name") == "answer" for c in calls):
+            # A turn that only reads ends the gathering, unless the read asks for more.
+            reads = [c for c in calls if c.get("name") == "read"]
+            if (not calls or any(c.get("name") == "answer" for c in calls)
+                    or reads and not queries and not any((c.get("args") or {}).get("more") is True for c in reads)):
                 break
             contents += [reply, {"role": "user", "parts": [
                 {"functionResponse": {"name": c.get("name"), "response": answers[i], **({"id": c["id"]} if c.get("id") else {})}}
