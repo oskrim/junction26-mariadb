@@ -105,6 +105,7 @@ KAPPA_BODY, KAPPA_TITLE = 10, 8
 EXACT_BONUS = 3  # more than every other term together: the article titled as the query comes first
 LEXICAL_CANDIDATES = 200  # from the BM25 index
 HYBRID_CANDIDATES = 50  # from the vector index
+MIN_GATE = 0.1  # the share of its keyword score an article unrelated in meaning keeps
 
 
 def lexical(body, title, exact):
@@ -128,7 +129,9 @@ def lexical_ranking(cur, q, ids, limit):
 def hybrid(cur, q, ids, query, limit):
     """The limit best of the lexical top LEXICAL_CANDIDATES and the vector top HYBRID_CANDIDATES, each scored
 
-        lexical(bm25_body, bm25_title, exact) + space.weight * max(0, cosine - space.floor)
+        gate * lexical(bm25_body, bm25_title) + EXACT_BONUS * exact + space.weight * max(0, cosine - space.floor)
+
+    where gate (0.1 to 1) is the article's cosine next to the best one's
 
     as [{page_id, body, title, exact, cosine, meaning, score}], with meaning = cosine > space.floor. ids are q's
     bm25_term ids, query its Query."""
@@ -143,11 +146,19 @@ def hybrid(cur, q, ids, query, limit):
         cur.execute(f"""SELECT page_id, 1 - VEC_DISTANCE_COSINE(embedding, VEC_FromText(%s)) AS cosine
                         FROM {space.table} WHERE {space.rows} AND page_id IN %s""", (query.vector, lexical_only))
         cosines.update((r["page_id"], r["cosine"]) for r in cur.fetchall())
+    # Keyword matches count in proportion to how close in meaning they are, next to the closest article: a title
+    # that only shares a word with the question ("Epica" for "epic poems", "The Who" for "who led the Reds") keeps
+    # a tenth of its keyword score. An exact title keeps its bonus, and an article without a vector is not judged.
+    top = max(cosines.values(), default=0.0)
     scored = []
     for page_id in found.keys() | cosines.keys():
         body, title, exact = found.get(page_id, (0.0, 0.0, False))
         cosine = cosines.get(page_id, 0.0)
-        score = lexical(body, title, exact) + space.weight * max(0.0, cosine - space.floor)
+        if page_id in cosines and top > space.floor:
+            gate = MIN_GATE + (1 - MIN_GATE) * min(1.0, max(0.0, (cosine - space.floor) / (top - space.floor)))
+        else:
+            gate = 1.0
+        score = gate * lexical(body, title, False) + EXACT_BONUS * exact + space.weight * max(0.0, cosine - space.floor)
         scored.append({"page_id": page_id, "body": body, "title": title, "exact": exact, "cosine": cosine,
                        "meaning": cosine > space.floor, "score": score})
     scored.sort(key=lambda r: (-r["score"], r["page_id"]))
