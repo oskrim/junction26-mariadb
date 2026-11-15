@@ -572,11 +572,6 @@ a {
 }
 
 /* Explore and History need the Finnish history */
-/* A Swedish or English article has no action buttons under its title, so its header ends closer to the text. */
-.is-foreign .head {
-  padding-bottom: 40px;
-}
-
 /* Disambiguation notes at the top of a Swedish or English article: on Wikipedia they link to a page of other
    meanings, which this data does not have, so they would lead nowhere. */
 .body > p.hatnote {
