@@ -629,10 +629,12 @@ a {
 /* The first line's capitals start where the column's rules do. */
 .body > p:not(.hatnote) {
   text-box: trim-start cap alphabetic;
+  --trimmed: 9px; /* what the trim took off above the capitals; a tint behind it (blame.css) adds it back */
 }
 
 .body > p:not(.hatnote) ~ p {
   text-box: normal;
+  --trimmed: 0px;
 }
 
 .body h2,
