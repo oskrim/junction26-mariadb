@@ -27,26 +27,45 @@ export const fillInsReady = new Promise((resolve) => (markReady = resolve));
 export const pendingFillIns = () => chips.filter((c) => !c.isOpen()).reduce((n, c) => n + c.section.paragraphs.length, 0);
 
 let writing = 0; // bumped by closeAllFillIns, so a writeInAll under way stops
-const FAST_MS = 700; // per paragraph when all are written in at once
+const FAST_MS = 1200; // per paragraph when all are written in at once
 
-// Writes in every section not yet written in, all at once and quickly. The page scrolls once, smoothly, to the
-// first block so the reader sees it being written; the others are written where they are. onSection(i, n) as
-// each finishes. Resolves when all are typed.
+// Writes in every section not yet written in. The page first scrolls, once and smoothly, to where the first
+// block goes; when the scroll has come to rest, every section starts typing at once, so the reader watches the
+// first one being written. onSection(i, n) as each finishes. Resolves when all are typed.
 export async function writeInAll({ onSection } = {}) {
   await fillInsReady;
   const run = ++writing;
   const todo = chips.filter((c) => !c.isOpen());
+  if (!todo.length) return;
+  sectionEnd(todo[0].heading).scrollIntoView({ behavior: reducedMotion() ? "auto" : "smooth", block: "center" });
+  await scrollRest();
+  if (run !== writing) return;
   let finished = 0;
-  const opened = todo.map((c) => c.open(FAST_MS));
-  const first = opened[0]?.block;
-  if (first) requestAnimationFrame(() => first.scrollIntoView({ behavior: reducedMotion() ? "auto" : "smooth", block: "center" }));
   await Promise.all(
-    opened.map(({ done }) =>
-      done.then(() => {
+    todo.map((c) =>
+      c.open(FAST_MS).done.then(() => {
         if (run === writing) onSection?.(finished++, todo.length);
       }),
     ),
   );
+}
+
+// Resolves when the page has stopped scrolling (or at once with reduced motion).
+function scrollRest() {
+  if (reducedMotion()) return Promise.resolve();
+  return new Promise((resolve) => {
+    let last = scrollY;
+    let still = 0;
+    const check = setInterval(() => {
+      still = scrollY === last ? still + 1 : 0;
+      last = scrollY;
+      if (still >= 3) {
+        clearInterval(check);
+        resolve();
+      }
+    }, 50);
+    setTimeout(() => (clearInterval(check), resolve()), 2500);
+  });
 }
 
 // Takes every written-in block out again and stops a writeInAll under way: the article as it was. Called when
