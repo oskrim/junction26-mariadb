@@ -21,6 +21,9 @@ export function setUpSearch(box) {
   list.hidden = true;
   box.append(list);
   let results = [];
+  let shownFor = null; // the words the results answer; null before any have come
+  let failed = false;
+  let openFirst = false; // Enter came before the results: the top one opens when they do
   let active = -1;
   let timer = 0;
   let request = 0;
@@ -41,7 +44,7 @@ export function setUpSearch(box) {
               </span></li>`,
             )
             .join("")
-        : `<li class="search-none">No articles match</li>`);
+        : `<li class="search-none">${failed ? "Search is not answering right now" : shownFor === null ? "Searching…" : "No articles match"}</li>`);
     paint(list);
   }
 
@@ -50,19 +53,37 @@ export function setUpSearch(box) {
     const token = ++request;
     if (!q) {
       results = [];
+      shownFor = null;
+      failed = openFirst = false;
       return render();
     }
-    const found = await searchArticles(q, 8, pageLang()).catch(() => []);
+    if (shownFor === null) {
+      failed = false;
+      render(); // "Searching…" until the first results come
+    }
+    const found = await searchArticles(q, 8, pageLang()).catch(() => null);
     if (token !== request) return;
-    results = found;
+    failed = !found;
+    results = found ?? [];
+    shownFor = found ? q : null; // after a failure, Enter asks again
     active = -1;
+    if (openFirst && results.length) return open(results[0]);
+    openFirst = false;
     render();
     // The pictures come a moment later, from Wikipedia.
-    loadPictures(found.map((r) => r.title)).then(() => token === request && paint(list));
+    loadPictures(results.map((r) => r.title)).then(() => token === request && paint(list));
   }
 
   // Enter or the arrow: the chosen article, else the top one.
+  // Enter before the list caught up with the box searches for what the box says and opens its top article, not
+  // the top of the list for the first letters.
   function submit() {
+    const q = input.value.trim();
+    if (active < 0 && q && shownFor !== q) {
+      openFirst = true;
+      clearTimeout(timer);
+      return run();
+    }
     const result = results[Math.max(active, 0)];
     if (result) open(result);
   }
@@ -85,6 +106,7 @@ export function setUpSearch(box) {
   });
   input.addEventListener("input", showGo);
   input.addEventListener("input", () => {
+    openFirst = false;
     clearTimeout(timer);
     timer = setTimeout(run, 150);
   });
