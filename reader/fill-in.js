@@ -28,8 +28,11 @@ export const pendingFillIns = () => chips.filter((c) => !c.isOpen()).reduce((n, 
 
 // Writes in every section not yet written in, one after another: a gentle scroll to where they go, then the
 // paragraphs typed a little faster than by a chip. onSection(i, n) before each. Resolves when all are typed.
+let writing = 0; // bumped by closeAllFillIns, so a writeInAll under way stops
+
 export async function writeInAll({ onSection } = {}) {
   await fillInsReady;
+  const run = ++writing;
   const todo = chips.filter((c) => !c.isOpen());
   const wait = (ms) => new Promise((resolve) => setTimeout(resolve, reducedMotion() ? 0 : ms));
   for (const [i, c] of todo.entries()) {
@@ -37,14 +40,24 @@ export async function writeInAll({ onSection } = {}) {
     // Where the paragraphs will go: the end of the section, in the middle of the window.
     sectionEnd(c.heading).scrollIntoView({ behavior: reducedMotion() ? "auto" : "smooth", block: "center" });
     await wait(650);
+    if (run !== writing) return;
     if (c.isOpen()) continue;
     const { block, done } = c.open(1500);
     // Pictures loading on the way can push the section down: bring the block itself to the middle.
     setTimeout(() => block.scrollIntoView({ behavior: reducedMotion() ? "auto" : "smooth", block: "center" }), 120);
     await done;
+    if (run !== writing) return;
     await wait(350);
   }
 }
+
+// Takes every written-in block out again and stops a writeInAll under way: the article as it was. Called when
+// "Who wrote this?" is turned off and when "Watch it being written" starts (the "reader:reset" event).
+export function closeAllFillIns() {
+  writing++;
+  for (const c of chips) c.close();
+}
+addEventListener("reader:reset", closeAllFillIns);
 
 export async function addFillIns({ body, id }) {
   const data = await getFill(id).catch(() => null);
@@ -95,7 +108,7 @@ function addChip(heading, section, popover) {
     event.stopPropagation();
     toggle();
   });
-  chips.push({ heading, section, isOpen: () => !!open, open: (ms) => toggle(ms) });
+  chips.push({ heading, section, isOpen: () => !!open, open: (ms) => toggle(ms), close: () => open && toggle() });
   // Next to the other chips, before the edit-war marks when they are already there.
   heading.insertBefore(chip, heading.querySelector(".war-marks"));
 }

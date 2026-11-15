@@ -21,6 +21,13 @@
   box-shadow: 0 2px 8px rgb(0 0 0 / 0.06);
 }
 
+/* Pressed while the replay runs, like "Who wrote this?" (blame.css) */
+.hp-start[aria-pressed="true"] {
+  border-color: var(--link);
+  background: rgb(51 102 204 / 0.07);
+  color: var(--link);
+}
+
 .hp-start:disabled {
   opacity: 0.4;
   cursor: default;

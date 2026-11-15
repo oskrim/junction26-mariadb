@@ -51,7 +51,7 @@ if (!version || (!foreign && !summary)) {
       <a class="meta-link" href="./?id=${id}&view=history" data-view-link="history">View history</a>
     </p>
     <div class="head-actions">
-      <button type="button" class="hp-start">
+      <button type="button" class="hp-start" aria-pressed="false">
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3.2v9.6L12.6 8z"/></svg>
         Watch it being written
       </button>
@@ -68,10 +68,28 @@ if (!version || (!foreign && !summary)) {
   if (!foreign) import("./blame.js").then((m) => m.addBlame({ head, body, id }));
   // The article rewrites itself from its first version, with a timeline of its edits and wars at the bottom.
   const start = head.querySelector(".hp-start");
+  // A toggle like "Who wrote this?": pressed (blue) while the replay runs, pressed again to stop it. Starting it
+  // turns the other views off ("reader:reset"); turning "Who wrote this?" on stops it ("reader:stop-replay").
+  let replay = null;
+  const stopReplay = () => replay?.close();
+  addEventListener("reader:stop-replay", stopReplay);
   start?.addEventListener("click", async () => {
+    if (replay) return stopReplay();
+    // The replay keeps a copy of the article to put back when it ends: let the tints and written-in paragraphs
+    // finish leaving first (they fade for ~220 ms), so the copy is the plain article.
+    const busy = document.documentElement.classList.contains("blame-on") || body.querySelector(".fill-block");
+    dispatchEvent(new CustomEvent("reader:reset"));
+    if (busy) await new Promise((resolve) => setTimeout(resolve, 280));
     const { startHistoryPlay } = await import("./history-play.js");
-    start.disabled = true;
-    startHistoryPlay({ id, body, onClose: () => (start.disabled = false) });
+    start.setAttribute("aria-pressed", "true");
+    replay = startHistoryPlay({
+      id,
+      body,
+      onClose: () => {
+        replay = null;
+        start.setAttribute("aria-pressed", "false");
+      },
+    });
   });
   hoverCard({
     root: body,

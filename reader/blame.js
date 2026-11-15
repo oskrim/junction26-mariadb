@@ -18,7 +18,7 @@ const PEN = `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M11.2 2.6l2.2 
 const BLOCKS = "p, li, dd, blockquote, h2, h3, h4";
 const SKIP = ".infobox, figure, table, .references, .fill-block, .fill-in, .tellings, nav";
 const DAY = 86400000;
-const SWEEP_MS = 850; // the tints cascade down the window in this long
+const SWEEP_MS = 250; // the tints cascade down the window in this long
 const LEAVE_MS = 220;
 
 const reducedMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -36,6 +36,8 @@ export async function addBlame({ head, body, id }) {
   anchor ? anchor.after(button) : head.append(button);
 
   let view = null;
+  // "Watch it being written" starts: back to the plain article.
+  addEventListener("reader:reset", () => view && button.click());
   button.addEventListener("click", () => {
     if (view) {
       view.close();
@@ -44,6 +46,7 @@ export async function addBlame({ head, body, id }) {
       button.disabled = true;
       setTimeout(() => (button.disabled = false), reducedMotion() ? 0 : LEAVE_MS + 20);
     } else {
+      dispatchEvent(new CustomEvent("reader:stop-replay")); // "Watch it being written" gives way
       view = openBlame({ body, data, button });
     }
     button.setAttribute("aria-pressed", String(!!view));
@@ -197,6 +200,8 @@ function openBlame({ body, data, button }) {
   return {
     close() {
       closed = true;
+      // The paragraphs written in from other languages go too, so turning the view on again offers them again.
+      import("./fill-in.js").then((m) => m.closeAllFillIns());
       clearTimeout(sweepTimer);
       cancelAnimationFrame(pending);
       observer.disconnect();
