@@ -242,7 +242,9 @@ body[data-view="explore"] {
 .ex-time {
   position: absolute;
   bottom: 22px;
-  left: 50%;
+  /* Centred between the chat tray (bottom left, 159px wide with no chats open) and the article panel (480px
+     wide, 20px from the edge). */
+  left: calc((100% - 341px) / 2);
   display: flex;
   align-items: center;
   gap: 14px;
