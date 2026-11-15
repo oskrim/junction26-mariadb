@@ -7,7 +7,7 @@
 
 export const OPEN_KEY = "q";
 
-// While the prompt bar is open, the caret becomes the Wikipedia globe.
+// The Wikipedia globe sits at the start of the prompt bar (where a painted passage's chip goes instead).
 const GLOBE = new URL("files/wikipedia-globe.png", import.meta.url).href;
 
 const MODES = [
@@ -192,10 +192,10 @@ export function cursorMenu({ root, onSubmit }) {
     blobs.forEach((b, i) => (b.phase = MODES[i] === mode ? "bar" : "home"));
     el.input.placeholder = mode.placeholder;
     el.input.value = "";
-    el.chip.textContent = paint ? `“${shorten(paint.text, 26)}”` : "Whole article";
-    el.chip.classList.toggle("is-whole", !paint);
-    // Find searches every article: "Whole article" would mislead; a painted passage still says what it finds from.
-    el.chip.hidden = mode.id === "find" && !paint;
+    // A painted passage rides in the bar as a yellow chip; without one, the Wikipedia globe sits there instead.
+    el.chip.textContent = paint ? `“${shorten(paint.text, 26)}”` : "";
+    el.chip.hidden = !paint;
+    el.globe.hidden = !!paint;
     el.bar.dataset.mode = mode.id;
     later(reduceMotion ? 0 : 150, () => {
       el.bar.classList.add("is-visible");
@@ -399,7 +399,6 @@ function build() {
         <path class="qm-caret-body" d="M4 3h12a2 2 0 0 1 0 4h-4v16h4a2 2 0 0 1 0 4H4a2 2 0 0 1 0-4h4V7H4a2 2 0 0 1 0-4Z" />
         <path class="qm-caret-shine" d="M8.9 7.6h1.2v14.8H8.9z" />
       </svg>
-      <img class="qm-globe" src="${GLOBE}" alt="" />
     </span>
     ${MODES.map(
       (m, i) => `
@@ -410,6 +409,7 @@ function build() {
       </button>`,
     ).join("")}
     <form class="qm-bar" autocomplete="off">
+      <img class="qm-bar-globe" src="${GLOBE}" alt="" />
       <span class="qm-chip"></span>
       <input type="text" aria-label="Prompt" />
       <kbd class="qm-enter" aria-hidden="true">↵</kbd>
@@ -421,6 +421,7 @@ function build() {
     buttons: [...root.querySelectorAll(".qm-btn")],
     bar: root.querySelector(".qm-bar"),
     chip: root.querySelector(".qm-chip"),
+    globe: root.querySelector(".qm-bar-globe"),
     input: root.querySelector(".qm-bar input"),
   };
 }

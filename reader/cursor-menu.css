@@ -78,26 +78,9 @@ html.qm-following ::selection {
   fill: url(#qm-caret-shine);
 }
 
-/* Once a mode is picked, the I-beam gives way to the Wikipedia globe beside the prompt bar. */
-.qm-caret svg,
-.qm-globe {
+/* Once a mode is picked, the I-beam fades: the bar has the globe. */
+.qm-caret svg {
   transition: opacity 160ms ease, transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-.qm-globe {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  box-sizing: border-box;
-  width: 32px;
-  height: 32px;
-  padding: 4px;
-  border-radius: 50%;
-  background: var(--liquid);
-  box-shadow: var(--shadow-float);
-  object-fit: contain;
-  opacity: 0;
-  transform: translate(-50%, -50%) scale(0.6);
 }
 
 .qm[data-state="bar"] .qm-caret svg {
@@ -105,9 +88,16 @@ html.qm-following ::selection {
   transform: scale(0.6);
 }
 
-.qm[data-state="bar"] .qm-globe {
-  opacity: 1;
-  transform: translate(-50%, -50%) scale(1);
+/* The Wikipedia globe at the start of the bar, where a painted passage's chip goes instead */
+.qm-bar-globe {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+}
+
+.qm-bar-globe[hidden] {
+  display: none;
 }
 
 /* Pills: the liquid layer grows each pill out of the caret; once out, a crisp pill with a hairline
@@ -224,11 +214,6 @@ html.qm-following ::selection {
   font: italic 13px/1.2 var(--serif);
 }
 
-.qm-chip.is-whole {
-  background: var(--chip);
-  color: var(--ink-2);
-  font: 500 12px/1.2 var(--sans);
-}
 
 .qm-bar input {
   flex: 1;
