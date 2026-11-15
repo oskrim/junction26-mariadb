@@ -50,10 +50,12 @@ if (!version || (!foreign && !summary)) {
       <span aria-hidden="true">·</span>
       <a class="meta-link" href="./?id=${id}&view=history" data-view-link="history">View history</a>
     </p>
-    <button type="button" class="hp-start">
-      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3.2v9.6L12.6 8z"/></svg>
-      Watch it being written
-    </button>`}`;
+    <div class="head-actions">
+      <button type="button" class="hp-start">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3.2v9.6L12.6 8z"/></svg>
+        Watch it being written
+      </button>
+    </div>`}`;
   if (foreign) body.lang = lang;
   body.innerHTML = doc.html;
   toc.innerHTML = renderToc(doc.toc);

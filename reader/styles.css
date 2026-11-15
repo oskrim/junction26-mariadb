@@ -11,8 +11,8 @@
   --sans: "Inter", system-ui, sans-serif;
 
   --toc: 196px;
-  --gap: 36px;
-  --col: 696px; /* 640 + the 56px the gaps beside it gave up, so the page keeps its width */
+  --gap: 49px;
+  --col: 670px; /* the header's three buttons (574px) + --pad on both sides; the gaps beside it give the room */
   --pad: 48px;
   --side: 272px;
 }
@@ -574,6 +574,20 @@ a {
 /* Explore and History need the Finnish history */
 .is-foreign .views {
   display: none;
+}
+
+/* The article's actions (Watch it being written, Who wrote this?, Add from other languages): one row, which
+   --col is sized to: the three buttons span the column's text exactly. */
+.head-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.head-actions > button {
+  flex: none;
+  margin: 0;
+  white-space: nowrap;
 }
 
 /* Reading column */
