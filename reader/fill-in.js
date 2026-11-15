@@ -211,12 +211,21 @@ function originalPopover() {
       p.textContent = text;
       pop.append(p);
       pop.hidden = false;
+      // In the margin right of the column, level with the paragraph, when it fits; else below or above it.
       const r = el.getBoundingClientRect();
-      const width = Math.min(520, innerWidth - 32);
-      pop.style.width = `${width}px`;
-      pop.style.left = `${Math.max(16, Math.min(r.left, innerWidth - width - 16)) + scrollX}px`;
-      const below = r.bottom + 10 + pop.offsetHeight < innerHeight;
-      pop.style.top = `${(below ? r.bottom + 10 : r.top - 10 - pop.offsetHeight) + scrollY}px`;
+      const column = el.closest(".body").getBoundingClientRect();
+      const margin = document.documentElement.clientWidth - column.right - 32;
+      if (margin >= 300) {
+        pop.style.width = `${Math.min(440, margin)}px`;
+        pop.style.left = `${column.right + 16 + scrollX}px`;
+        pop.style.top = `${Math.min(Math.max(r.top, 72), innerHeight - pop.offsetHeight - 16) + scrollY}px`;
+      } else {
+        const width = Math.min(520, innerWidth - 32);
+        pop.style.width = `${width}px`;
+        pop.style.left = `${Math.max(16, Math.min(r.left, innerWidth - width - 16)) + scrollX}px`;
+        const below = r.bottom + 10 + pop.offsetHeight < innerHeight;
+        pop.style.top = `${(below ? r.bottom + 10 : r.top - 10 - pop.offsetHeight) + scrollY}px`;
+      }
     },
     hide() {
       pop.hidden = true;

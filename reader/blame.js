@@ -177,10 +177,9 @@ function openBlame({ body, data, button }) {
     card.innerHTML = cardHtml(b.origin, b.time, now);
     const rect = el.getBoundingClientRect();
     card.classList.add("is-open");
-    // Below the paragraph, unless it would run off the bottom of the window.
-    const below = rect.bottom + 8 + card.offsetHeight <= innerHeight - 8 || rect.top - 8 - card.offsetHeight < 64;
-    card.style.top = `${(below ? rect.bottom + 8 : rect.top - 8 - card.offsetHeight) + window.scrollY}px`;
-    card.style.left = `${Math.min(rect.left + window.scrollX, window.scrollX + document.documentElement.clientWidth - card.offsetWidth - 16)}px`;
+    const spot = besideOrBelow(rect, card, body);
+    card.style.top = `${spot.top + window.scrollY}px`;
+    card.style.left = `${spot.left + window.scrollX}px`;
     for (const other of painted) other.el.classList.toggle("is-lit", other.origin.rev_id === b.origin.rev_id);
   };
   const hide = (event) => {
@@ -222,6 +221,22 @@ function openBlame({ body, data, button }) {
         root.classList.remove("blame-on", "blame-shown", "blame-leaving");
       }, reducedMotion() ? 0 : LEAVE_MS);
     },
+  };
+}
+
+// Where a card about a paragraph goes without covering it: in the margin right of the reading column, level with
+// the paragraph, when there is room; else below it, or above when below would leave the window. Viewport pixels.
+export function besideOrBelow(rect, card, body) {
+  const column = body.getBoundingClientRect();
+  const room = document.documentElement.clientWidth - column.right - 32;
+  if (room >= card.offsetWidth) {
+    const top = Math.min(Math.max(rect.top, 72), innerHeight - card.offsetHeight - 16);
+    return { left: column.right + 16, top };
+  }
+  const below = rect.bottom + 8 + card.offsetHeight <= innerHeight - 8 || rect.top - 8 - card.offsetHeight < 64;
+  return {
+    left: Math.min(rect.left, document.documentElement.clientWidth - card.offsetWidth - 16),
+    top: below ? rect.bottom + 8 : rect.top - 8 - card.offsetHeight,
   };
 }
 
