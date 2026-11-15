@@ -12,6 +12,7 @@ The key is VOYAGE_API_KEY, else the Secret Manager secret voyage-api-key-global 
 """
 import argparse
 import base64
+import http.client
 from concurrent.futures import ThreadPoolExecutor
 import json
 import os
@@ -22,12 +23,13 @@ import sys
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 URL = os.environ.get("VOYAGE_URL", "https://ai.mongodb.com/v1/embeddings")  # MongoDB Atlas keys; Voyage's own: api.voyageai.com
 DOC_MODEL, QUERY_MODEL = "voyage-4-lite", "voyage-4-large"
 DIMENSIONS = 2048  # the largest output_dimension of both models
-QUERY_TIMEOUT_S = 3
+QUERY_TIMEOUT_S = 6  # a question waits this long for Voyage before search goes on without meaning
 MAX_INPUTS = 1000  # inputs per request (API limit)
 MAX_CHARS = 200_000  # well past 32,000 tokens of Finnish; Voyage cuts the rest, so this only saves upload
 CHARS_PER_TOKEN = 3  # a low estimate for Finnish, so a request stays under the 1M-token limit
@@ -66,14 +68,48 @@ def request(model, texts, input_type, timeout):
     return vectors, reply["usage"]["total_tokens"]
 
 
+_queries = threading.local()  # each app worker keeps one open connection to Voyage
+_cache, _cache_lock = {}, threading.Lock()
+CACHE = 2_000  # question vectors kept, so a repeated question costs no request
+
+
 def embed_query(text):
-    """The voyage-4-large vector of a question, as the '[x, y, ...]' that VEC_FromText reads. One try, short timeout."""
+    """The voyage-4-large vector of a question, as the '[x, y, ...]' that VEC_FromText reads. The connection is kept
+    open between questions (a new TLS handshake to Voyage alone can take seconds); a stale one is replaced once."""
     import struct
-    try:
-        (vector,), _ = request(QUERY_MODEL, [text], "query", QUERY_TIMEOUT_S)
-    except (OSError, ValueError, KeyError, subprocess.CalledProcessError, Error) as error:
-        raise Error(f"Voyage did not answer: {error}")
-    return json.dumps(struct.unpack(f"<{DIMENSIONS}f", vector))
+    with _cache_lock:
+        if text in _cache:
+            return _cache[text]
+    body = json.dumps({"model": QUERY_MODEL, "input": [text], "input_type": "query", "output_dimension": DIMENSIONS,
+                       "encoding_format": "base64", "truncation": True})
+    host, path = urllib.parse.urlsplit(URL).netloc, urllib.parse.urlsplit(URL).path
+    error = None
+    for fresh in (False, True):
+        try:
+            if fresh or getattr(_queries, "conn", None) is None:
+                if getattr(_queries, "conn", None) is not None:
+                    _queries.conn.close()
+                _queries.conn = http.client.HTTPSConnection(host, timeout=QUERY_TIMEOUT_S)
+            _queries.conn.request("POST", path, body, {"Authorization": f"Bearer {api_key()}",
+                                                       "Content-Type": "application/json"})
+            response = _queries.conn.getresponse()
+            data = response.read()
+            if response.status != 200:
+                raise Error(f"HTTP {response.status}: {data[:200].decode(errors='replace')}")
+            vector = base64.b64decode(json.loads(data)["data"][0]["embedding"])
+            break
+        except (OSError, http.client.HTTPException, ValueError, KeyError, subprocess.CalledProcessError) as e:
+            error, _queries.conn = e, None
+        except Error as e:
+            raise Error(f"Voyage did not answer: {e}")
+    else:
+        raise Error(f"Voyage did not answer: {type(error).__name__}: {error}")
+    result = json.dumps(struct.unpack(f"<{DIMENSIONS}f", vector))
+    with _cache_lock:
+        if len(_cache) >= CACHE:
+            _cache.pop(next(iter(_cache)))
+        _cache[text] = result
+    return result
 
 
 # --- The batch job -------------------------------------------------------------------------------------
@@ -133,8 +169,9 @@ def call_with_retries(limit, texts):
             if error.code != 429 and error.code < 500:
                 raise Error(f"HTTP {error.code}: {detail}")
             reason = f"HTTP {error.code}"
-        except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
-            reason = str(error)
+        # OSError covers resets and TLS errors; HTTPException a reply cut short (IncompleteRead, RemoteDisconnected).
+        except (OSError, http.client.HTTPException) as error:
+            reason = f"{type(error).__name__}: {error}"
         delay = min(2 ** attempt, 120) * (0.5 + random.random())
         print(f"voyage: {reason}, retry {attempt + 1}/{RETRIES} in {delay:.0f} s", flush=True)
         time.sleep(delay)
