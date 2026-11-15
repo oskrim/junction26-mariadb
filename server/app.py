@@ -304,6 +304,23 @@ def previews(cur, params):
     return {title: preview_of(cur, title) for title in titles}
 
 
+NOT_PROSE = re.compile(r"^(#|\||!|>|[-*+] |\d+[.)] |(Pääartikkeli|Katso myös|Tämä artikkeli|Tämä on|Ei pidä sekoittaa)\b)", re.I)
+
+
+def first_paragraph(markdown):
+    """The first real paragraph of an S article's Markdown: no heading, table, image, list, hatnote ("Pääartikkeli:",
+    "Tämä artikkeli käsittelee…") or fragment, with links as their text. Wikipedia's opening sentences are its best
+    summary of an article. Empty when there is none."""
+    for line in markdown.splitlines():
+        line = line.strip()
+        if not line or NOT_PROSE.match(line):
+            continue
+        text = " ".join(re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", line).replace("**", "").split())
+        if len(text) >= 60 and re.search(r"[.!?]", text):
+            return text
+    return ""
+
+
 def prose(markdown):
     """The running text of an S article's Markdown: no headings or table rows, on one line."""
     lines = (line for line in markdown.splitlines() if not line.lstrip().startswith(("#", "|")))
@@ -327,6 +344,9 @@ def unwiki(wikitext):
     text = re.sub(r"\[(?:https?:)?//[^\s\]]*\s*([^\]]*)\]", r"\1", text)
     text = re.sub(r"'{2,}|<[^>]+>|^=+.*?=+\s*$", "", text, flags=re.M)
     return " ".join(html.unescape(text).split())
+
+
+SNIPPET_WIDTH = 200
 
 
 def lead(text, width):
@@ -413,8 +433,11 @@ def search(cur, params):
     results = []
     for r in ranked:
         article = rows[r["page_id"]]
-        text = prose(article["text"]) if article["format"] == "markdown" else unwiki(article["text"])
-        shown, match = snippet(text, find(text, q))
+        # The snippet is the start of the article's first paragraph, with the query marked when it is there.
+        text = (first_paragraph(article["text"]) or prose(article["text"])) if article["format"] == "markdown" \
+            else unwiki(article["text"])
+        shown = lead(text, SNIPPET_WIDTH)
+        match = find(shown.rstrip("…"), q)
         results.append({"page_id": r["page_id"], "title": article["title"], "snippet": shown, "match": match, "by": r["by"]})
     return results
 
