@@ -1,9 +1,15 @@
 """The article search behind /api/search and the assistant's search tool: which articles answer a query, in order.
 
 ranked() is the hybrid ranking (vector.hybrid: BM25 + Voyage cosine + prior); titled() adds each article's title
-and the start of its text, which is what the assistant reads to choose.
+and the start of its text, which is what the assistant reads to choose. rerank() has Gemini order the hybrid top
+RERANK_POOL: on search_eval.py's 56 queries hit@1 0.77 -> 0.88, hit@5 0.93 -> 0.95, MRR 0.83 -> 0.91, for 0.8 s
+more (p50; 1.2 s p95) on 3.5 Flash Lite. 3.5 Flash gave 0.91 / 0.96 / 0.93 for 1.3 s more. So it is asked for
+(/api/search?rerank=1), not done on every key press.
 """
+import json
+import os
 import re
+import urllib.request
 
 import bm25
 import vector
@@ -56,3 +62,40 @@ def titled(cur, q, limit):
     return [{"page_id": r["page_id"], "title": rows[r["page_id"]]["title"],
              "lead": " ".join((rows[r["page_id"]]["lead"] or "").split()), "by": r["by"]}
             for r in found if r["page_id"] in rows]
+
+
+RERANK_POOL = 40  # hybrid results Gemini orders
+RERANK_MODEL = "gemini-3.5-flash-lite"
+RERANK_TIMEOUT_S = 6
+RERANK_RULES = """You rank Wikipedia search results. You get a search query and numbered results (title: first words).
+Return the numbers of the 10 results that best answer the query, best first. The best result is the article a
+reader typing this query most wants to open: the main article on the person, place, work or event meant, or the
+article that answers the question; then closely related ones. Lists, sub-articles and same-named minor subjects
+come after the main article."""
+RERANK_SCHEMA = {"type": "OBJECT", "properties": {"order": {"type": "ARRAY", "items": {"type": "INTEGER"}}},
+                 "required": ["order"]}
+
+
+def rerank(q, results):
+    """results ([{title, snippet, ...}], in hybrid order) with the ones Gemini puts first moved to the front, in its
+    order. Unchanged when Gemini does not answer in RERANK_TIMEOUT_S."""
+    key = os.environ.get("GEMINI_API_KEY")
+    if not key or len(results) < 2:
+        return results
+    listing = "\n".join(f"{i}. {r['title']}: {r['snippet'][:160]}" for i, r in enumerate(results, 1))
+    body = {"systemInstruction": {"parts": [{"text": RERANK_RULES}]},
+            "contents": [{"role": "user", "parts": [{"text": f"Query: {q}\n\nResults:\n{listing}"}]}],
+            "generationConfig": {"thinkingConfig": {"thinkingLevel": "minimal"}, "responseMimeType": "application/json",
+                                 "responseSchema": RERANK_SCHEMA}}
+    request = urllib.request.Request(f"https://generativelanguage.googleapis.com/v1beta/models/{RERANK_MODEL}:generateContent",
+                                     data=json.dumps(body).encode(),
+                                     headers={"Content-Type": "application/json", "x-goog-api-key": key})
+    try:
+        with urllib.request.urlopen(request, timeout=RERANK_TIMEOUT_S) as response:
+            parts = json.loads(response.read())["candidates"][0]["content"]["parts"]
+        order = json.loads("".join(p.get("text", "") for p in parts if not p.get("thought")))["order"]
+        first = list(dict.fromkeys(i for i in order if isinstance(i, int) and 1 <= i <= len(results)))
+    except (OSError, ValueError, KeyError, IndexError, TypeError) as error:
+        print(f"search: not reranked: {error}", flush=True)
+        return results
+    return [results[i - 1] for i in first] + [r for i, r in enumerate(results, 1) if i not in first]

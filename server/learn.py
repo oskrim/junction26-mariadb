@@ -1,12 +1,12 @@
 """POST /api/learn: explores the article's links for the reader and streams a short, sourced explanation.
 
 1. Candidates: the article's links as of `at` (m_link), with the lead of each linked article
-   (m_article as of `at`, else the current Finnish s_article), and the articles nearest to the question by
-   meaning (article_vector) that it does not link to, as of `at`.
+   (m_article as of `at`, else the current Finnish s_article), and the articles that search.py finds (BM25 and
+   meaning) for queries Gemini writes from the article and the question, that it does not link to, as of `at`.
 2. One fast Gemini call picks the 3 to 6 linked articles that matter for the question.
 3. The relevant part of each pick: its first 4,000 characters, or its lead plus a window around the focus term.
 4. Up to MAX_ROUNDS - 1 more rounds, one hop further out each time: the candidates are the articles the last
-   round's picks link to, and the articles nearest by meaning to what is still missing. One fast Gemini call
+   round's picks link to, and the articles found by searching for what is still missing. One fast Gemini call
    reads what has been gathered, says whether it is enough, and if not names the gap and picks 1 to 4 more.
 5. One streamed Gemini call writes the explanation, citing everything read as [1], [2], ..., and after it, held
    back from the reader, one quote per cited source.
@@ -29,9 +29,8 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 
-import vector
-from ask import (QUOTES_TAG, AskError, Progress, answer_texts, day, event, read_version, send_json, until_quotes,
-                 vector_count)
+import search
+from ask import QUOTES_TAG, AskError, Progress, answer_texts, day, event, read_version, send_json, until_quotes
 
 # Measured on page 1150 with 150 links: ranking takes ~1.4 s on 3.5 Flash Lite and ~4 s on 3.8 Flash; writing
 # takes ~3 s on 3.5 Flash and ~5.5 s on 3.8 Flash, and 3.5 Flash Lite ignores the language of the question.
@@ -147,7 +146,7 @@ def serve(handler, database):
         cur = database().cursor()
         here = read_version(cur, progress, request)
         candidates = linked_articles(cur, progress, [request["page_id"]], request["at"])
-        candidates += related_articles(cur, progress, request, request["prompt"], {c["page_id"] for c in candidates})
+        candidates += related_articles(cur, progress, request, here, request["prompt"], {c["page_id"] for c in candidates})
         explored = len(candidates)
         timings["db_ms"] = ms(started)
         if candidates:
@@ -173,7 +172,7 @@ def serve(handler, database):
             hop = linked_articles(cur, progress, [c["page_id"] for c, _, _ in picks if c["page_id"]], request["at"],
                                   skip=seen, limit=HOP_CANDIDATES, quiet=True)
             progress.finish(f"{label}: {len(hop):,} articles one link further")
-            hop += related_articles(cur, progress, request, gap, {s["page_id"] for s in sources if s["page_id"]},
+            hop += related_articles(cur, progress, request, here, gap, {s["page_id"] for s in sources if s["page_id"]},
                                     skip=seen | {c["title"] for c in hop})
             explored += len(hop)
             gap, picks = more(progress, request, here, sources, hop, label)
@@ -262,19 +261,44 @@ def linked_articles(cur, progress, page_ids, at, skip=(), limit=None, quiet=Fals
     return candidates
 
 
-def related_articles(cur, progress, request, query, linked, skip=()):
-    """Up to RELATED articles nearest to query by meaning, as of `at`: not this one, not the linked ones (page ids),
-    and none whose title is in skip."""
-    label = "Finding related articles by meaning" + ("" if query == request["prompt"] else f" to “{query}”")
-    progress.step(label)
+QUERY_RULES = """You write search queries for Finnish Wikipedia (a hybrid keyword and meaning search over its articles).
+You get the article a reader is on and what they want to understand. Write 3 different queries that find the
+other articles needed: Finnish article titles or names, keywords, or short descriptive phrases, built from the
+article's subject and never from words like "this" or "related". Queries in Finnish find the most."""
+QUERY_SCHEMA = {"type": "OBJECT", "properties": {"queries": {"type": "ARRAY", "items": {"type": "STRING"}}},
+                "required": ["queries"]}
+QUERIES = 3
+
+
+def search_queries(request, here, query):
+    """The queries Gemini writes to find what `query` (the reader's question, or the gap named after a round) needs;
+    the article's title with the question when Gemini does not answer."""
+    asked = f"Article: {here['title']}\nIts start: {reader_text(here, 1_200)}\n\nThe reader wants: {request['prompt']}"
+    if query != request["prompt"]:
+        asked += f"\nStill missing after reading: {query}"
     try:
-        vec = vector.embed(query)
-    except vector.Unavailable:
-        progress.finish(f"{label}: skipped, the embedding service is not answering")
-        return []
+        reply = generate_json(QUERY_RULES, [{"role": "user", "parts": [{"text": asked}]}], QUERY_SCHEMA)
+        queries = [str(q).strip()[:200] for q in reply.get("queries") or [] if str(q).strip()][:QUERIES]
+    except (AskError, AttributeError):
+        queries = []
+    return queries or [f"{here['title']} {query}"]
+
+
+def related_articles(cur, progress, request, here, query, linked, skip=()):
+    """Up to RELATED articles found by searching (search.py: BM25 and meaning) with queries Gemini writes for query,
+    as of `at`: not this one, not the linked ones (page ids), and none whose title is in skip."""
+    progress.step("Searching Wikipedia for more articles")
+    queries = search_queries(request, here, query)
+    label = "Searched " + ", ".join(f"“{q}”" for q in queries)
+    progress.update(label)
+    ranked = [[r["page_id"] for r in search.ranked(cur, q, RELATED)] for q in queries]
+    # The first of each search, then the second of each, ...: every query gets its best results in.
+    order = dict.fromkeys(p for rank_ in range(RELATED) for found_ in ranked for p in found_[rank_:rank_ + 1])
     stamp = request["at"].strftime("%Y-%m-%d %H:%M:%S.%f")
     found = []
-    for page_id, _ in vector.nearest(cur, vec, RELATED * 2, exclude={request["page_id"], *linked}):
+    for page_id in order:
+        if page_id == request["page_id"] or page_id in linked:
+            continue
         cur.execute("""SELECT title, text FROM m_article FOR SYSTEM_TIME AS OF TIMESTAMP %s
                        WHERE page_id = %s ORDER BY row_start DESC LIMIT 1""", (stamp, page_id))
         version = cur.fetchone()
@@ -284,7 +308,8 @@ def related_articles(cur, progress, request, query, linked, skip=()):
                           "text": text, "lead": text[:LEAD_CHARS]})
         if len(found) == RELATED:
             break
-    progress.finish(f"{label}: {len(found)} of {vector_count(cur):,}")
+    progress.finish(f"{label} → {len(found)} more article{'s' if len(found) != 1 else ''}"
+                    + (": " + "; ".join(f["title"] for f in found[:5]) + ("…" if len(found) > 5 else "") if found else ""))
     return found
 
 

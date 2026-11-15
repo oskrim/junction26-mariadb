@@ -1,6 +1,6 @@
 """Search quality of /api/search: hit@1, hit@5 and MRR over a small set of queries with known answers.
 
-    python search_eval.py [http://127.0.0.1:8010] [-v]
+    python search_eval.py [http://127.0.0.1:8010] [-v] [--rerank]
 
 Each query lists the titles that are a right first answer; its rank is that of the first one of them among the
 top 10 results. Latency is of the requests as made here (p50 and p95), question vectors included.
@@ -97,7 +97,7 @@ def main():
     base, verbose = (args[0] if args else "http://127.0.0.1:8010"), "-v" in sys.argv
     ranks, times = [], []
     for lang, q, right in QUERIES:
-        url = f"{base}/api/search?" + urllib.parse.urlencode({"q": q, "lang": lang, "limit": TOP})
+        url = f"{base}/api/search?" + urllib.parse.urlencode({"q": q, "lang": lang, "limit": TOP, **({"rerank": 1} if "--rerank" in sys.argv else {})})
         started = time.perf_counter()
         with urllib.request.urlopen(url, timeout=60) as response:
             titles = [r["title"] for r in json.load(response)]

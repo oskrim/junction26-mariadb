@@ -468,6 +468,7 @@ def search_s(cur, lang, q, limit):
 
 def search(cur, params):
     """Articles that match q by BM25 or by meaning, ranked by search.py (vector.hybrid); with lang=sv|en, search_s.
+    With rerank=1, Gemini then orders them (search.rerank).
 
     Without the embedding service, the BM25 ranking alone."""
     q = params.get("q", [""])[0].strip()
@@ -475,6 +476,9 @@ def search(cur, params):
         raise BadRequest("q is required")
     limit = number(params, "limit", 20)
     lang = params.get("lang", ["fi"])[0]
+    if params.get("rerank", ["0"])[0] == "1":  # Gemini orders the hybrid top RERANK_POOL: better, ~0.8 s slower
+        pool = search(cur, {"q": [q], "lang": [lang], "limit": [str(max(limit, search_ranking.RERANK_POOL))]})
+        return search_ranking.rerank(q, pool)[:limit]
     if lang in vector.S_LANGS:
         return search_s(cur, lang, q, limit)
     if lang != "fi":
