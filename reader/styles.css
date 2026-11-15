@@ -11,8 +11,8 @@
   --sans: "Inter", system-ui, sans-serif;
 
   --toc: 196px;
-  --gap: 49px;
-  --col: 670px; /* the header's three buttons (574px) + --pad on both sides; the gaps beside it give the room */
+  --gap: 64px;
+  --col: 670px; /* the header's three buttons (574px) + --pad on both sides */
   --pad: 48px;
   --side: 272px;
 }
