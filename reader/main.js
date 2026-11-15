@@ -22,6 +22,7 @@ if (foreign) {
 }
 setUpViews();
 setUpToTop();
+setUpKeyHint();
 // Enter in the top bar's search opens Find with what was typed, once the article view has set it up.
 const search = setUpSearch(document.querySelector(".bar .search"));
 const [articles, { version }] = await Promise.all([foreign ? [] : getArticles(id), getArticle(id, now(), lang)]);
@@ -341,4 +342,24 @@ function setUpToTop() {
   watch.observe(document.body, { childList: true }); // the history player's dock comes and goes
   const article = document.querySelector(".layout");
   if (article) watch.observe(article, { attributes: true, attributeFilter: ["hidden"] }); // Explore and back
+}
+
+// Article view: a small hint at the lower left that Q opens the menu at the pointer (cursor-menu.js). Clicking
+// it presses Q. Not in Explore, nor while "Watch it being written" has its bar at the bottom.
+function setUpKeyHint() {
+  const hint = document.createElement("button");
+  hint.type = "button";
+  hint.className = "key-hint";
+  hint.innerHTML = `<kbd>Q</kbd>Ask · Find · Learn`;
+  hint.addEventListener("click", () => document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "q", bubbles: true })));
+  document.body.append(hint);
+  const update = () => {
+    const article = document.querySelector(".layout");
+    hint.hidden = !article || article.hidden || !!document.querySelector(".hp-dock");
+  };
+  update();
+  const watch = new MutationObserver(update);
+  watch.observe(document.body, { childList: true });
+  const article = document.querySelector(".layout");
+  if (article) watch.observe(article, { attributes: true, attributeFilter: ["hidden"] });
 }
