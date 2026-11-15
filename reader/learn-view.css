@@ -431,6 +431,10 @@ html.lesson-open {
   font-family: var(--sans);
 }
 
+.lesson-turn.is-draft .lesson-turn-q {
+  color: var(--ink-2);
+}
+
 .lesson-turn-q {
   width: fit-content;
   max-width: 88%;

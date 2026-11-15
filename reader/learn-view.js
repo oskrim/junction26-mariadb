@@ -256,6 +256,8 @@ export function learnView({ article }) {
           if (talk !== me) return;
           if (status === "ended") finishTalk(detail);
           else {
+            // what the microphone heard while the agent spoke is its own voice: not shown as yours
+            if (status === "listening" && me.status === "speaking") me.heardFrom = me.heard;
             me.status = status;
             me.step = status === "connecting" ? detail : "";
             renderTalk();
@@ -265,6 +267,7 @@ export function learnView({ article }) {
       });
       if (talk !== me) return session.stop();
       me.session = session;
+      hearLive(me, lesson);
       meter();
     } catch (error) {
       if (talk === me) finishTalk(error.message);
@@ -278,6 +281,10 @@ export function learnView({ article }) {
   function finishTalk(error = "") {
     const was = talk;
     talk = null;
+    if (was?.recognition) {
+      was.recognition.onend = null;
+      was.recognition.abort();
+    }
     talkError = error;
     cancelAnimationFrame(talkFrame);
     was?.session?.stop();
@@ -288,10 +295,45 @@ export function learnView({ article }) {
   // What is said in the voice chat goes into the thread: your words as the question, the agent's as the answer.
   function talkTurn(lesson, role, text) {
     const last = lesson.followups.at(-1);
-    if (role === "user") lesson.followups.push({ question: text, text: "", sources: null, done: false, at: null, voice: true });
+    if (role === "user" && last?.draft) {
+      // ElevenLabs' own transcript replaces the live words (unless it heard nothing, "...")
+      if (!/^[.…\s]*$/.test(text)) last.question = text;
+      delete last.draft;
+      if (talk) talk.heardFrom = talk.heard;
+    } else if (role === "user") lesson.followups.push({ question: text, text: "", sources: null, done: false, at: null, voice: true });
     else if (last?.voice && !last.done) Object.assign(last, { text, done: true });
     else lesson.followups.push({ question: null, text, sources: null, done: true, at: null, voice: true });
     if (lesson === current && mode === "listen") renderThread();
+  }
+
+  // Your words in the thread as you say them: Chrome's speech recognition listens beside the ElevenLabs session,
+  // because ElevenLabs sends what you said only once you have finished. Not while the agent speaks.
+  function hearLive(me, lesson) {
+    const Recognition = globalThis.SpeechRecognition ?? globalThis.webkitSpeechRecognition;
+    if (!Recognition) return;
+    const rec = (me.recognition = new Recognition());
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.lang = navigator.language || "en-US";
+    me.heard = me.heardFrom = 0;
+    rec.onresult = (e) => {
+      me.heard = e.results.length;
+      if (talk !== me || me.status === "speaking") return;
+      const words = [...e.results].slice(me.heardFrom).map((r) => r[0].transcript).join(" ").replace(/\s+/g, " ").trim();
+      if (!words) return;
+      const last = lesson.followups.at(-1);
+      if (last?.draft) last.question = words;
+      else lesson.followups.push({ question: words, text: "", sources: null, done: false, at: null, voice: true, draft: true });
+      if (lesson === current && mode === "listen") renderThread();
+    };
+    rec.onerror = (e) => console.info("[voice] live words:", e.error);
+    // Chrome ends recognition after a pause: start again while the talk goes on
+    rec.onend = () => {
+      if (talk !== me) return;
+      me.heard = me.heardFrom = 0;
+      try { rec.start(); } catch {}
+    };
+    try { rec.start(); } catch (error) { console.info("[voice] live words unavailable", error); }
   }
 
   function renderTalk() {
@@ -574,9 +616,9 @@ function sourcesHtml(lesson) {
 }
 
 export function turnHtml(turn, lesson) {
-  return `<div class="lesson-turn${turn.done ? "" : " is-thinking"}${turn.voice ? " is-voice" : ""}">
+  return `<div class="lesson-turn${turn.done ? "" : " is-thinking"}${turn.voice ? " is-voice" : ""}${turn.draft ? " is-draft" : ""}">
     ${turn.question ? `<p class="lesson-turn-q">${escape(turn.question)}</p>` : ""}
-    <div class="lesson-turn-a">${turn.text ? `<p>${prose(turn.text.trim(), lesson, turn.sources)}</p>` : `<span class="dots"><i></i><i></i><i></i></span>`}</div>
+    ${turn.draft ? "" : `<div class="lesson-turn-a">${turn.text ? `<p>${prose(turn.text.trim(), lesson, turn.sources)}</p>` : `<span class="dots"><i></i><i></i><i></i></span>`}</div>`}
   </div>`;
 }
 
