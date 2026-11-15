@@ -41,13 +41,42 @@ export async function writeInAll({ onSection } = {}) {
   await scrollRest();
   if (run !== writing) return;
   let finished = 0;
+  // Only the first block is followed: it is kept in the middle of the window while it grows.
+  const opened = todo.map((c) => c.open(FAST_MS, { scroll: false }));
+  const stopFollowing = follow(opened[0].block, opened[0].done);
   await Promise.all(
-    todo.map((c) =>
-      c.open(FAST_MS).done.then(() => {
+    opened.map(({ done }) =>
+      done.then(() => {
         if (run === writing) onSection?.(finished++, todo.length);
       }),
     ),
   );
+  stopFollowing();
+}
+
+// Keeps block centred in the window until done resolves: when its middle drifts more than a few lines from the
+// window's middle as text is typed into it, the page glides to bring it back. Stops if the reader scrolls.
+function follow(block, done) {
+  if (reducedMotion()) return () => {};
+  let stopped = false;
+  const stop = () => (stopped = true);
+  const byHand = () => stop();
+  addEventListener("wheel", byHand, { passive: true, once: true });
+  addEventListener("touchmove", byHand, { passive: true, once: true });
+  const tick = () => {
+    if (stopped || !block.isConnected) return;
+    const r = block.getBoundingClientRect();
+    const drift = r.top + Math.min(r.height, innerHeight * 0.8) / 2 - innerHeight / 2;
+    if (Math.abs(drift) > 48) scrollBy({ top: drift, behavior: "smooth" });
+    setTimeout(tick, 400);
+  };
+  tick();
+  done.then(stop);
+  return () => {
+    stop();
+    removeEventListener("wheel", byHand);
+    removeEventListener("touchmove", byHand);
+  };
 }
 
 // Resolves when the page has stopped scrolling (or at once with reduced motion).
@@ -105,7 +134,7 @@ function addChip(heading, section, popover) {
     `<span class="fill-text">${open ? "Piilota" : count(section.paragraphs.length)}</span>`;
   let open = null; // { block, cancel } while the paragraphs are in the article
   chip.innerHTML = label();
-  const toggle = (ms) => {
+  const toggle = (ms, options) => {
     if (open) {
       open.cancel();
       const { block } = open;
@@ -114,7 +143,7 @@ function addChip(heading, section, popover) {
       popover.hide();
       open = null;
     } else {
-      open = writeIn(heading, section, popover, ms);
+      open = writeIn(heading, section, popover, ms, options);
     }
     chip.classList.toggle("is-open", !!open);
     chip.setAttribute("aria-expanded", String(!!open));
@@ -125,13 +154,13 @@ function addChip(heading, section, popover) {
     event.stopPropagation();
     toggle();
   });
-  chips.push({ heading, section, isOpen: () => !!open, open: (ms) => toggle(ms), close: () => open && toggle() });
+  chips.push({ heading, section, isOpen: () => !!open, open: (ms, options) => toggle(ms, options), close: () => open && toggle() });
   // Next to the other chips, before the edit-war marks when they are already there.
   heading.insertBefore(chip, heading.querySelector(".war-marks"));
 }
 
 // The borrowed paragraphs in a block after the section's last element, typed one after another.
-function writeIn(heading, section, popover, msPerParagraph = MS_PER_PARAGRAPH) {
+function writeIn(heading, section, popover, msPerParagraph = MS_PER_PARAGRAPH, { scroll = true } = {}) {
   const block = document.createElement("aside");
   block.className = "fill-block";
   block.dataset.lang = section.lang;
@@ -200,7 +229,7 @@ function writeIn(heading, section, popover, msPerParagraph = MS_PER_PARAGRAPH) {
     };
     typeNext(0);
   }
-  block.scrollIntoView({ behavior: reducedMotion() ? "auto" : "smooth", block: "nearest" });
+  if (scroll) block.scrollIntoView({ behavior: reducedMotion() ? "auto" : "smooth", block: "nearest" });
   return {
     block,
     done,
