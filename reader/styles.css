@@ -175,9 +175,9 @@ a {
   position: absolute;
   z-index: 8000;
   top: calc(100% + 6px);
-  right: 0;
-  width: 360px;
-  max-width: calc(100vw - 32px);
+  left: 0;
+  right: 0; /* exactly as wide as the search bar */
+  box-sizing: border-box;
   margin: 0;
   padding: 6px;
   list-style: none;
