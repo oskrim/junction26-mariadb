@@ -426,7 +426,7 @@ body[data-view="explore"] {
   /* The three figures as one group, centred in the panel, each label over its number. */
   display: flex;
   justify-content: center;
-  gap: 40px;
+  gap: 56px;
   flex: 1 0 100%;
   margin: 0 0 8px;
   padding: 0 0 14px;
