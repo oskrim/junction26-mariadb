@@ -1,0 +1,241 @@
+/* "Who wrote this" (blame.js): the toggle by "Watch it being written", the tints, the legend and the card. */
+
+.blame-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin: 16px 0 0 8px;
+  padding: 6px 14px 6px 11px;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  background: var(--paper);
+  font: 500 13px var(--sans);
+  color: var(--ink);
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.blame-toggle:hover {
+  border-color: var(--ink-3);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.06);
+}
+
+.blame-toggle[aria-pressed="true"] {
+  border-color: var(--link);
+  background: rgb(51 102 204 / 0.07);
+  color: var(--link);
+}
+
+.blame-toggle svg {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+
+/* The tint sits behind the text and bleeds a little past the column, with a thin rule on the left. A block
+   that continues the run above also covers the margin between them, so one edit reads as one patch. */
+
+.blame-on .body .blame-block {
+  position: relative;
+  isolation: isolate;
+  outline: none;
+  --blame-bleed: 10px;
+}
+
+.blame-on .body li.blame-block {
+  --blame-bleed: 26px;
+}
+
+.blame-on .body .blame-block::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: calc(-1 * var(--blame-gap, 0px)) -10px -2px calc(-1 * var(--blame-bleed));
+  border-left: 2px solid var(--blame-rule);
+  background: var(--blame-bg);
+  transition: background 0.25s ease, border-color 0.25s ease, box-shadow 0.15s ease;
+  pointer-events: none;
+}
+
+.blame-on .body .blame-block:not(.blame-continues)::before {
+  border-top-right-radius: 3px;
+}
+
+.blame-on .body .blame-block.is-lit::before {
+  box-shadow: inset 0 0 0 1px var(--blame-rule);
+}
+
+.blame-on .body .blame-block.is-lit {
+  cursor: default;
+}
+
+.blame-on .body .blame-block:focus-visible::before {
+  box-shadow: inset 0 0 0 2px var(--link);
+}
+
+/* The note at the top of the article while the view is on */
+
+.blame-legend {
+  margin: 4px 0 22px;
+  padding: 10px 14px 11px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  font: 13px/1.5 var(--sans);
+  color: var(--ink-2);
+  animation: blame-in 0.25s ease-out;
+}
+
+@keyframes blame-in {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+}
+
+.body .blame-note {
+  margin: 0 0 8px;
+}
+
+.blame-note strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.blame-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+
+.blame-modes {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+}
+
+.blame-modes button {
+  padding: 2px 10px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  font: 500 12px var(--sans);
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.blame-modes button[aria-pressed="true"] {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.blame-age-scale {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+.blame-legend[data-mode="age"] .blame-age-scale {
+  display: inline-flex;
+}
+
+.blame-age-scale i {
+  width: 72px;
+  height: 8px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, rgb(51 102 204 / 0.03), rgb(51 102 204 / 0.2));
+  box-shadow: inset 0 0 0 1px rgb(51 102 204 / 0.12);
+}
+
+.blame-fill-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.blame-fill-key[hidden] {
+  display: none;
+}
+
+/* Matches fill-in.css under .blame-on: a dashed rule over a faint stripe. */
+.blame-fill-key i {
+  width: 14px;
+  height: 12px;
+  border-left: 3px dashed var(--link);
+  background: repeating-linear-gradient(-45deg, rgb(51 102 204 / 0.12) 0 3px, transparent 3px 6px);
+}
+
+/* Who, when and why, over the hovered block */
+
+.blame-card {
+  position: absolute;
+  z-index: 60;
+  max-width: 340px;
+  padding: 10px 14px 11px;
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  background: var(--paper);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.04), 0 10px 30px -12px rgb(0 0 0 / 0.18);
+  font: 13px/1.45 var(--sans);
+  color: var(--ink-2);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+.blame-card.is-open {
+  opacity: 1;
+  visibility: visible;
+}
+
+.blame-card-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.blame-card-head strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.blame-card-head span {
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
+.blame-card-sec {
+  color: var(--ink-3);
+}
+
+.blame-card-why {
+  margin-top: 4px;
+  font-family: var(--serif);
+  font-style: italic;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.blame-card-why.is-empty {
+  font-family: var(--sans);
+  font-style: normal;
+  color: var(--ink-3);
+}
+
+@media (max-width: 640px) {
+  .blame-toggle {
+    margin-left: 0;
+  }
+
+  .blame-card {
+    max-width: calc(100vw - 32px);
+  }
+}
